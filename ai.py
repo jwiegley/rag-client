@@ -47,20 +47,27 @@ from llama_index.vector_stores.chroma import ChromaVectorStore
 # from llama_index.vector_stores.qdrant import QdrantVectorStore
 from pydantic import BaseModel
 
-### Defaults
-
-llm = Ollama(
-    model="dolphin3:latest",
-    context_window=4096,
-    request_timeout=30.0,
-    temperature=1.0,
-    base_url="http://127.0.0.1:11434/"
-)
+verbose = True
 
 Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-base-en-v1.5")
-Settings.llm = llm
 Settings.chunk_size = 512
 Settings.chunk_overlap = 50
+
+### Defaults
+
+def setup_model(model, context_window: int = 32768):
+    llm = Ollama(
+        model=model,
+        context_window=32768,
+        request_timeout=300.0,
+        temperature=0.9,
+        base_url="http://127.0.0.1:11434/"
+    )
+
+    global Settings
+    Settings.llm = llm
+
+    return llm
 
 ### Readers
 
@@ -119,66 +126,69 @@ class OrgReader(BaseReader, BaseModel):
 
         return documents
 
+file_extractor = {".org": OrgReader()}
+
 ### Tools
 
-### Indexing
+### Ingestion
 
 PERSIST_DIR = "./storage"
 
-chroma_client = chromadb.PersistentClient(path=PERSIST_DIR)
-chroma_collection = chroma_client.create_collection("default", get_or_create=True)
-vector_store = ChromaVectorStore(
-    chroma_collection=chroma_collection, persist_dir=PERSIST_DIR
-)
+## CHROMA
+# chroma_client = chromadb.PersistentClient(path=PERSIST_DIR)
+# chroma_collection = chroma_client.create_collection("default", get_or_create=True)
+# vector_store = ChromaVectorStore(
+#     chroma_collection=chroma_collection,
+#     persist_dir=PERSIST_DIR
+# )
 
+## QDRANT
 # client = qdrant_client.QdrantClient(location=":memory:")
 # vector_store = QdrantVectorStore(client=client, collection_name="test_store")
 
-pipeline = IngestionPipeline(
-    transformations=[
-        SentenceSplitter(
-            chunk_size=Settings.chunk_size,
-            chunk_overlap=Settings.chunk_overlap
-        ),
-        TitleExtractor(),
-        OpenAIEmbedding(),
-    ],
-    vector_store=vector_store,
-    docstore=SimpleDocumentStore()
-)
+if not os.path.exists(PERSIST_DIR):
+    documents = SimpleDirectoryReader(
+        "/Users/johnw/src/llama-index/docs",
+        file_extractor=file_extractor
+    ).load_data()
 
-# Create a RAG tool using LlamaIndex
-#if not os.path.exists(PERSIST_DIR):
+    # pipeline = IngestionPipeline(
+    #     transformations=[
+    #         SentenceSplitter(
+    #             chunk_size=Settings.chunk_size,
+    #             chunk_overlap=Settings.chunk_overlap
+    #         ),
+    #         TitleExtractor(),
+    #         Settings.embed_model,
+    #     ],
+    #     # vector_store=vector_store,
+    #     docstore=SimpleDocumentStore()
+    # )
 
-file_extractor = {".org": OrgReader()}
-documents = SimpleDirectoryReader(
-    "/Users/johnw/src/llama-index/docs",
-    file_extractor=file_extractor
-).load_data()
+    # nodes = pipeline.run(documents=documents# , num_workers=4
+    # index = VectorStoreIndex(nodes)
 
-pipeline.run(documents=documents# , num_workers=4
-             )
+    # index = VectorStoreIndex.from_vector_store(
+    #     vector_store,
+    #     verbose=verbose
+    # )
+    # pipeline.persist(PERSIST_DIR)
 
-# index = VectorStoreIndex.from_documents(
-#     documents,
-#     embed_model=Settings.embed_model,
-# )
-index = VectorStoreIndex.from_vector_store(vector_store)
-# index.storage_context.persist(persist_dir=PERSIST_DIR)
+    index = VectorStoreIndex.from_documents(
+        documents,
+        embed_model=Settings.embed_model,
+    )
+    index.storage_context.persist(persist_dir=PERSIST_DIR)
 
-# pipeline.persist(PERSIST_DIR)
-
-# else:
-#     file_extractor = {".org": OrgReader()}
-#     documents = SimpleDirectoryReader(
-#         "/Users/johnw/src/llama-index/docs",
-#         file_extractor=file_extractor
-#     ).load_data()
-#     pipeline.load(PERSIST_DIR)
-#     pipeline.run(documents=documents)
-#     # storage_context = StorageContext.from_defaults(persist_dir=PERSIST_DIR)
-#     # index = load_index_from_storage(storage_context)
-#     index = VectorStoreIndex.from_vector_store(vector_store)
+else:
+    # documents = SimpleDirectoryReader(
+    #     "/Users/johnw/src/llama-index/docs",
+    #     file_extractor=file_extractor
+    # ).load_data()
+    # pipeline.load(PERSIST_DIR)
+    # pipeline.run(documents=documents)
+    storage_context = StorageContext.from_defaults(persist_dir=PERSIST_DIR)
+    index = load_index_from_storage(storage_context)
 
 # # configure retriever
 # retriever = VectorIndexRetriever(
@@ -248,25 +258,60 @@ refine_template = ChatPromptTemplate.from_messages(chat_refine_msgs)
 
 ### Querying
 
-# assemble query engine
-query_engine = index.as_query_engine(
-    text_qa_template=text_qa_template,
-    refine_template=refine_template,
-    llm=llm,
-    streaming=True,
-    similarity_top_k=8
-)
-# query_engine = RetrieverQueryEngine(
-#     retriever=retriever,
-#     response_synthesizer=response_synthesizer,
-#     node_postprocessors=[SimilarityPostprocessor(similarity_cutoff=0.7)],
+# retriever = index.as_retriever()
+# nodes = retriever.retrieve(    '''
+# What is an effect way to approach the difficult task of mobilizing believers
+# to aid in the ongoing activities of a necleus operating within a focus
+# neighborhood?
+#     '''
 # )
+# print(nodes)
 
-streaming_response = query_engine.query(
-    '''
-What is an effect way to approach the difficult task of mobilizing believers
-to aid in the ongoing activities of a necleus operating within a focus
-neighborhood?
-    '''
-)
-streaming_response.print_response_stream()
+def submit_query(
+        query_text,
+        model,
+        context_window: int = 32768
+):
+    llm = setup_model(model)
+
+    query_engine = index.as_query_engine(
+        text_qa_template=text_qa_template,
+        refine_template=refine_template,
+        llm=llm,
+        streaming=True,
+        similarity_top_k=8,
+        verbose=verbose
+    )
+    # query_engine = RetrieverQueryEngine(
+    #     retriever=retriever,
+    #     response_synthesizer=response_synthesizer,
+    #     node_postprocessors=[SimilarityPostprocessor(similarity_cutoff=0.7)],
+    # )
+
+    return query_engine.query(query_text)
+
+models = [
+    "deepseek-r1:32b",
+    "falcon3:10b",
+    "phi4:latest",
+    "dolphin3:latest",
+    "deepseek-coder:33b",
+    "gemma2:27b",
+    "qwen2.5-coder:32b",
+    "wizardcoder:33b",
+    "codellama:70b",
+    "mistral-small:latest",
+    "qwen2.5:14b",
+    "qwen2.5:32b",
+]
+
+for model in models:
+    print("========================================================================")
+    print("Model: ", model)
+    print("========================================================================")
+    submit_query(
+        '''
+What are the essential features of a nucleus, and how does it operate?
+''',
+        model=model
+    ).print_response_stream()
