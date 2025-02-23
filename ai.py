@@ -10,7 +10,7 @@
 
 import os
 import asyncio
-import chromadb
+# import chromadb
 # import qdrant_client
 
 from pathlib import Path
@@ -43,7 +43,7 @@ from llama_index.core.storage.storage_context import StorageContext
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.ollama import Ollama
-from llama_index.vector_stores.chroma import ChromaVectorStore
+# from llama_index.vector_stores.chroma import ChromaVectorStore
 # from llama_index.vector_stores.qdrant import QdrantVectorStore
 from pydantic import BaseModel
 
@@ -291,18 +291,18 @@ def submit_query(
     return query_engine.query(query_text)
 
 models = [
-    "deepseek-r1:32b",
+    # "deepseek-r1:32b",
     "falcon3:10b",
     "phi4:latest",
     "dolphin3:latest",
-    "deepseek-coder:33b",
-    "gemma2:27b",
-    "qwen2.5-coder:32b",
-    "wizardcoder:33b",
-    "codellama:70b",
+    # "deepseek-coder:33b",
+    # "gemma2:27b",
+    # "qwen2.5-coder:32b",
+    # "wizardcoder:33b",
+    # "codellama:70b",
     "mistral-small:latest",
     "qwen2.5:14b",
-    "qwen2.5:32b",
+    # "qwen2.5:32b",
 ]
 
 for model in models:
@@ -311,7 +311,8 @@ for model in models:
     print("========================================================================")
     submit_query(
         '''
-What are the essential features of a nucleus, and how does it operate?
+What are the essential features of an expanding nucleus with the framework for
+action, and how does it operate?
 ''',
         model=model
     ).print_response_stream()
