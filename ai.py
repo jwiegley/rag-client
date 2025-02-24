@@ -61,7 +61,7 @@ def setup_model(model, context_window: int = 32768):
     llm = Ollama(
         model=model,
         context_window=32768,
-        request_timeout=300.0,
+        request_timeout=3600.0,
         temperature=0.9,
         base_url="http://127.0.0.1:11434/"
     )
@@ -153,7 +153,8 @@ else:
 
     documents = SimpleDirectoryReader(
         "/Users/johnw/src/llama-index/docs",
-        file_extractor=file_extractor
+        file_extractor=file_extractor,
+        recursive=True
     ).load_data()
 
     index = VectorStoreIndex.from_documents(
@@ -173,10 +174,11 @@ else:
 print("Configuring prompts...")
 
 basic_prompt = '''
-You are a planner and organizer, you create agends for meetings where people
-can come together and share ideas, plan, and learn about how to facilitate
-larger groups. You present your information in a kindly yet efficient manner,
-and use precise language to make details very clear for those who read them.
+You are an auditor for the Pact language, who looks for security and
+programming errors and any other flaws in the code or documentation. You are
+meticulously detailed and always give fully and explicit explanations of your
+findings, with complete code examples and a demonstration of what to do to
+remedy the problem.
 '''
 
 qa_prompt_str = '''
@@ -240,18 +242,18 @@ def submit_query(
     return query_engine.query(query_text)
 
 models = [
-    # "deepseek-r1:32b",
     "falcon3:10b",
     "phi4:latest",
     "dolphin3:latest",
-    # "deepseek-coder:33b",
-    # "gemma2:27b",
-    # "qwen2.5-coder:32b",
-    # "wizardcoder:33b",
-    # "codellama:70b",
-    "mistral-small:latest",
-    "qwen2.5:14b",
-    # "qwen2.5:32b",
+    "deepseek-coder:33b",
+    "gemma2:27b",
+    "qwen2.5-coder:32b",
+    "wizardcoder:33b",
+    # "mistral-small:latest",
+    # "qwen2.5:14b",
+    "qwen2.5:32b",
+    # "deepseek-r1:32b",
+    "deepseek-r1:70b",
 ]
 
 for model in models:
@@ -259,10 +261,14 @@ for model in models:
     print("")
     print("# Model: ", model)
     print("")
+    with open('/Users/johnw/kadena/smart-contracts/pact/mailbox/mailbox.pact', 'r') as file:
+        data = file.read().replace('\n', '')
+
     submit_query(
         '''
-What are the essential features of an expanding nucleus with the framework for
-action, and how does it operate?
-''',
+Please audit the following Pact code for correctness, security issues and any
+performance problems:
+
+''' + data,
         model=model
     ).print_response_stream()
