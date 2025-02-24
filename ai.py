@@ -12,6 +12,7 @@ import os
 import sys
 import asyncio
 import logging
+import yaml
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, cast
@@ -46,34 +47,36 @@ from pydantic import BaseModel
 
 ### Defaults
 
-print("Setting defaults...")
-
 verbose = False
 
-# logging.basicConfig(stream=sys.stdout, level=logging.INFO)
-# logging.getLogger().addHandler(logging.StreamHandler(stream=sys.stdout))
+def enable_logging():
+    global logging
+    logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+    logging.getLogger().addHandler(logging.StreamHandler(stream=sys.stdout))
 
-Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-base-en-v1.5")
-Settings.chunk_size = 512
-Settings.chunk_overlap = 50
+def setup_globals(llm = None):
+    global Settings
+    Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-base-en-v1.5")
+    Settings.chunk_size = 512
+    Settings.chunk_overlap = 50
+    if llm is not None:
+        Settings.llm = llm
 
-def setup_model(model, context_window: int = 32768):
-    llm = Ollama(
-        model=model,
-        context_window=32768,
-        request_timeout=3600.0,
-        temperature=0.9,
-        base_url="http://127.0.0.1:11434/"
+def get_ollama_model(
+        embed_model,
+        context_window: int = 32768,
+        request_timeout: float = 3600.0,
+        temperature: float = 0.9,
+        base_url: str = "http://127.0.0.1:11434/"):
+    return Ollama(
+        model=embed_model,
+        context_window=context_window,
+        request_timeout=request_timeout,
+        temperature=temperature,
+        base_url=base_url
     )
 
-    global Settings
-    Settings.llm = llm
-
-    return llm
-
 ### Readers
-
-print("Configuring readers...")
 
 @cache
 def get_text_from_org_node(current_node, format: str = "plain") -> List[str]:
@@ -134,141 +137,179 @@ file_extractor = {".org": OrgReader()}
 
 ### Tools
 
-print("Configuring tools...")
-
 ### Ingestion
 
-print("Building document index...")
-
-PERSIST_DIR = "./storage"
-
-if os.path.exists(PERSIST_DIR):
-    print("Reading cache...")
-
-    storage_context = StorageContext.from_defaults(persist_dir=PERSIST_DIR)
+def read_index_from_cache(persist_dir):
+    storage_context = StorageContext.from_defaults(persist_dir=persist_dir)
     index = load_index_from_storage(storage_context)
+    return index
 
-else:
-    print("Reading documents...")
+def write_index_to_cache(index, persist_dir):
+    index.storage_context.persist(
+        persist_dir=persist_dir
+    )
 
+def build_index_from_directory(directory, llm = None):
     documents = SimpleDirectoryReader(
-        "/Users/johnw/src/llama-index/docs",
+        directory,
         file_extractor=file_extractor,
         recursive=True
     ).load_data()
-
-    index = VectorStoreIndex.from_documents(
+    return VectorStoreIndex.from_documents(
         documents,
-        llm=setup_model("dolphi3:latest"),
+        llm=llm,
         embed_model=Settings.embed_model,
-        show_progress=True,
+        show_progress=verbose,
     )
-    index.storage_context.persist(
-        persist_dir=PERSIST_DIR
-    )
+
+def load_rag_index_of_directory(directory, persist_dir, llm = None):
+    if os.path.exists(persist_dir):
+        return read_index_from_cache(persist_dir)
+    else:
+        index = build_index_from_directory(directory)
+        write_index_to_cache(index, persist_dir)
+        return index
 
 ### Retrieving
 
 ### Prompts
 
-print("Configuring prompts...")
+def prompt_templates(basic_prompt):
+    qa_prompt_str = '''
+    Context information is below.
+    ---------------------
+    {context_str}
+    ---------------------
+    ''' + basic_prompt + '''
+    Given the context information and not prior knowledge,
+    answer the question: {query_str}
+    '''
 
-basic_prompt = '''
-You are an auditor for the Pact language, who looks for security and
-programming errors and any other flaws in the code or documentation. You are
-meticulously detailed and always give fully and explicit explanations of your
-findings, with complete code examples and a demonstration of what to do to
-remedy the problem.
-'''
+    refine_prompt_str = '''
+    We have the opportunity to refine the original answer (only if needed) with
+    some more context below.
+    ------------
+    {context_msg}
+    ------------
+    ''' + basic_prompt + '''
+    Given the new context, refine the original answer to better answer the
+    question: {query_str}. If the context isn't useful, output the original answer
+    again.
+    Original Answer: {existing_answer}"
+    '''
 
-qa_prompt_str = '''
-Context information is below.
----------------------
-{context_str}
----------------------
-''' + basic_prompt + '''
-Given the context information and not prior knowledge,
-answer the question: {query_str}
-'''
+    chat_text_qa_msgs = [
+        (
+            "system",
+            "Always answer the question, even if the context isn't helpful.",
+        ),
+        ("user", qa_prompt_str),
+    ]
+    text_qa_template = ChatPromptTemplate.from_messages(chat_text_qa_msgs)
 
-refine_prompt_str = '''
-We have the opportunity to refine the original answer (only if needed) with
-some more context below.
-------------
-{context_msg}
-------------
-''' + basic_prompt + '''
-Given the new context, refine the original answer to better answer the
-question: {query_str}. If the context isn't useful, output the original answer
-again.
-Original Answer: {existing_answer}"
-'''
+    chat_refine_msgs = [
+        (
+            "system",
+            "Always answer the question, even if the context isn't helpful.",
+        ),
+        ("user", refine_prompt_str),
+    ]
+    refine_template = ChatPromptTemplate.from_messages(chat_refine_msgs)
 
-chat_text_qa_msgs = [
-    (
-        "system",
-        "Always answer the question, even if the context isn't helpful.",
-    ),
-    ("user", qa_prompt_str),
-]
-text_qa_template = ChatPromptTemplate.from_messages(chat_text_qa_msgs)
-
-chat_refine_msgs = [
-    (
-        "system",
-        "Always answer the question, even if the context isn't helpful.",
-    ),
-    ("user", refine_prompt_str),
-]
-refine_template = ChatPromptTemplate.from_messages(chat_refine_msgs)
+    return (text_qa_template, refine_template)
 
 ### Querying
 
-print("Submitting query...")
-
 def submit_query(
-        query_text,
-        model,
-        context_window: int = 32768
+        index,
+        llm,
+        query_text: str,
+        prompt_text: str = "You are a helpful automated assistant who answers clearly and succinctly.",
+        similarity_top_k: int = 8
 ):
+    (text_qa_template, refine_template) = prompt_templates(prompt_text)
     query_engine = index.as_query_engine(
         text_qa_template=text_qa_template,
         refine_template=refine_template,
-        llm=setup_model(model),
+        llm=llm,
         streaming=True,
-        similarity_top_k=8,
+        similarity_top_k=similarity_top_k,
         verbose=verbose
     )
     return query_engine.query(query_text)
 
-models = [
-    "falcon3:10b",
-    "phi4:latest",
-    "dolphin3:latest",
-    "deepseek-coder:33b",
-    "gemma2:27b",
-    "qwen2.5-coder:32b",
-    "wizardcoder:33b",
-    # "mistral-small:latest",
-    # "qwen2.5:14b",
-    "qwen2.5:32b",
-    # "deepseek-r1:32b",
-    "deepseek-r1:70b",
-]
+def submit_query_with_file(
+        index,
+        llm,
+        query_text: str,
+        file_path: str,
+        prompt_text: str = "You are a helpful automated assistant who answers clearly and succinctly.",
+        similarity_top_k: int = 8
+):
+    with open(file_path, 'r') as file:
+        return submit_query(
+            index,
+            llm=llm,
+            query_text=query_text + file.read(),
+            prompt_text=prompt_text,
+            similarity_top_k=similarity_top_k
+        )
 
-for model in models:
-    print("")
-    print("")
-    print("# Model: ", model)
-    print("")
-    with open('/Users/johnw/kadena/smart-contracts/pact/mailbox/mailbox.pact', 'r') as file:
-        data = file.read().replace('\n', '')
+def query_models_with_file(
+        index,
+        query_models: List[str],
+        query_text: str,
+        file_path: str,
+        prompt_text: str = "You are a helpful automated assistant who answers clearly and succinctly.",
+        similarity_top_k: int = 8
+):
+    for model in query_models:
+        print("")
+        print("")
+        print("# Model: ", model)
+        print("")
+        submit_query_with_file(
+            index,
+            llm=get_ollama_model(model),
+            query_text=query_text,
+            file_path=file_path,
+            prompt_text=prompt_text,
+            similarity_top_k=similarity_top_k
+        ).print_response_stream()
 
-    submit_query(
-        '''
-Please audit the following Pact code for correctness, security issues and any
-performance problems:
+##############################################################################
 
-''' + data,
-        model=model
-    ).print_response_stream()
+with open(sys.argv[1]) as stream:
+    try:
+        config = yaml.safe_load(stream)
+    except yaml.YAMLError as exc:
+        print(exc)
+
+print("Building RAG index...")
+
+llm = get_ollama_model(
+    embed_model=config['embed_model'],
+    context_window=config['context_window'],
+    request_timeout=config['request_timeout'],
+    temperature=config['temperature'],
+    base_url=config['base_url'],
+)
+
+setup_globals(llm)
+
+index = load_rag_index_of_directory(
+    directory=config['directory'],
+    persist_dir=config['persist_dir'],
+    llm=llm,
+)
+
+print("Submitting query...")
+
+query_models_with_file(
+    index=index,
+    query_models=config['query_models'],
+    query_text=config['query_text'],
+    file_path=sys.argv[2],
+    prompt_text=config['prompt_text'],
+    similarity_top_k=config['similarity_top_k'],
+)

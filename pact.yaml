@@ -1,0 +1,21 @@
+embed_model: "falcon3:10b"
+context_window: 32768
+request_timeout: 3600.0
+temperature: 0.9
+similarity_top_k: 8
+base_url: "http://127.0.0.1:11434/"
+directory: "/Users/johnw/kadena/kadena-docs/docs"
+persist_dir: "/Users/johnw/src/llama-index/storage"
+query_models: [
+    "deepseek-r1:70b",
+]
+query_text: >-
+  Please audit the following Pact code for correctness, security issues and
+  any performance problems:
+prompt_text: >-
+  You are an auditor for the Pact language, who looks for security and
+  programming errors and any other flaws in the code or documentation. You are
+  meticulously detailed and always give fully and explicit explanations of
+  your findings, with complete code examples and a demonstration of what to do
+  to remedy the problem.
+
