@@ -9,6 +9,7 @@
 # pip install llama-index "numpy<2" pypdf llama-index-llms-ollama llama-index-embeddings-huggingface llama-parse nltk orgparse
 
 import os
+import sys
 import asyncio
 import logging
 
@@ -47,10 +48,10 @@ from pydantic import BaseModel
 
 print("Setting defaults...")
 
-verbose = True
+verbose = False
 
-logging.basicConfig(stream=sys.stdout, level=logging.INFO)
-logging.getLogger().addHandler(logging.StreamHandler(stream=sys.stdout))
+# logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+# logging.getLogger().addHandler(logging.StreamHandler(stream=sys.stdout))
 
 Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-base-en-v1.5")
 Settings.chunk_size = 512
@@ -141,7 +142,13 @@ print("Building document index...")
 
 PERSIST_DIR = "./storage"
 
-if not os.path.exists(PERSIST_DIR):
+if os.path.exists(PERSIST_DIR):
+    print("Reading cache...")
+
+    storage_context = StorageContext.from_defaults(persist_dir=PERSIST_DIR)
+    index = load_index_from_storage(storage_context)
+
+else:
     print("Reading documents...")
 
     documents = SimpleDirectoryReader(
@@ -149,33 +156,15 @@ if not os.path.exists(PERSIST_DIR):
         file_extractor=file_extractor
     ).load_data()
 
-    pipeline = IngestionPipeline(
-    transformations=[
-        TextCleaner(),
-        text_splitter,
-        embed_model,
-        TitleExtractor(),
-    ],
-    vector_store=vector_store,
-    cache=ingest_cache,
-)
-    nodes = pipeline.run(documents=documents)
-
-
-
     index = VectorStoreIndex.from_documents(
         documents,
         llm=setup_model("dolphi3:latest"),
         embed_model=Settings.embed_model,
+        show_progress=True,
     )
     index.storage_context.persist(
         persist_dir=PERSIST_DIR
     )
-else:
-    print("Reading cache...")
-
-    storage_context = StorageContext.from_defaults(persist_dir=PERSIST_DIR)
-    index = load_index_from_storage(storage_context)
 
 ### Retrieving
 
