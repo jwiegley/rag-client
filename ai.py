@@ -1,17 +1,16 @@
 # !./.venv/bin/python
 
 # ! /usr/bin/env nix-shell
-# ! nix-shell -i python3 -p python3Packages.llama-index -p python3Packages.numpy_2 -p python3Packages.chromadb -p python3Packages.llama-index-vector-stores-chroma -p python3Packages.pypdf -p python3Packages.llama-index-llms-ollama -p python3Packages.llama-index-embeddings-huggingface -p python3Packages.llama-parse -p python3Packages.nltk -p python3Packages.orgparse
+# ! nix-shell -i python3 -p python3Packages.llama-index -p python3Packages.numpy_2 -p python3Packages.pypdf -p python3Packages.llama-index-llms-ollama -p python3Packages.llama-index-embeddings-huggingface -p python3Packages.llama-parse -p python3Packages.nltk -p python3Packages.orgparse
 
 # python -m venv .venv
 # source .venv/bin/activate
 # pip install --upgrade pip
-# pip install llama-index "numpy<2" chromadb llama-index-vector-stores-chroma pypdf llama-index-llms-ollama llama-index-embeddings-huggingface nltk orgparse
+# pip install llama-index "numpy<2" pypdf llama-index-llms-ollama llama-index-embeddings-huggingface llama-parse nltk orgparse
 
 import os
 import asyncio
-# import chromadb
-# import qdrant_client
+import logging
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, cast
@@ -20,8 +19,7 @@ from functools import cache
 
 from llama_index.cli.rag import RagCLI, default_ragcli_persist_dir
 from llama_index.cli.rag.base import QueryPipelineQueryEngine, query_input
-from llama_index.core import ChatPromptTemplate
-from llama_index.core import Document
+from llama_index.core import ChatPromptTemplate, Document
 from llama_index.core import SimpleDirectoryReader, Settings, ChatPromptTemplate, PromptTemplate
 from llama_index.core import VectorStoreIndex, get_response_synthesizer
 from llama_index.core.agent.workflow import AgentWorkflow
@@ -43,17 +41,20 @@ from llama_index.core.storage.storage_context import StorageContext
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.ollama import Ollama
-# from llama_index.vector_stores.chroma import ChromaVectorStore
-# from llama_index.vector_stores.qdrant import QdrantVectorStore
 from pydantic import BaseModel
 
+### Defaults
+
+print("Setting defaults...")
+
 verbose = True
+
+logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+logging.getLogger().addHandler(logging.StreamHandler(stream=sys.stdout))
 
 Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-base-en-v1.5")
 Settings.chunk_size = 512
 Settings.chunk_overlap = 50
-
-### Defaults
 
 def setup_model(model, context_window: int = 32768):
     llm = Ollama(
@@ -70,6 +71,8 @@ def setup_model(model, context_window: int = 32768):
     return llm
 
 ### Readers
+
+print("Configuring readers...")
 
 @cache
 def get_text_from_org_node(current_node, format: str = "plain") -> List[str]:
@@ -130,113 +133,86 @@ file_extractor = {".org": OrgReader()}
 
 ### Tools
 
+print("Configuring tools...")
+
 ### Ingestion
+
+print("Building document index...")
 
 PERSIST_DIR = "./storage"
 
-## CHROMA
-# chroma_client = chromadb.PersistentClient(path=PERSIST_DIR)
-# chroma_collection = chroma_client.create_collection("default", get_or_create=True)
-# vector_store = ChromaVectorStore(
-#     chroma_collection=chroma_collection,
-#     persist_dir=PERSIST_DIR
-# )
-
-## QDRANT
-# client = qdrant_client.QdrantClient(location=":memory:")
-# vector_store = QdrantVectorStore(client=client, collection_name="test_store")
-
 if not os.path.exists(PERSIST_DIR):
+    print("Reading documents...")
+
     documents = SimpleDirectoryReader(
         "/Users/johnw/src/llama-index/docs",
         file_extractor=file_extractor
     ).load_data()
 
-    # pipeline = IngestionPipeline(
-    #     transformations=[
-    #         SentenceSplitter(
-    #             chunk_size=Settings.chunk_size,
-    #             chunk_overlap=Settings.chunk_overlap
-    #         ),
-    #         TitleExtractor(),
-    #         Settings.embed_model,
-    #     ],
-    #     # vector_store=vector_store,
-    #     docstore=SimpleDocumentStore()
-    # )
+    pipeline = IngestionPipeline(
+    transformations=[
+        TextCleaner(),
+        text_splitter,
+        embed_model,
+        TitleExtractor(),
+    ],
+    vector_store=vector_store,
+    cache=ingest_cache,
+)
+    nodes = pipeline.run(documents=documents)
 
-    # nodes = pipeline.run(documents=documents# , num_workers=4
-    # index = VectorStoreIndex(nodes)
 
-    # index = VectorStoreIndex.from_vector_store(
-    #     vector_store,
-    #     verbose=verbose
-    # )
-    # pipeline.persist(PERSIST_DIR)
 
     index = VectorStoreIndex.from_documents(
         documents,
+        llm=setup_model("dolphi3:latest"),
         embed_model=Settings.embed_model,
     )
-    index.storage_context.persist(persist_dir=PERSIST_DIR)
-
+    index.storage_context.persist(
+        persist_dir=PERSIST_DIR
+    )
 else:
-    # documents = SimpleDirectoryReader(
-    #     "/Users/johnw/src/llama-index/docs",
-    #     file_extractor=file_extractor
-    # ).load_data()
-    # pipeline.load(PERSIST_DIR)
-    # pipeline.run(documents=documents)
+    print("Reading cache...")
+
     storage_context = StorageContext.from_defaults(persist_dir=PERSIST_DIR)
     index = load_index_from_storage(storage_context)
-
-# # configure retriever
-# retriever = VectorIndexRetriever(
-#     index=index,
-#     similarity_top_k=10,
-# )
-
-# # configure response synthesizer
-# response_synthesizer = get_response_synthesizer(
-#     response_mode="tree_summarize",
-# )
 
 ### Retrieving
 
 ### Prompts
 
-qa_prompt_str = (
-    "Context information is below.\n"
-    "---------------------\n"
-    "{context_str}\n"
-    "---------------------\n"
-    "You are a planner and organizer, you create agendsa for meetings where people\n"
-    "can come together and share ideas, plan, and learn about how to facilitate\n"
-    "larger groups. You present your information in a kindly yet efficient\n"
-    "manner,and use precise language to make details very clear for those who read\n"
-    "your letters.\n"
-    "Given the context information and not prior knowledge, "
-    "answer the question: {query_str}\n"
-)
+print("Configuring prompts...")
 
-refine_prompt_str = (
-    "We have the opportunity to refine the original answer "
-    "(only if needed) with some more context below.\n"
-    "------------\n"
-    "{context_msg}\n"
-    "------------\n"
-    "You are a planner and organizer, you create agendsa for meetings where people\n"
-    "can come together and share ideas, plan, and learn about how to facilitate\n"
-    "larger groups. You present your information in a kindly yet efficient\n"
-    "manner,and use precise language to make details very clear for those who read\n"
-    "your letters.\n"
-    "Given the new context, refine the original answer to better "
-    "answer the question: {query_str}. "
-    "If the context isn't useful, output the original answer again.\n"
-    "Original Answer: {existing_answer}"
-)
+basic_prompt = '''
+You are a planner and organizer, you create agends for meetings where people
+can come together and share ideas, plan, and learn about how to facilitate
+larger groups. You present your information in a kindly yet efficient manner,
+and use precise language to make details very clear for those who read them.
+'''
 
-# Text QA Prompt
+qa_prompt_str = '''
+Context information is below.
+---------------------
+{context_str}
+---------------------
+''' + basic_prompt + '''
+Given the context information and not prior knowledge,
+answer the question: {query_str}
+'''
+
+refine_prompt_str = '''
+We have the opportunity to refine the original answer (only if needed) with
+some more context below.
+------------
+{context_msg}
+------------
+''' + basic_prompt + '''
+Given the new context, refine the original answer to better answer the
+question: {query_str}. If the context isn't useful, output the original answer
+again.
+Original Answer: {existing_answer}"
+'''
+
 chat_text_qa_msgs = [
     (
         "system",
@@ -246,7 +222,6 @@ chat_text_qa_msgs = [
 ]
 text_qa_template = ChatPromptTemplate.from_messages(chat_text_qa_msgs)
 
-# Refine Prompt
 chat_refine_msgs = [
     (
         "system",
@@ -258,36 +233,21 @@ refine_template = ChatPromptTemplate.from_messages(chat_refine_msgs)
 
 ### Querying
 
-# retriever = index.as_retriever()
-# nodes = retriever.retrieve(    '''
-# What is an effect way to approach the difficult task of mobilizing believers
-# to aid in the ongoing activities of a necleus operating within a focus
-# neighborhood?
-#     '''
-# )
-# print(nodes)
+print("Submitting query...")
 
 def submit_query(
         query_text,
         model,
         context_window: int = 32768
 ):
-    llm = setup_model(model)
-
     query_engine = index.as_query_engine(
         text_qa_template=text_qa_template,
         refine_template=refine_template,
-        llm=llm,
+        llm=setup_model(model),
         streaming=True,
         similarity_top_k=8,
         verbose=verbose
     )
-    # query_engine = RetrieverQueryEngine(
-    #     retriever=retriever,
-    #     response_synthesizer=response_synthesizer,
-    #     node_postprocessors=[SimilarityPostprocessor(similarity_cutoff=0.7)],
-    # )
-
     return query_engine.query(query_text)
 
 models = [
@@ -306,9 +266,10 @@ models = [
 ]
 
 for model in models:
-    print("========================================================================")
-    print("Model: ", model)
-    print("========================================================================")
+    print("")
+    print("")
+    print("# Model: ", model)
+    print("")
     submit_query(
         '''
 What are the essential features of an expanding nucleus with the framework for
