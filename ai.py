@@ -176,34 +176,37 @@ def load_rag_index_of_directory(directory, persist_dir, llm = None):
 
 def prompt_templates(basic_prompt):
     qa_prompt_str = '''
-    Context information is below.
-    ---------------------
-    {context_str}
-    ---------------------
-    ''' + basic_prompt + '''
-    Given the context information and not prior knowledge,
-    answer the question: {query_str}
-    '''
+Context information is below.
+---------------------
+{context_str}
+---------------------
+''' + basic_prompt + '''
+Given the context information and not prior knowledge, answer the question:
+{query_str}
+'''
 
     refine_prompt_str = '''
-    We have the opportunity to refine the original answer (only if needed) with
-    some more context below.
-    ------------
-    {context_msg}
-    ------------
-    ''' + basic_prompt + '''
-    Given the new context, refine the original answer to better answer the
-    question: {query_str}. If the context isn't useful, output the original answer
-    again.
-    Original Answer: {existing_answer}"
-    '''
+We have the opportunity to refine the original answer (only if needed) with
+some more context below.
+------------
+{context_msg}
+------------
+''' + basic_prompt + '''
+Given the new context, refine the original answer to better answer the
+question: {query_str}. If the context isn't useful, output the original answer
+again.
+Original Answer: {existing_answer}"
+'''
 
     chat_text_qa_msgs = [
         (
             "system",
             "Always answer the question, even if the context isn't helpful.",
         ),
-        ("user", qa_prompt_str),
+        (
+            "user",
+            qa_prompt_str
+        ),
     ]
     text_qa_template = ChatPromptTemplate.from_messages(chat_text_qa_msgs)
 
@@ -212,7 +215,10 @@ def prompt_templates(basic_prompt):
             "system",
             "Always answer the question, even if the context isn't helpful.",
         ),
-        ("user", refine_prompt_str),
+        (
+            "user",
+            refine_prompt_str
+        ),
     ]
     refine_template = ChatPromptTemplate.from_messages(chat_refine_msgs)
 
@@ -265,7 +271,6 @@ def query_models_with_file(
 ):
     for model in query_models:
         print("")
-        print("")
         print("# Model: ", model)
         print("")
         submit_query_with_file(
@@ -276,6 +281,7 @@ def query_models_with_file(
             prompt_text=prompt_text,
             similarity_top_k=similarity_top_k
         ).print_response_stream()
+        print("")
 
 ##############################################################################
 
@@ -285,7 +291,7 @@ with open(sys.argv[1]) as stream:
     except yaml.YAMLError as exc:
         print(exc)
 
-print("Building RAG index...")
+print("Setting up...")
 
 llm = get_ollama_model(
     embed_model=config['embed_model'],
@@ -297,13 +303,15 @@ llm = get_ollama_model(
 
 setup_globals(llm)
 
+print("Loading RAG index...")
+
 index = load_rag_index_of_directory(
     directory=config['directory'],
     persist_dir=config['persist_dir'],
     llm=llm,
 )
 
-print("Submitting query...")
+print("Submitting query to %d models...", len(config['query_models']))
 
 query_models_with_file(
     index=index,
