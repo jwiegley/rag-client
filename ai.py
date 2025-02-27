@@ -22,7 +22,7 @@ from functools import cache
 from llama_index.cli.rag import RagCLI, default_ragcli_persist_dir
 from llama_index.cli.rag.base import QueryPipelineQueryEngine, query_input
 from llama_index.core import ChatPromptTemplate, Document
-from llama_index.core import SimpleDirectoryReader, Settings, ChatPromptTemplate, PromptTemplate
+from llama_index.core import SimpleDirectoryReader, Settings, PromptTemplate
 from llama_index.core import VectorStoreIndex, get_response_synthesizer
 from llama_index.core.agent.workflow import AgentWorkflow
 from llama_index.core.chat_engine import CondenseQuestionChatEngine
