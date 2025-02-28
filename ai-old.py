@@ -7,12 +7,14 @@
 
 import os
 import chromadb
+import qdrant_client
 import re
 
 from llama_index.cli.rag import RagCLI, default_ragcli_persist_dir
 from llama_index.cli.rag.base import QueryPipelineQueryEngine, query_input
 from llama_index.core import ChatPromptTemplate, PromptTemplate
 from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, Settings
+from llama_index.core.chat_engine import CondensePlusContextChatEngine
 from llama_index.core.chat_engine import CondenseQuestionChatEngine
 from llama_index.core.ingestion import IngestionPipeline, IngestionCache
 from llama_index.core.node_parser import SentenceSplitter
@@ -25,6 +27,7 @@ from llama_index.core.storage.docstore import SimpleDocumentStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.llms.ollama import Ollama
 from llama_index.vector_stores.chroma import ChromaVectorStore
+from llama_index.vector_stores.qdrant import QdrantVectorStore
 from llama_index.core.extractors import (
     TitleExtractor,
     QuestionsAnsweredExtractor,
@@ -32,18 +35,22 @@ from llama_index.core.extractors import (
 from llama_index.core.ingestion import IngestionPipeline
 from llama_index.core.node_parser import TokenTextSplitter
 
-Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-base-en-v1.5")
+embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-large-en-v1.5")
+Settings.embed_model = embed_model
 llm = Ollama(model="llama3.2:1b", request_timeout=360.0, temperature=1.0)
 Settings.llm = llm
 
-persist_dir = default_ragcli_persist_dir()
-print('persist_dir =', persist_dir)
+# persist_dir = default_ragcli_persist_dir()
+# print('persist_dir =', persist_dir)
 
-chroma_client = chromadb.PersistentClient(path=persist_dir)
-chroma_collection = chroma_client.create_collection("default", get_or_create=True)
-vector_store = ChromaVectorStore(
-    chroma_collection=chroma_collection, persist_dir=persist_dir
-)
+client = qdrant_client.QdrantClient(location=":memory:")
+vector_store = QdrantVectorStore(client=client, collection_name="test_store")
+
+# chroma_client = chromadb.PersistentClient(path=persist_dir)
+# chroma_collection = chroma_client.create_collection("default", get_or_create=True)
+# vector_store = ChromaVectorStore(
+#     chroma_collection=chroma_collection, persist_dir=persist_dir
+# )
 docstore = SimpleDocumentStore()
 
 class TextCleaner(TransformComponent):
@@ -57,7 +64,7 @@ ingestion_pipeline = IngestionPipeline(
         TokenTextSplitter(chunk_size=512, chunk_overlap=128),
         TitleExtractor(nodes=5),
         TextCleaner(),
-        HuggingFaceEmbedding(model_name="BAAI/bge-base-en-v1.5"),
+        embed_model,
         QuestionsAnsweredExtractor(questions=3),
     ],
     vector_store=vector_store,
@@ -70,6 +77,8 @@ documents = SimpleDirectoryReader(
     recursive=True
 ).load_data()
 
+# index = VectorStoreIndex.from_documents(documents)
+
 nodes = ingestion_pipeline.run(documents=documents)
 
 verbose = True
@@ -78,7 +87,8 @@ query_component = FnComponent(
     fn=query_input, output_key="output", req_params={"query_str"}
 )
 retriever = VectorStoreIndex.from_vector_store(
-    ingestion_pipeline.vector_store,
+    vector_store=vector_store,
+    embed_model=embed_model
 ).as_retriever(similarity_top_k=8)
 
 basic_prompt = "Please answer my questions in a succinct and helpful way."
@@ -150,8 +160,13 @@ query_pipeline.add_link("retriever", "summarizer", dest_key="nodes")
 query_pipeline.add_link("query", "summarizer", dest_key="query_str")
 
 query_engine = QueryPipelineQueryEngine(query_pipeline=query_pipeline)
+
+# chat_engine = index.as_chat_engine(chat_mode="react", llm=llm, verbose=True)
 chat_engine = CondenseQuestionChatEngine.from_defaults(
-    query_engine=query_engine, llm=llm, verbose=verbose
+    query_engine=query_engine,
+    retriever=retriever,
+    llm=llm,
+    verbose=verbose
 )
 
 # file_extractor = {".html": ...}
