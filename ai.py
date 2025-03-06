@@ -54,11 +54,11 @@ def enable_logging():
     logging.basicConfig(stream=sys.stdout, level=logging.INFO)
     logging.getLogger().addHandler(logging.StreamHandler(stream=sys.stdout))
 
-def setup_globals(llm = None):
+def setup_globals(embed_model, chunk_size = 512, chunk_overlap = 50, llm = None):
     global Settings
-    Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-large-en-v1.5")
-    Settings.chunk_size = 512
-    Settings.chunk_overlap = 50
+    Settings.embed_model = embed_model
+    Settings.chunk_size = chunk_size
+    Settings.chunk_overlap = chunk_overlap
     if llm is not None:
         Settings.llm = llm
 
@@ -293,15 +293,20 @@ with open(sys.argv[1]) as stream:
 
 print("Setting up...")
 
+embed_model = HuggingFaceEmbedding(model_name=config['embed_model'])
+
 llm = get_ollama_model(
-    embed_model=config['embed_model'],
+    embed_model=config['embed_llm'],
     context_window=config['context_window'],
     request_timeout=config['request_timeout'],
     temperature=config['temperature'],
     base_url=config['base_url'],
 )
 
-setup_globals(llm)
+setup_globals(
+    embed_model=embed_model,
+    llm=llm
+)
 
 print("Loading RAG index...")
 
