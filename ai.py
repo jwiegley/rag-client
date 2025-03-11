@@ -19,8 +19,6 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 from copy import deepcopy
 from functools import cache
 
-from llama_index.cli.rag import RagCLI, default_ragcli_persist_dir
-from llama_index.cli.rag.base import QueryPipelineQueryEngine, query_input
 from llama_index.core import ChatPromptTemplate, Document
 from llama_index.core import SimpleDirectoryReader, Settings, PromptTemplate
 from llama_index.core import VectorStoreIndex, get_response_synthesizer
@@ -41,7 +39,6 @@ from llama_index.core.schema import Document
 from llama_index.core.storage.docstore import SimpleDocumentStore
 from llama_index.core.storage.storage_context import StorageContext
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.ollama import Ollama
 from pydantic import BaseModel
 
