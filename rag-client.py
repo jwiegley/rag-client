@@ -9,35 +9,21 @@
 
 import os
 import sys
-import asyncio
 import logging
-import yaml
 import argparse
 import json
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Dict, List, Optional
 from copy import deepcopy
 from functools import cache
 
-from llama_index.core import ChatPromptTemplate, Document
-from llama_index.core import SimpleDirectoryReader, Settings, PromptTemplate
-from llama_index.core import VectorStoreIndex, get_response_synthesizer
-from llama_index.core.agent.workflow import AgentWorkflow
-from llama_index.core.chat_engine import CondenseQuestionChatEngine
-from llama_index.core.extractors import TitleExtractor
+from llama_index.core import Document
+from llama_index.core import SimpleDirectoryReader, Settings
+from llama_index.core import VectorStoreIndex
 from llama_index.core.indices import load_index_from_storage
-from llama_index.core.ingestion import IngestionPipeline, IngestionCache
-from llama_index.core.node_parser import SentenceSplitter
-from llama_index.core.postprocessor import SimilarityPostprocessor
-from llama_index.core.query_engine import CustomQueryEngine, RetrieverQueryEngine
-from llama_index.core.query_pipeline import QueryPipeline
-from llama_index.core.query_pipeline.components.function import FnComponent
 from llama_index.core.readers.base import BaseReader
-from llama_index.core.response_synthesizers import CompactAndRefine
-from llama_index.core.retrievers import VectorIndexRetriever, VectorContextRetriever
 from llama_index.core.schema import Document
-from llama_index.core.storage.docstore import SimpleDocumentStore
 from llama_index.core.storage.storage_context import StorageContext
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from pydantic import BaseModel
@@ -95,9 +81,9 @@ class OrgReader(BaseReader, BaseModel):
         self, file: Path, extra_info: Optional[Dict] = None
     ) -> List[Document]:
         """Parse file into different documents based on root depth."""
-        from orgparse import OrgNode, load
+        from orgparse import load
 
-        org_content: OrgNode = load(file)
+        org_content = load(file)
         documents: List[Document] = []
 
         extra_info = extra_info or {}
@@ -130,9 +116,9 @@ def write_index_to_cache(index, persist_dir):
         persist_dir=persist_dir
     )
 
-def build_index_from_directory(directory):
+def build_index_from_directory(input_files):
     documents = SimpleDirectoryReader(
-        directory,
+        input_files=input_files,
         file_extractor=file_extractor,
         recursive=True
     ).load_data()
@@ -142,11 +128,11 @@ def build_index_from_directory(directory):
         show_progress=verbose,
     )
 
-def load_rag_index_of_directory(directory, persist_dir):
+def load_rag_index_of_directory(input_files, persist_dir):
     if os.path.exists(persist_dir):
         return read_index_from_cache(persist_dir)
     else:
-        index = build_index_from_directory(directory)
+        index = build_index_from_directory(input_files)
         write_index_to_cache(index, persist_dir)
         return index
 
@@ -155,10 +141,15 @@ def main():
     parser.add_argument('--embed-model', type=str, help='Embedding model')
     parser.add_argument('--top-k', type=int, help='Top K document nodes')
     parser.add_argument('--directory', type=str, help='Directory')
-    parser.add_argument('--persist-dir', type=str, help='Persist dir')
+    parser.add_argument('--cache-dir', type=str, help='Cache directory')
     parser.add_argument('--verbose', action="store_true", help='Verbose?')
     parser.add_argument('--query', type=str, help='Query text')
     args = parser.parse_args()
+    
+    filenames = [line.strip() for line in sys.stdin if line.strip()]
+    if not filenames:
+        print("No filenames provided on standard input.", file=sys.stderr)
+        sys.exit(1)
 
     global verbose
     verbose = args.verbose
@@ -168,8 +159,8 @@ def main():
     setup_globals(embed_model=embed_model)
     
     index = load_rag_index_of_directory(
-        directory=args.directory,
-        persist_dir=args.persist_dir,
+        input_files=filenames,
+        persist_dir=args.cache_dir,
     )
 
     retriever = index.as_retriever(similarity_top_k=args.top_k)
