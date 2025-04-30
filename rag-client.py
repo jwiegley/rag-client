@@ -122,6 +122,10 @@ def build_index_from_directory(input_files):
         file_extractor=file_extractor,
         recursive=True
     ).load_data()
+    # jww (2025-04-29): Use a SentenceSplitter here:
+    # splitter = SentenceSplitter(chunk_size=256)
+    # nodes = splitter.get_nodes_from_documents(docs)
+    # vector_index = VectorStoreIndex(nodes)
     return VectorStoreIndex.from_documents(
         documents,
         embed_model=Settings.embed_model,
