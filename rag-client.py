@@ -1,47 +1,43 @@
-# !./.venv/bin/python
+#!/usr/bin/env python
 
-# python -m venv .venv
-# source .venv/bin/activate
-# pip install --upgrade pip
-
-# pip install llama-index "numpy<2" pypdf llama-parse nltk orgparse \
-#     llama-index-embeddings-huggingface 
-
-import os
-import sys
-import logging
 import argparse
 import json
+import os
+import sys
+import hashlib
+import base64
 
-from pathlib import Path
-from typing import Dict, List, Optional
 from copy import deepcopy
 from functools import cache
+from typing import List
+from xdg_base_dirs import xdg_cache_home
 
-from llama_index.core import Document
-from llama_index.core import SimpleDirectoryReader, Settings
+from llama_index.core import Document, Settings
+from llama_index.core import SimpleDirectoryReader
+from llama_index.core import StorageContext, load_index_from_storage
 from llama_index.core import VectorStoreIndex
 from llama_index.core.indices import load_index_from_storage
+from llama_index.core.node_parser import SimpleNodeParser, SentenceSplitter
 from llama_index.core.readers.base import BaseReader
 from llama_index.core.schema import Document
 from llama_index.core.storage.storage_context import StorageContext
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from pydantic import BaseModel
 
-### Defaults
-
-verbose = False
-
-def enable_logging():
-    global logging
-    logging.basicConfig(stream=sys.stdout, level=logging.INFO)
-    logging.getLogger().addHandler(logging.StreamHandler(stream=sys.stdout))
-
-def setup_globals(embed_model, chunk_size = 512, chunk_overlap = 50):
-    global Settings
-    Settings.embed_model = embed_model
-    Settings.chunk_size = chunk_size
-    Settings.chunk_overlap = chunk_overlap
+def collection_hash(file_list):
+    # List to hold the hash of each file
+    file_hashes = []
+    for file_path in file_list:
+        # Compute SHA-512 hash of the file contents
+        h = hashlib.sha512()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                h.update(chunk)
+        file_hashes.append(h.hexdigest())
+    # Concatenate all hashes with newline separators
+    concatenated = "\n".join(file_hashes).encode("utf-8")
+    # Compute SHA-512 hash of the concatenated hashes
+    final_hash = hashlib.sha512(concatenated).hexdigest()
+    return final_hash
 
 ### Readers
 
@@ -59,7 +55,7 @@ def get_text_from_org_node(current_node, format: str = "plain") -> List[str]:
     return lines
 
 
-class OrgReader(BaseReader, BaseModel):
+class OrgReader(BaseReader):
     """OrgReader
 
     Extract text from org files.
@@ -69,7 +65,7 @@ class OrgReader(BaseReader, BaseModel):
     split_depth: int = 0
     text_formatting: str = "plain"  # plain or raw, as supported by orgparse
 
-    def node_to_document(self, node, extra_info: Optional[Dict] = None) -> Document:
+    def node_to_document(self, node, extra_info):
         """Convert org node to document."""
         text = "\n".join(get_text_from_org_node(node, format=self.text_formatting))
         extra_info = deepcopy(extra_info or {})
@@ -77,9 +73,7 @@ class OrgReader(BaseReader, BaseModel):
             extra_info["org_property_" + prop] = value
         return Document(text=text, extra_info=extra_info)
 
-    def load_data(
-        self, file: Path, extra_info: Optional[Dict] = None
-    ) -> List[Document]:
+    def load_data(self, file, extra_info):
         """Parse file into different documents based on root depth."""
         from orgparse import load
 
@@ -102,75 +96,109 @@ class OrgReader(BaseReader, BaseModel):
 
 file_extractor = {".org": OrgReader()}
 
-### Tools
-
 ### Ingestion
 
-def read_index_from_cache(persist_dir):
-    storage_context = StorageContext.from_defaults(persist_dir=persist_dir)
-    index = load_index_from_storage(storage_context)
-    return index
+def load_files_index(input_files,
+                     embed_model,
+                     chunk_size = None,
+                     chunk_overlap = None,
+                     verbose = False):
+    # Determine the cache directory as a unique function of the inputs
+    cache_dir = xdg_cache_home() / "rag-client"
+    cache_dir.mkdir(parents=True, exist_ok=True)  # Ensure the directory exists
 
-def write_index_to_cache(index, persist_dir):
-    index.storage_context.persist(
-        persist_dir=persist_dir
-    )
+    fingerprint = [
+        collection_hash(input_files),
+        hashlib.sha512(embed_model.encode("utf-8")).hexdigest(),
+        hashlib.sha512(str(chunk_size).encode("utf-8")).hexdigest(),
+        hashlib.sha512(str(chunk_overlap).encode("utf-8")).hexdigest(),
+    ]
+    final_hash = "\n".join(fingerprint).encode("utf-8")
+    final_base64 = base64.b64encode(final_hash).decode('utf-8')[0:32]
 
-def build_index_from_directory(input_files):
-    documents = SimpleDirectoryReader(
-        input_files=input_files,
-        file_extractor=file_extractor,
-        recursive=True
-    ).load_data()
-    # jww (2025-04-29): Use a SentenceSplitter here:
-    # splitter = SentenceSplitter(chunk_size=256)
-    # nodes = splitter.get_nodes_from_documents(docs)
-    # vector_index = VectorStoreIndex(nodes)
-    return VectorStoreIndex.from_documents(
-        documents,
-        embed_model=Settings.embed_model,
-        show_progress=verbose,
-    )
+    persist_dir = cache_dir / final_base64
+    if verbose: print(f'Cache directory = {persist_dir}')
 
-def load_rag_index_of_directory(input_files, persist_dir):
-    if os.path.exists(persist_dir):
-        return read_index_from_cache(persist_dir)
+    embed_model = HuggingFaceEmbedding(model_name=embed_model)
+
+    if persist_dir is not None and os.path.exists(persist_dir):
+        # If a cache dir was specified and exists, load the index
+        global Settings
+        Settings.embed_model = embed_model
+        if chunk_size is not None:
+            Settings.chunk_size = chunk_size
+        if chunk_overlap is not None:
+            Settings.chunk_overlap = chunk_overlap
+        if verbose: print('Load index from cache')
+        index = load_index_from_storage(
+            StorageContext.from_defaults(persist_dir=str(persist_dir))
+        )
     else:
-        index = build_index_from_directory(input_files)
-        write_index_to_cache(index, persist_dir)
-        return index
+        if verbose: print('Read documents from disk')
+        documents = SimpleDirectoryReader(
+            input_files=input_files,
+            file_extractor=file_extractor,  # type: ignore[override]
+            recursive=True
+        ).load_data()
+
+        if verbose: print('Chunk documents into semantic units')
+        if chunk_size is not None and chunk_overlap is not None:
+            splitter = SentenceSplitter(
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+            )
+            nodes = splitter.get_nodes_from_documents(documents)
+        else:
+            nodes = SimpleNodeParser().get_nodes_from_documents(documents)
+
+        if verbose: print('Calculate vector embeddings')
+        index = VectorStoreIndex(
+            nodes,
+            embed_model=embed_model,
+            show_progress=verbose,
+        )
+
+        # If a cache dir was specified, persist the index
+        if persist_dir is not None:
+            if verbose: print('Write index to cache')
+            index.storage_context.persist(
+                persist_dir=persist_dir
+            )
+
+    return index
 
 def main():
     parser = argparse.ArgumentParser(description='Read long command-line options')
     parser.add_argument('--embed-model', type=str, help='Embedding model')
+    parser.add_argument('--embed-dim', type=int, help='Embedding dimensions')
+    parser.add_argument('--chunk-size', type=int, help='Chunk size')
+    parser.add_argument('--chunk-overlap', type=int, help='Chunk overlap')
     parser.add_argument('--top-k', type=int, help='Top K document nodes')
     parser.add_argument('--directory', type=str, help='Directory')
-    parser.add_argument('--cache-dir', type=str, help='Cache directory')
     parser.add_argument('--verbose', action="store_true", help='Verbose?')
     parser.add_argument('--query', type=str, help='Query text')
     args = parser.parse_args()
     
-    filenames = [line.strip() for line in sys.stdin if line.strip()]
-    if not filenames:
+    input_files = [line.strip() for line in sys.stdin if line.strip()]
+    if not input_files:
         print("No filenames provided on standard input.", file=sys.stderr)
         sys.exit(1)
 
-    global verbose
-    verbose = args.verbose
+    index = load_files_index(
+        input_files=input_files,
+        embed_model=args.embed_model,
+        chunk_size=args.chunk_size,
+        chunk_overlap=args.chunk_overlap,
+        verbose=args.verbose,
+        )
 
-    embed_model = HuggingFaceEmbedding(model_name=args.embed_model)
-    
-    setup_globals(embed_model=embed_model)
-    
-    index = load_rag_index_of_directory(
-        input_files=filenames,
-        persist_dir=args.cache_dir,
-    )
-
+    if args.verbose: print('Create retriever object')
     retriever = index.as_retriever(similarity_top_k=args.top_k)
 
+    if args.verbose: print('Query retriever')
     nodes = retriever.retrieve(args.query)
 
+    if args.verbose: print('Format output')
     node_dicts = []
     for node in nodes:
         node_dict = {
