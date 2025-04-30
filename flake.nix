@@ -67,7 +67,7 @@
         buildInputs = [ pythonEnv ];
         installPhase = ''
           mkdir -p $out/bin
-          cp rag-client.py $out/bin
+          # cp rag-client.py $out/bin
           # Create a wrapper to launch the script with the correct Python
           echo '#!${pythonEnv}/bin/python' > $out/bin/rag-client
           cat rag-client.py >> $out/bin/rag-client
