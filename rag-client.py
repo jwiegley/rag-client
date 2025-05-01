@@ -460,20 +460,24 @@ class RAGWorkflow(Workflow):
     async def llm_query(self, event: LLMQueryEvent) -> LLMResponseEvent:
         """Execute LLM query with context"""
         context_str = "\n".join([n["text"] for n in event.context_nodes])
-        chat_history_str = (
-            "\n".join([f"{msg.role}: {msg.content}" for msg in event.chat_history])
-            if event.chat_history
-            else ""
-        )
+
+        if event.mode == "chat":
+            chat_history_str = (
+                "\n".join([f"{msg.role}: {msg.content}" for msg in event.chat_history])
+                if event.chat_history
+                else ""
+            )
+            chat_history_str = "CHAT HISTORY: " + chat_history_str
+        else:
+            chat_history_str = ""
 
         if self.verbose:
             print("Building LLM prompt")
         qa_prompt = PromptTemplate(
             "CONTEXT information is below:\n"
             "---------------------\n"
-            "{context_str}\n"
-            "---------------------\n"
-            "CHAT HISTORY: {chat_history_str}\n"
+            "{context_str}\n\n"
+            "{chat_history_str}\n"
             "---------------------\n"
             "Given the context information and not prior knowledge, "
             "answer the query.\n"
