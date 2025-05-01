@@ -88,13 +88,12 @@
 
       pythonEnv = pkgs.python312.withPackages (
         python-pkgs: with python-pkgs; [
-          venvShellHook
-          numpy_2
           stdenv
+          venvShellHook
           llama-index-core
-          llama-index-embeddings-huggingface
           llama-index-embeddings-gemini
           llama-index-embeddings-google
+          llama-index-embeddings-huggingface
           llama-index-embeddings-ollama
           llama-index-embeddings-openai
           llama-index-embeddings-openai-like
@@ -102,10 +101,11 @@
           llama-index-llms-ollama
           llama-index-llms-openai
           llama-index-llms-openai-like
-          llama-index-vector-stores-postgres
           llama-index-readers-file
+          llama-index-vector-stores-postgres
           llama-parse
           nltk
+          numpy_2
           orgparse
           pypdf
           xdg-base-dirs
