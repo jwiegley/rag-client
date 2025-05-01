@@ -240,9 +240,6 @@ def load_vector_index(
     else:
         persist_dir = None
 
-    # jww (2025-05-01): Need to support multiple embedding classes here,
-    # probably by parsing more complex embed_model strings, such as:
-    # HuggingFace/MODEL
     prefix, model = parse_prefixes(
         ["HuggingFace:", "Gemini:", "Ollama:", "OpenAILike:", "OpenAI:", "LlamaCpp:"],
         embed_model,
@@ -472,7 +469,7 @@ class RAGWorkflow(Workflow):
             chat_history_str = ""
 
         if self.verbose:
-            print("Building LLM prompt")
+            print("Build LLM prompt")
         qa_prompt = PromptTemplate(
             "CONTEXT information is below:\n"
             "---------------------\n"
@@ -487,14 +484,14 @@ class RAGWorkflow(Workflow):
 
         if self.llm is not None:
             if self.verbose:
-                print("Building query string")
+                print("Build query string")
             query = qa_prompt.format(
                 context_str=context_str,
                 chat_history_str=chat_history_str,
                 query_str=event.query,
             )
             if self.verbose:
-                print("Submitting query to LLM")
+                print("Submit query to LLM")
             response = await self.llm.acomplete(query)
             response = response.text
         else:
@@ -511,7 +508,7 @@ class RAGWorkflow(Workflow):
         """Handle final response formatting"""
         if event.mode == "chat":
             if self.verbose:
-                print("Adding chat response to memory")
+                print("Add chat response to memory")
             self.memory.put(ChatMessage(role="assistant", content=event.response))
             return StopEvent(
                 result={
@@ -766,9 +763,6 @@ def main():
     )
 
     if args.search is None:
-        # jww (2025-05-01): Need to support multiple LLM classes here,
-        # probably by parsing more complex embed_model strings, such as:
-        # LlamaCpp/MODEL
         prefix, llm = parse_prefixes(
             ["Ollama:", "OpenAILike:", "OpenAI:", "LlamaCpp:"],
             args.llm,
