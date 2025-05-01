@@ -14,34 +14,41 @@
         inherit system;
       };
 
-      # llama-index-vector-stores-faiss =
-      #   with pkgs; python312Packages.buildPythonPackage rec {
-      #     pname = "llama-index-vector-stores-faiss";
-      #     version = "0.3.0";
-      #     pyproject = true;
+      llama-index-llms-llama-cpp =
+        with pkgs.python312Packages; buildPythonPackage rec {
+          pname = "llama-index-llms-llama-cpp";
+          version = "0.4.0";
+          pyproject = true;
 
-      #     src = fetchPypi {
-      #       pname = "llama_index_vector_stores_faiss";
-      #       inherit version;
-      #       hash = "sha256-yd+Z3QD+cFhgbvT84RNTX6MLc+3WUBNr6HybWyQN8/k=";
-      #     };
+          disabled = pythonOlder "3.8";
 
-      #     build-system = with python312Packages; [ poetry-core ];
+          src = fetchPypi {
+            pname = "llama_index_llms_llama_cpp";
+            inherit version;
+            hash = "sha256-thW8QaoHksFNN56WUIE7hpQ1qrrzhHlP72uOijZ+np0=";
+          };
 
-      #     dependencies = with python312Packages; [
-      #       llama-index-core
-      #       faiss
-      #     ];
+          pythonRemoveDeps = [];
 
-      #     pythonImportsCheck = [ "llama_index.vector_stores.faiss" ];
+          build-system = [ poetry-core ];
 
-      #     meta = with lib; {
-      #       description = "LlamaIndex Vector Store Integration for FAISS";
-      #       homepage = "https://github.com/run-llama/llama_index/tree/main/llama-index-integrations/vector_stores/llama-index-vector-stores-faiss";
-      #       license = licenses.mit;
-      #       maintainers = with maintainers; [ fab ];
-      #     };
-      #   };
+          dependencies = [
+            llama-index-core
+            llama-cpp-python
+          ];
+
+          # Tests are only available in the mono repo
+          doCheck = false;
+
+          pythonImportsCheck = [ "llama_index.llms.llama_cpp" ];
+
+          meta = with lib; {
+            description = "LlamaIndex LLMS Integration for LlamaCpp";
+            homepage = "https://github.com/run-llama/llama_index/tree/main/llama-index-integrations/llms/llama-index-llms-llama-cpp";
+            license = licenses.mit;
+            maintainers = with maintainers; [ jwiegley ];
+          };
+        };
 
       pythonEnv = pkgs.python312.withPackages (
         python-pkgs: with python-pkgs; [
@@ -50,8 +57,7 @@
           stdenv
           llama-index-core
           llama-index-embeddings-huggingface
-          # faiss
-          # llama-index-vector-stores-faiss
+          llama-index-llms-llama-cpp
           llama-index-vector-stores-postgres
           llama-index-readers-file
           llama-parse
