@@ -240,6 +240,30 @@ def main():
         help='Postgres db table (default: %(default)s)'
     )
     parser.add_argument(
+        '--hnsw-m',
+        type=int,
+        default=16,
+        help='Bi-dir links for each node (default: %(default)s)'
+    )
+    parser.add_argument(
+        '--hnsw-ef-construction',
+        type=int,
+        default=64,
+        help='Dynamic candidate list size (default: %(default)s)'
+    )
+    parser.add_argument(
+        '--hnsw-ef-search',
+        type=int,
+        default=40,
+        help='Candidate list size during search (default: %(default)s)'
+    )
+    parser.add_argument(
+        '--hnsw-dist-method',
+        type=str,
+        default="vector_cosine_ops",
+        help='Distance method for similarity (default: %(default)s)'
+    )
+    parser.add_argument(
         '--embed-model',
         type=str,
         help='Embedding model'
@@ -267,30 +291,6 @@ def main():
         type=int,
         default=10,
         help='Top K document nodes (default: %(default)s)'
-    )
-    parser.add_argument(
-        '--hnsw-m',
-        type=int,
-        default=16,
-        help='Bi-dir links for each node (default: %(default)s)'
-    )
-    parser.add_argument(
-        '--hnsw-ef-construction',
-        type=int,
-        default=64,
-        help='Dynamic candidate list size (default: %(default)s)'
-    )
-    parser.add_argument(
-        '--hnsw-ef-search',
-        type=int,
-        default=40,
-        help='Candidate list size during search (default: %(default)s)'
-    )
-    parser.add_argument(
-        '--hnsw-dist-method',
-        type=str,
-        default="vector_cosine_ops",
-        help='Distance method for similarity (default: %(default)s)'
     )
     parser.add_argument(
         '--verbose',
