@@ -50,6 +50,42 @@
           };
         };
 
+      llama-index-embeddings-openai-like =
+        with pkgs.python312Packages; buildPythonPackage rec {
+          pname = "llama-index-embeddings-openai-like";
+          version = "0.1.0";
+          pyproject = true;
+
+          disabled = pythonOlder "3.8";
+
+          src = fetchPypi {
+            pname = "llama_index_embeddings_openai_like";
+            inherit version;
+            hash = "sha256-4LjKt0lgwu29PZ2/+T/Vh/4Fi1OPZQH0YDQF0Pd7l14=";
+          };
+
+          pythonRemoveDeps = [];
+
+          build-system = [ poetry-core ];
+
+          dependencies = [
+            llama-index-core
+            llama-index-embeddings-openai
+          ];
+
+          # Tests are only available in the mono repo
+          doCheck = false;
+
+          pythonImportsCheck = [ "llama_index.embeddings.openai_like" ];
+
+          meta = with lib; {
+            description = "LlamaIndex Embeddings Integration for OpenAI-Like";
+            homepage = "https://github.com/run-llama/llama_index/tree/main/llama-index-integrations/llms/llama-index-embeddings-openai-like";
+            license = licenses.mit;
+            maintainers = with maintainers; [ jwiegley ];
+          };
+        };
+
       pythonEnv = pkgs.python312.withPackages (
         python-pkgs: with python-pkgs; [
           venvShellHook
@@ -57,7 +93,15 @@
           stdenv
           llama-index-core
           llama-index-embeddings-huggingface
+          llama-index-embeddings-gemini
+          llama-index-embeddings-google
+          llama-index-embeddings-ollama
+          llama-index-embeddings-openai
+          llama-index-embeddings-openai-like
           llama-index-llms-llama-cpp
+          llama-index-llms-ollama
+          llama-index-llms-openai
+          llama-index-llms-openai-like
           llama-index-vector-stores-postgres
           llama-index-readers-file
           llama-parse
@@ -82,11 +126,11 @@
         '';
       };
 
-      devShell = pkgs.mkShell {
+      devShell = with pkgs; mkShell {
         nativeBuildInputs = [
           pythonEnv
-          pkgs.black          # Python code formatter
-          pkgs.pyright        # LSP server for Python
+          black                 # Python code formatter
+          pyright               # LSP server for Python
         ];
       };
     });

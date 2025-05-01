@@ -26,7 +26,11 @@ from llama_index.core import (
 )
 from llama_index.core.base.llms.base import BaseLLM
 from llama_index.core.llms import ChatMessage
+from llama_index.llms.ollama import Ollama
+from llama_index.llms.openai import OpenAI
+from llama_index.llms.openai_like import OpenAILike
 from llama_index.llms.llama_cpp import LlamaCPP
+from llama_index.core.embeddings import BaseEmbedding
 from llama_index.core.indices import load_index_from_storage
 from llama_index.core.memory import ChatMemoryBuffer
 from llama_index.core.node_parser import SimpleNodeParser, SentenceSplitter
@@ -51,12 +55,17 @@ from llama_index.core.workflow import (
     step,
 )
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.embeddings.gemini import GeminiEmbedding
+from llama_index.embeddings.ollama import OllamaEmbedding
+from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.embeddings.openai_like import OpenAILikeEmbedding
 from llama_index.vector_stores.postgres import PGVectorStore
 from typing import Optional, List, Dict, Union
 
 # from typing import Any
 import uuid
 
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 ### Utility functions
 
@@ -76,6 +85,13 @@ def collection_hash(file_list):
     # Compute SHA-512 hash of the concatenated hashes
     final_hash = hashlib.sha512(concatenated).hexdigest()
     return final_hash
+
+
+def parse_prefixes(prefixes, s):
+    for prefix in prefixes:
+        if s.startswith(prefix):
+            return prefix, s[len(prefix) :]
+    return None, s  # No matching prefix found
 
 
 ### Readers
@@ -134,6 +150,35 @@ class OrgReader(BaseReader):
         return documents
 
 
+### Embeddings
+
+
+class LlamaCppEmbedding(BaseEmbedding):
+    def __init__(self, model_path, **kwargs):
+        super().__init__(**kwargs)
+        from llama_cpp import Llama
+
+        self._model = Llama(model_path=model_path, embedding=True)
+
+    def _get_text_embedding(self, text: str):  # type: ignore[override]
+        response = self._model.create_embedding(text)
+        return response["data"][0]["embedding"]
+
+    def _get_query_embedding(self, text: str):  # type: ignore[override]
+        response = self._model.create_embedding(text)
+        return response["data"][0]["embedding"]
+
+    def _get_text_embeddings(self, texts: List[str]):  # type: ignore[override]
+        response = self._model.create_embedding(texts)
+        return [item["embedding"] for item in response["data"]]
+
+    async def _aget_text_embedding(self, text: str):  # type: ignore[override]
+        return self._get_text_embedding(text)
+
+    async def _aget_query_embedding(self, text: str):  # type: ignore[override]
+        return self._get_query_embedding(text)
+
+
 ### Ingestion
 
 
@@ -169,6 +214,7 @@ def load_vector_store(args):
 def load_vector_index(
     input_files,
     embed_model,
+    llm_base_url=None,
     vector_store=None,
     chunk_size=None,
     chunk_overlap=None,
@@ -194,12 +240,35 @@ def load_vector_index(
     else:
         persist_dir = None
 
-    if verbose:
-        print("Load HuggingFace embedding model")
     # jww (2025-05-01): Need to support multiple embedding classes here,
     # probably by parsing more complex embed_model strings, such as:
     # HuggingFace/MODEL
-    embed_model = HuggingFaceEmbedding(model_name=embed_model)
+    prefix, model = parse_prefixes(
+        ["HuggingFace:", "Gemini:", "Ollama:", "OpenAILike:", "OpenAI:", "LlamaCpp:"],
+        embed_model,
+    )
+    if verbose:
+        print(f"Load {prefix} embedding model")
+    if prefix == "HuggingFace:":
+        model = HuggingFaceEmbedding(model_name=model)
+    elif prefix == "Gemini:":
+        model = GeminiEmbedding(model_name=model)
+    elif prefix == "Ollama:":
+        model = OllamaEmbedding(
+            model_name=model,
+            base_url=llm_base_url or "http://localhost:11434",
+        )
+    elif prefix == "LlamaCpp:":
+        model = LlamaCppEmbedding(model_path=model)
+    elif prefix == "OpenAI:":
+        model = OpenAIEmbedding(model_name=model)
+    elif prefix == "OpenAILike:":
+        model = OpenAILikeEmbedding(
+            model_name=model,
+            api_base=llm_base_url or "http://localhost:1234/v1",
+        )
+    else:
+        print(f"Embedding model not recognized: {embed_model}")
 
     if input_files is None:
         if vector_store is not None:
@@ -207,7 +276,7 @@ def load_vector_index(
                 print("Load index from database")
             index = VectorStoreIndex.from_vector_store(
                 vector_store=vector_store,
-                embed_model=embed_model,
+                embed_model=model,
                 show_progress=verbose,
             )
         else:
@@ -217,7 +286,7 @@ def load_vector_index(
     elif persist_dir is not None and os.path.exists(persist_dir):
         # If a cache dir was specified and exists, load the index
         global Settings
-        Settings.embed_model = embed_model
+        Settings.embed_model = model
         if chunk_size is not None:
             Settings.chunk_size = chunk_size
         if chunk_overlap is not None:
@@ -264,7 +333,7 @@ def load_vector_index(
         index = VectorStoreIndex(
             nodes,
             storage_context=storage_context,
-            embed_model=embed_model,
+            embed_model=model,
             show_progress=verbose,
         )
 
@@ -322,6 +391,7 @@ class RAGWorkflow(Workflow):
         llm: BaseLLM | None = None,
         memory: Optional[ChatMemoryBuffer] = None,
         token_limit: int = 1500,
+        timeout: int = 60,
         verbose: bool = False,
         **kwargs,
     ):
@@ -330,6 +400,7 @@ class RAGWorkflow(Workflow):
         self.similarity_top_k = similarity_top_k
         self.llm = llm
         self.memory = memory or ChatMemoryBuffer.from_defaults(token_limit=token_limit)
+        self.timeout = timeout
         self.verbose = verbose
 
     @step
@@ -456,15 +527,33 @@ class RAGWorkflow(Workflow):
 async def exec_search(workflow, query):
     if workflow.verbose:
         print("Execute vector search only")
-    vector_result = await workflow.run(query=query, mode="vector_search")
+    vector_result = await workflow.run(
+        query=query, mode="vector_search", timeout=workflow.timeout
+    )
     print(json.dumps(vector_result["results"], indent=2))
+
+
+def clean_special_tokens(text):
+    # Remove <|assistant|> with various newline combinations
+    patterns = [
+        "<|assistant|>\n\n",
+        "<|assistant|>\n",
+        "\n\n<|assistant|>",
+        "\n<|assistant|>",
+        "<|assistant|>",
+    ]
+    for pattern in patterns:
+        text = text.replace(pattern, "")
+    return text
 
 
 async def exec_query(workflow, query):
     if workflow.verbose:
         print("Execute vector search + LLM query")
-    query_result = await workflow.run(query=query, mode="llm_query")
-    print(query_result["response"])
+    query_result = await workflow.run(
+        query=query, mode="llm_query", timeout=workflow.timeout
+    )
+    print(clean_special_tokens(query_result["response"]))
 
 
 async def exec_chat(workflow):
@@ -486,8 +575,10 @@ async def exec_chat(workflow):
             else:
                 chat_id = None
 
-            chat_result = await workflow.run(query=query, mode="chat", chat_id=chat_id)
-            print(chat_result["response"])
+            chat_result = await workflow.run(
+                query=query, mode="chat", chat_id=chat_id, timeout=workflow.timeout
+            )
+            print(clean_special_tokens(chat_result["response"]))
 
 
 ### Main function
@@ -573,10 +664,67 @@ def main():
         help="Top K document nodes (default: %(default)s)",
     )
     parser.add_argument(
+        "--llm",
+        type=str,
+        help="LLM to use for text generation and chat",
+    )
+    parser.add_argument(
+        "--llm-api-key",
+        type=str,
+        default="fake",
+        help="API key to use with LLM",
+    )
+    parser.add_argument(
+        "--llm-api-version",
+        type=str,
+        help="API version to use with LLM (if required)",
+    )
+    parser.add_argument(
+        "--llm-base-url",
+        type=str,
+        help="URL to use for talking with LLM (default depends on LLM)",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=60,
+        help="Max time to wait in seconds (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=1.0,
+        help="LLM temperature value (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=256,
+        help="LLM maximum answer size in tokens (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--context-window",
+        type=int,
+        default=8192,
+        help="LLM context window size (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--reasoning-effort",
+        type=str,
+        default="medium",
+        help="LLM reasoning effort (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--gpu-layers",
+        type=int,
+        default=-1,
+        help="Number of GPU layers to use (default: %(default)s)",
+    )
+    parser.add_argument(
         "--token-limit",
         type=int,
         default=1500,
-        help="Token limit for chat history (not --search or --query)",
+        help="Token limit used for chat history (default: %(default)s)",
     )
     parser.add_argument("--verbose", action="store_true", help="Verbose?")
     parser.add_argument("--read-files", action="store_true", help="Read files?")
@@ -606,6 +754,7 @@ def main():
     index = load_vector_index(
         input_files=input_files,
         embed_model=args.embed_model,
+        llm_base_url=args.llm_base_url,
         vector_store=vector_store,
         chunk_size=args.chunk_size,
         chunk_overlap=args.chunk_overlap,
@@ -616,18 +765,59 @@ def main():
         # jww (2025-05-01): Need to support multiple LLM classes here,
         # probably by parsing more complex embed_model strings, such as:
         # LlamaCpp/MODEL
-        if args.verbose:
-            print("Create LLM object")
-        llm = LlamaCPP(
-            # model_url=model_url,
-            model_path="/Users/johnw/Models/Qwen_Qwen2.5-1.5B-Instruct-GGUF/qwen2.5-1.5b-instruct-q8_0.gguf",
-            temperature=0.6,
-            max_new_tokens=256,
-            context_window=16384,
-            generate_kwargs={},
-            model_kwargs={"n_gpu_layers": -1},
-            verbose=args.verbose,
+        prefix, llm = parse_prefixes(
+            ["Ollama:", "OpenAILike:", "OpenAI:", "LlamaCpp:"],
+            args.llm,
         )
+
+        if args.verbose:
+            print(f"Load {llm} LLM")
+        if prefix == "Ollama:":
+            llm = Ollama(
+                model=llm,
+                base_url=args.llm_base_url,
+                temperature=args.temperature,
+                max_tokens=args.max_tokens,
+                context_window=args.context_window,
+                request_timeout=args.timeout,
+            )
+        elif prefix == "OpenAILike:":
+            llm = OpenAILike(
+                model=llm,
+                api_base=args.llm_base_url,
+                api_key=args.llm_api_key,
+                api_version=args.llm_api_version or "",
+                temperature=args.temperature,
+                max_tokens=args.max_tokens,
+                context_window=args.context_window,
+                reasoning_effort=args.reasoning_effort,
+                timeout=args.timeout,
+            )
+        elif prefix == "OpenAI:":
+            llm = OpenAI(
+                model=llm,
+                api_key=args.llm_api_key,
+                api_base=args.llm_base_url,
+                api_version=args.llm_api_version or "",
+                temperature=args.temperature,
+                max_tokens=args.max_tokens,
+                context_window=args.context_window,
+                reasoning_effort=args.reasoning_effort,
+                timeout=args.timeout,
+            )
+        elif prefix == "LlamaCpp:":
+            llm = LlamaCPP(
+                # model_url=model_url,
+                model_path=llm,
+                temperature=args.temperature,
+                max_new_tokens=args.max_tokens,
+                context_window=args.context_window,
+                generate_kwargs={},
+                model_kwargs={"n_gpu_layers": args.gpu_layers},
+                verbose=args.verbose,
+            )
+        else:
+            print(f"LLM model not recognized: {args.llm}")
     else:
         llm = None
 
@@ -638,6 +828,7 @@ def main():
         similarity_top_k=args.top_k,
         llm=llm,
         token_limit=args.token_limit,
+        timeout=args.timeout,
         verbose=args.verbose,
     )
 
