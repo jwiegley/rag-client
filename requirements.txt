@@ -189,7 +189,7 @@ toml==0.10.2
 torch==2.5.1
 tqdm==4.67.1
 traitlets==5.14.3
-transformers==4.49.0
+transformers==4.50.0
 typeguard==4.4.1
 typer==0.15.1
 typing_extensions==4.12.2
