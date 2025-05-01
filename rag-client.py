@@ -773,7 +773,7 @@ def main():
         if prefix == "Ollama:":
             llm = Ollama(
                 model=llm,
-                base_url=args.llm_base_url,
+                base_url=args.llm_base_url or "http://localhost:11434",
                 temperature=args.temperature,
                 max_tokens=args.max_tokens,
                 context_window=args.context_window,
@@ -782,7 +782,7 @@ def main():
         elif prefix == "OpenAILike:":
             llm = OpenAILike(
                 model=llm,
-                api_base=args.llm_base_url,
+                api_base=args.llm_base_url or "http://localhost:1234/v1",
                 api_key=args.llm_api_key,
                 api_version=args.llm_api_version or "",
                 temperature=args.temperature,
