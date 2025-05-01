@@ -52,6 +52,7 @@
           llama-index-embeddings-huggingface
           # faiss
           # llama-index-vector-stores-faiss
+          llama-index-vector-stores-postgres
           llama-index-readers-file
           llama-parse
           nltk
