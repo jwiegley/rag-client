@@ -74,6 +74,20 @@ python rag-client.py                        \
   --query "Compare AI safety approaches"
 ```
 
+3. **Chat sessions**:
+
+Simply remove the `--search` or `--query` options:
+
+```
+python rag-client.py                        \
+  --db-name research_papers                 \
+  --db-table ai_ethics                      \
+  --llm "OpenAILike:Falcon3-10B-Instruct"   \
+  --llm-base-url "http://localhost:8080/v1" \
+  --timeout 600                             \
+  --top-k 25
+```
+
 ## Configuration Highlights
 
 Use `rag-client --help` for the full list of parameters and their default
