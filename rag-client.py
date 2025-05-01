@@ -303,9 +303,9 @@ def main():
         help='Read files?'
     )
     parser.add_argument(
-        '--query',
+        '--search',
         type=str,
-        help='Query text'
+        help='Search documents for closely text matching query'
     )
     args = parser.parse_args()
 
@@ -356,9 +356,9 @@ def main():
     if args.verbose: print('Create retriever object')
     retriever = index.as_retriever(similarity_top_k=args.top_k)
 
-    if args.query is not None:
-        if args.verbose: print('Query retriever')
-        nodes = retriever.retrieve(args.query)
+    if args.search is not None:
+        if args.verbose: print('Document search retriever')
+        nodes = retriever.retrieve(args.search)
 
         if args.verbose: print('Format output')
         node_dicts = []
