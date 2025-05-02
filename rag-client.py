@@ -31,6 +31,7 @@ from llama_index.llms.openai import OpenAI
 from llama_index.llms.openai_like import OpenAILike
 from llama_index.llms.llama_cpp import LlamaCPP
 from llama_index.core.embeddings import BaseEmbedding
+from llama_index.core.extractors import QuestionsAnsweredExtractor
 from llama_index.core.indices import load_index_from_storage
 from llama_index.core.memory import ChatMemoryBuffer
 from llama_index.core.node_parser import SimpleNodeParser, SentenceSplitter
@@ -40,7 +41,7 @@ from llama_index.core.readers.base import BaseReader
 
 # from llama_index.core.response_synthesizers import BaseSynthesizer
 # from llama_index.core.retrievers import BaseRetriever
-from llama_index.core.schema import Document
+from llama_index.core.schema import Document, TransformComponent
 
 # from llama_index.core.schema import NodeWithScore
 from llama_index.core.storage.storage_context import StorageContext
@@ -211,18 +212,57 @@ def load_vector_store(args):
     return vector_store
 
 
+def list_files(directory, recursive=False):
+    if recursive:
+        file_list = []
+        for root, _, files in os.walk(directory):
+            for file in files:
+                if file not in [".", ".."]:
+                    file_list.append(os.path.join(root, file))
+        return file_list
+    else:
+        return [
+            os.path.join(directory, f)
+            for f in os.listdir(directory)
+            if os.path.isfile(os.path.join(directory, f))
+        ]
+
+
+def read_files(read_from, recursive=False):
+    if read_from == "-":
+        input_files = [line.strip() for line in sys.stdin if line.strip()]
+        if not input_files:
+            print("No filenames provided on standard input", file=sys.stderr)
+            sys.exit(1)
+    elif os.path.isfile(read_from):
+        input_files = [read_from]
+    elif os.path.isdir(read_from):
+        input_files = list_files(read_from, recursive)
+    else:
+        input_files = None
+    return input_files
+
+
 def load_vector_index(
-    input_files,
+    read_from,
     embed_model,
+    recursive=False,
     llm_base_url=None,
     vector_store=None,
     chunk_size=None,
     chunk_overlap=None,
+    questions_answered=None,
+    llm=None,
     verbose=False,
 ):
     # Determine the cache directory as a unique function of the inputs
     cache_dir = xdg_cache_home() / "rag-client"
     cache_dir.mkdir(parents=True, exist_ok=True)  # Ensure the directory exists
+
+    if read_from is not None:
+        input_files = read_files(read_from, recursive)
+    else:
+        input_files = None
 
     if input_files is not None and vector_store is None:
         fingerprint = [
@@ -245,7 +285,7 @@ def load_vector_index(
         embed_model,
     )
     if verbose:
-        print(f"Load {prefix} embedding model")
+        print(f"Load embedding {prefix}:{model}")
     if prefix == "HuggingFace:":
         model = HuggingFaceEmbedding(model_name=model)
     elif prefix == "Gemini:":
@@ -305,30 +345,39 @@ def load_vector_index(
             recursive=True,
         ).load_data()
 
+        # jww (2025-05-01): Allow use of different splitters here
+        # - TokenTextSplitter
+        # - SemanticSplitterNodeParser
         if chunk_size is not None and chunk_overlap is not None:
             if verbose:
                 print("Chunk documents into sentences")
-            splitter = SentenceSplitter(
+            parser = SentenceSplitter(
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap,
             )
-            nodes = splitter.get_nodes_from_documents(documents)
         else:
             if verbose:
                 print("Use whole documents")
-            nodes = SimpleNodeParser().get_nodes_from_documents(documents)
+            parser = SimpleNodeParser()
 
-        if vector_store is not None:
+        transformations: List[TransformComponent] = [parser]
+
+        if questions_answered is not None:
             if verbose:
-                print("Create storage context")
-            storage_context = StorageContext.from_defaults(vector_store=vector_store)
-        else:
-            storage_context = None
+                print(f"Generate {questions_answered} questions for each chunk")
+            transformations.append(
+                QuestionsAnsweredExtractor(questions=questions_answered, llm=llm)
+            )
+
+        if verbose:
+            print("Create storage context")
+        storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
         if verbose:
             print("Calculate vector embeddings")
-        index = VectorStoreIndex(
-            nodes,
+        index = VectorStoreIndex.from_documents(
+            documents,
+            transformations=transformations,
             storage_context=storage_context,
             embed_model=model,
             show_progress=verbose,
@@ -659,6 +708,11 @@ def main():
         help="Chunk overlap (default: %(default)s)",
     )
     parser.add_argument(
+        "--questions-answered",
+        type=int,
+        help="If provided, generate N questions related to each chunk",
+    )
+    parser.add_argument(
         "--top-k",
         type=int,
         default=10,
@@ -728,7 +782,14 @@ def main():
         help="Token limit used for chat history (default: %(default)s)",
     )
     parser.add_argument("--verbose", action="store_true", help="Verbose?")
-    parser.add_argument("--read-files", action="store_true", help="Read files?")
+    parser.add_argument(
+        "--from", type=str, dest="from_", help="Where to read files from (optional)"
+    )
+    parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Read directories recursively (default: no)",
+    )
     parser.add_argument(
         "--search", type=str, help="Search documents for closely text matching query"
     )
@@ -738,38 +799,18 @@ def main():
 
     args = parser.parse_args()
 
-    if args.read_files:
-        input_files = [line.strip() for line in sys.stdin if line.strip()]
-        if not input_files:
-            print("No filenames provided on standard input", file=sys.stderr)
-            sys.exit(1)
-    else:
-        input_files = None
-
     if args.verbose:
         print("Load vector store")
     vector_store = load_vector_store(args)
 
-    if args.verbose:
-        print("Load vector index")
-    index = load_vector_index(
-        input_files=input_files,
-        embed_model=args.embed_model,
-        llm_base_url=args.llm_base_url,
-        vector_store=vector_store,
-        chunk_size=args.chunk_size,
-        chunk_overlap=args.chunk_overlap,
-        verbose=args.verbose,
-    )
-
-    if args.search is None:
+    if args.search is None or args.questions_answered is not None:
         prefix, llm = parse_prefixes(
             ["Ollama:", "OpenAILike:", "OpenAI:", "LlamaCpp:"],
             args.llm,
         )
 
         if args.verbose:
-            print(f"Load {llm} LLM")
+            print(f"Load LLM {prefix}:{llm}")
         if prefix == "Ollama:":
             llm = Ollama(
                 model=llm,
@@ -818,6 +859,21 @@ def main():
             print(f"LLM model not recognized: {args.llm}")
     else:
         llm = None
+
+    if args.verbose:
+        print("Load vector index")
+    index = load_vector_index(
+        args.from_,
+        args.embed_model,
+        recursive=args.recursive,
+        llm_base_url=args.llm_base_url,
+        vector_store=vector_store,
+        chunk_size=args.chunk_size,
+        chunk_overlap=args.chunk_overlap,
+        questions_answered=args.questions_answered,
+        llm=llm,
+        verbose=args.verbose,
+    )
 
     if args.verbose:
         print("Create RAG workflow")
