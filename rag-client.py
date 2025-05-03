@@ -21,7 +21,6 @@ import typed_argparse as tap
 from llama_index.core import (
     Document,
     PromptTemplate,
-    Settings,
     SimpleDirectoryReader,
     StorageContext,
     VectorStoreIndex,
@@ -60,7 +59,6 @@ from llama_index.llms.ollama import Ollama
 from llama_index.llms.openai import OpenAI
 from llama_index.llms.openai_like import OpenAILike
 from llama_index.vector_stores.postgres import PGVectorStore
-from orgparse.extra import Rich
 from orgparse.node import OrgNode
 from typed_argparse import TypedArgs, arg
 from xdg_base_dirs import xdg_cache_home
