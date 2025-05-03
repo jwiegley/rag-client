@@ -6,20 +6,16 @@ import base64
 import hashlib
 import json
 import os
-import pprint
 import sys
-import uuid
 from copy import deepcopy
-from dataclasses import MISSING, dataclass, field, fields
+from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
-from typing import Any, Iterable, List, Literal, NoReturn, no_type_check, override
+from typing import Any, Literal, NoReturn, cast, no_type_check, override
 
 from llama_index.core.data_structs.data_structs import IndexDict
 from llama_index.core.indices.base import BaseIndex
 from llama_index.core.vector_stores.simple import SimpleVectorStore
-from llama_index.core.workflow.handler import WorkflowHandler
-from openai import BaseModel
 from pydantic import RootModel
 import typed_argparse as tap
 from llama_index.core import (
@@ -29,32 +25,22 @@ from llama_index.core import (
     SimpleDirectoryReader,
     StorageContext,
     VectorStoreIndex,
-    get_response_synthesizer,
-    load_index_from_storage,
 )
 from llama_index.core.base.embeddings.base import Embedding
-from llama_index.core.base.llms.base import BaseLLM
-from llama_index.core.embeddings import BaseEmbedding, MultiModalEmbedding
+from llama_index.core.embeddings import BaseEmbedding
 from llama_index.core.extractors import QuestionsAnsweredExtractor
 from llama_index.core.indices import load_index_from_storage
-from llama_index.core.llms import ChatMessage
-from llama_index.core.llms.function_calling import FunctionCallingLLM
 from llama_index.core.llms.llm import LLM
-from llama_index.core.memory import ChatMemoryBuffer
-from llama_index.core.node_parser import SentenceSplitter, SimpleNodeParser
-from llama_index.core.query_engine import CustomQueryEngine
+from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.readers.base import BaseReader
-from llama_index.core.response_synthesizers import BaseSynthesizer
-from llama_index.core.retrievers import BaseRetriever
 from llama_index.core.schema import (
     BaseNode,
     Document,
     Node,
     NodeWithScore,
-    TransformComponent,
 )
 from llama_index.core.storage.storage_context import StorageContext
-from llama_index.core.tools import QueryEngineTool, ToolMetadata
+# from llama_index.core.tools import QueryEngineTool, ToolMetadata
 from llama_index.core.vector_stores.types import BasePydanticVectorStore
 from llama_index.core.workflow import (
     Context,
@@ -548,9 +534,6 @@ class LLMObject:
 ### Events
 
 
-### Workflows
-
-
 class HaveSearchTextEvent(Event):
     text: str
 
@@ -649,6 +632,9 @@ class NoVectorIndexEvent(Event):
 
 class NoExistingPersistDirEvent(Event):
     pass
+
+
+### Workflows
 
 
 class RAGWorkflow(Workflow):
@@ -863,8 +849,7 @@ class RAGWorkflow(Workflow):
         input_files: list[Path] = input_files_event.input_files
         documents = SimpleDirectoryReader(
             input_files=input_files,
-            file_extractor=file_extractor,  # type: ignore[override]
-            recursive=True,
+            file_extractor=file_extractor,
         ).load_data()
         return HaveDocumentsEvent(documents=documents)
 
@@ -937,6 +922,9 @@ class RAGWorkflow(Workflow):
         if data is None:
             return None  # Not all required events have arrived yet
         nodes_event, vector_store_event, embedding_event = data
+        nodes_event = cast(TransformedNodesEvent, nodes_event)
+        vector_store_event = cast(HaveVectorStoreEvent, vector_store_event)
+        embedding_event = cast(HaveEmbeddingEvent, embedding_event)
 
         args: Args = await ctx.get("args")
         nodes: list[BaseNode] = nodes_event.nodes
@@ -989,6 +977,8 @@ class RAGWorkflow(Workflow):
         if data is None:
             return None  # Not all required events have arrived yet
         vector_index_event, search_text_event = data
+        vector_index_event = cast(HaveVectorIndexEvent, vector_index_event)
+        search_text_event = cast(HaveSearchTextEvent, search_text_event)
 
         args: Args = await ctx.get("args")
         if args.verbose:
@@ -1007,10 +997,11 @@ class RAGWorkflow(Workflow):
     async def search_vector_index(
         self, ev: NodesRetrievedEvent | HaveSearchCommand, ctx: Context
     ) -> StopEvent | None:
-        data = ctx.collect_events(ev, [HaveVectorIndexEvent, HaveSearchCommand])
+        data = ctx.collect_events(ev, [NodesRetrievedEvent, HaveSearchCommand])
         if data is None:
             return None  # Not all required events have arrived yet
         nodes_event, _ = data
+        nodes_event = cast(NodesRetrievedEvent, nodes_event)
 
         nodes = nodes_event.retrieved_nodes
         return StopEvent(json.dumps(nodes, indent=2))
@@ -1038,6 +1029,8 @@ class RAGWorkflow(Workflow):
         if data is None:
             return None  # Not all required events have arrived yet
         _, llm_event, query_command = data
+        llm_event = cast(HaveLLMEvent, llm_event)
+        query_command = cast(HaveQueryCommand, query_command)
 
         args: Args = await ctx.get("args")
         if args.verbose:
@@ -1045,7 +1038,7 @@ class RAGWorkflow(Workflow):
 
         if args.verbose:
             print("Build LLM prompt")
-        qa_prompt = PromptTemplate("QUERY: {query_str}\n" "ANSWER: ")
+        qa_prompt = PromptTemplate("QUERY: {query_str}\nANSWER: ")
 
         if args.verbose:
             print("Build query string")
@@ -1072,6 +1065,9 @@ class RAGWorkflow(Workflow):
         if data is None:
             return None  # Not all required events have arrived yet
         nodes_event, llm_event, query_command = data
+        nodes_event = cast(NodesRetrievedEvent, nodes_event)
+        llm_event = cast(HaveLLMEvent, llm_event)
+        query_command = cast(HaveQueryCommand, query_command)
 
         args: Args = await ctx.get("args")
         if args.verbose:
@@ -1093,15 +1089,17 @@ class RAGWorkflow(Workflow):
         if args.verbose:
             print("Build LLM prompt")
         qa_prompt = PromptTemplate(
-            "CONTEXT information is below:\n"
-            "---------------------\n"
-            "{context_str}\n\n"
-            # "{chat_history_str}\n"
-            "---------------------\n"
-            "Given the context information and not prior knowledge, "
-            "answer the query.\n"
-            "QUERY: {query_str}\n"
-            "ANSWER: "
+            """
+            CONTEXT information is below:\n
+            ---------------------\n
+            {context_str}\n\n
+            {chat_history_str}\n
+            ---------------------\n
+            Given the context information and not prior knowledge,
+            answer the query.\n
+            QUERY: {query_str}\n
+            ANSWER:
+            """
         )
 
         if args.verbose:
