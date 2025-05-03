@@ -86,6 +86,41 @@
           };
         };
 
+      typed-argparse =
+        with pkgs.python312Packages; buildPythonPackage rec {
+          pname = "typed-argparse";
+          version = "0.3.1";
+          pyproject = true;
+
+          disabled = pythonOlder "3.8";
+
+          src = fetchPypi {
+            pname = "typed-argparse";
+            inherit version;
+            hash = "sha256-OqxhyqUCBuCA0JoAw/5VK8TmQnOb6u+J9fjBExtdWv4=";
+          };
+
+          pythonRemoveDeps = [];
+
+          build-system = [ setuptools ];
+
+          dependencies = [
+            typing-extensions
+          ];
+
+          # Tests are only available in the mono repo
+          doCheck = false;
+
+          pythonImportsCheck = [ "typed_argparse" ];
+
+          meta = with lib; {
+            description = "Fully typed argument parsing";
+            homepage = "https://pypi.org/project/typed-argparse/";
+            license = licenses.mit;
+            maintainers = with maintainers; [ jwiegley ];
+          };
+        };
+
       pythonEnv = pkgs.python312.withPackages (
         python-pkgs: with python-pkgs; [
           stdenv
@@ -104,6 +139,7 @@
           llama-index-readers-file
           llama-index-vector-stores-postgres
           llama-parse
+          typed-argparse
           nltk
           numpy_2
           orgparse
@@ -130,7 +166,9 @@
         nativeBuildInputs = [
           pythonEnv
           black                 # Python code formatter
-          pyright               # LSP server for Python
+          # pyright               # LSP server for Python
+          basedpyright          # LSP server for Python
+          isort                 # Manage imports
         ];
       };
     });
