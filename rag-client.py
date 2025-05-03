@@ -1,26 +1,31 @@
 #!/usr/bin/env python
 
-from abc import abstractmethod
 import asyncio
 import base64
+from collections.abc import Sequence
 import hashlib
 import json
+import logging
 import os
 import sys
+import typed_argparse as tap
+
+from abc import abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 from typing import Any, Literal, NoReturn, cast, no_type_check, override
+from typed_argparse import TypedArgs, arg
+from xdg_base_dirs import xdg_cache_home
+from orgparse.node import OrgNode
 
 from llama_index.core.data_structs.data_structs import IndexDict
 from llama_index.core.indices.base import BaseIndex
 from llama_index.core.vector_stores.simple import SimpleVectorStore
-from pydantic import RootModel
-import typed_argparse as tap
 from llama_index.core import (
-    Document,
     PromptTemplate,
+    Settings,
     SimpleDirectoryReader,
     StorageContext,
     VectorStoreIndex,
@@ -28,7 +33,10 @@ from llama_index.core import (
 from llama_index.core.base.embeddings.base import Embedding
 from llama_index.core.embeddings import BaseEmbedding
 from llama_index.core.extractors import QuestionsAnsweredExtractor
-from llama_index.core.indices import load_index_from_storage
+from llama_index.core.indices import (
+    load_index_from_storage,  # pyright: ignore[reportUnknownVariableType]
+)
+from llama_index.core.ingestion import IngestionPipeline
 from llama_index.core.llms.llm import LLM
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.readers.base import BaseReader
@@ -36,10 +44,8 @@ from llama_index.core.schema import (
     BaseNode,
     Document,
     Node,
-    NodeWithScore,
+    TransformComponent,
 )
-from llama_index.core.storage.storage_context import StorageContext
-# from llama_index.core.tools import QueryEngineTool, ToolMetadata
 from llama_index.core.vector_stores.types import BasePydanticVectorStore
 from llama_index.core.workflow import (
     Context,
@@ -47,30 +53,41 @@ from llama_index.core.workflow import (
     StartEvent,
     StopEvent,
     Workflow,
-    step,
+    step,  # pyright: ignore[reportUnknownVariableType]
 )
-from llama_index.embeddings.gemini import GeminiEmbedding
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from llama_index.embeddings.ollama import OllamaEmbedding
-from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.embeddings.openai_like import OpenAILikeEmbedding
-from llama_index.llms.llama_cpp import LlamaCPP
-from llama_index.llms.ollama import Ollama
+
+# from llama_index.utils.workflow import draw_most_recent_execution
+
+from llama_index.embeddings.huggingface import (  # pyright: ignore[reportMissingTypeStubs]
+    HuggingFaceEmbedding,
+)
+from llama_index.embeddings.ollama import (  # pyright: ignore[reportMissingTypeStubs]
+    OllamaEmbedding,
+)
+from llama_index.embeddings.openai import (  # pyright: ignore[reportMissingTypeStubs]
+    OpenAIEmbedding,
+)
+from llama_index.embeddings.openai_like import (  # pyright: ignore[reportMissingTypeStubs]
+    OpenAILikeEmbedding,
+)
+from llama_index.llms.llama_cpp import (  # pyright: ignore[reportMissingTypeStubs]
+    LlamaCPP,
+)
+from llama_index.llms.ollama import Ollama  # pyright: ignore[reportMissingTypeStubs]
 from llama_index.llms.openai import OpenAI
-from llama_index.llms.openai_like import OpenAILike
-from llama_index.vector_stores.postgres import PGVectorStore
-from orgparse.node import OrgNode
-from typed_argparse import TypedArgs, arg
-from xdg_base_dirs import xdg_cache_home
+from llama_index.llms.openai_like import (  # pyright: ignore[reportMissingTypeStubs]
+    OpenAILike,
+)
+from llama_index.vector_stores.postgres import (  # pyright: ignore[reportMissingTypeStubs]
+    PGVectorStore,
+)
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
 
 ### Utility functions
 
 
-class NodeWithScoreList(RootModel[list[NodeWithScore]]):
-    pass
+logger = logging.getLogger("rag-client")
 
 
 def error(msg: str) -> NoReturn:
@@ -85,7 +102,7 @@ def parse_prefixes(prefixes: list[str], s: str) -> tuple[str | None, str]:
     return None, s  # No matching prefix found
 
 
-def list_files(directory: Path, recursive=False) -> list[Path]:
+def list_files(directory: Path, recursive: bool = False) -> list[Path]:
     if recursive:
         file_list: list[Path] = []
         for root, _, files in os.walk(directory):
@@ -225,6 +242,9 @@ class Args(TypedArgs):
     )
     llm_base_url: str | None = arg(
         help="URL to use for talking with LLM (default depends on LLM)",
+    )
+    stream: bool = arg(
+        help="Stream output as it arrives from LLM",
     )
     timeout: int = arg(
         default=60,
@@ -373,7 +393,7 @@ class LlamaCppEmbedding(BaseEmbedding):
 @dataclass
 class VectorStoreObject:
     @abstractmethod
-    def construct(self, _verbose: bool = False) -> BasePydanticVectorStore:
+    def construct(self) -> BasePydanticVectorStore:
         pass
 
 
@@ -392,9 +412,8 @@ class PGVectorStoreObject(VectorStoreObject):
     hnsw_dist_method: str
 
     @override
-    def construct(self, verbose: bool = False) -> BasePydanticVectorStore:
-        if verbose:
-            print("Setup PostgreSQL vector store")
+    def construct(self) -> BasePydanticVectorStore:
+        logger.info("Setup PostgreSQL vector store")
         return PGVectorStore.from_params(
             database=self.database,
             host=self.host,
@@ -422,11 +441,10 @@ class PGVectorStoreObject(VectorStoreObject):
 class EmbeddingObject:
     base_url: str | None
 
-    def construct(self, model: str, verbose: bool = False) -> BaseEmbedding | NoReturn:
+    def construct(self, model: str) -> BaseEmbedding | NoReturn:
         prefix, model = parse_prefixes(
             [
                 "HuggingFace:",
-                "Gemini:",
                 "Ollama:",
                 "OpenAILike:",
                 "OpenAI:",
@@ -434,12 +452,9 @@ class EmbeddingObject:
             ],
             model,
         )
-        if verbose:
-            print(f"Load embedding {prefix}:{model}")
+        logger.info(f"Load embedding {prefix}:{model}")
         if prefix == "HuggingFace:":
             return HuggingFaceEmbedding(model_name=model)
-        elif prefix == "Gemini:":
-            return GeminiEmbedding(model_name=model)
         elif prefix == "Ollama:":
             return OllamaEmbedding(
                 model_name=model,
@@ -479,8 +494,7 @@ class LLMObject:
             model,
         )
 
-        if verbose:
-            print(f"Load LLM {prefix}:{model}")
+        logger.info(f"Load LLM {prefix}:{model}")
         if prefix == "Ollama:":
             return Ollama(
                 model=model,
@@ -532,6 +546,10 @@ class LLMObject:
 ### Events
 
 
+class ProgressEvent(Event):
+    msg: str
+
+
 class HaveSearchTextEvent(Event):
     text: str
 
@@ -548,6 +566,10 @@ class HaveChatCommand(Event):
     pass
 
 
+class HaveQueryEvent(Event):
+    query: str
+
+
 class HaveVectorStoreEvent(Event):
     vector_store: BasePydanticVectorStore
 
@@ -561,7 +583,7 @@ class HaveVectorIndexEvent(Event):
 
 
 class NodesRetrievedEvent(Event):
-    retrieved_nodes: list[dict[str, Any]]
+    retrieved_nodes: list[dict[str, Any]]  # pyright: ignore[reportExplicitAny]
 
 
 class HaveLLMEvent(Event):
@@ -592,16 +614,8 @@ class HaveDocumentsEvent(Event):
     documents: list[Document]
 
 
-class HaveNodesEvent(Event):
-    nodes: list[BaseNode]
-
-
 class TransformedNodesEvent(Event):
-    nodes: list[BaseNode]
-
-
-class EmbeddedNodesEvent(Event):
-    nodes: list[BaseNode]
+    nodes: Sequence[BaseNode]
 
 
 class InMemoryVectorStoreEvent(Event):
@@ -665,13 +679,11 @@ class RAGWorkflow(Workflow):
     ) -> HaveVectorStoreEvent | InMemoryVectorStoreEvent | NoInMemoryVectorStoreEvent:
         args: Args = await ctx.get("args")
         if args.db_name is None:
-            if args.verbose:
-                print("In-memory vector store")
+            logger.info("In-memory vector store")
             ctx.send_event(InMemoryVectorStoreEvent())
             return HaveVectorStoreEvent(vector_store=SimpleVectorStore())
         else:
-            if args.verbose:
-                print("Postgres vector store")
+            logger.info("Postgres vector store")
             ctx.send_event(NoInMemoryVectorStoreEvent())
             vector_store = PGVectorStoreObject(
                 database=args.db_name,
@@ -685,7 +697,7 @@ class RAGWorkflow(Workflow):
                 hnsw_ef_construction=args.hnsw_ef_construction,
                 hnsw_ef_search=args.hnsw_ef_search,
                 hnsw_dist_method=args.hnsw_dist_method,
-            ).construct(args.verbose)
+            ).construct()
             return HaveVectorStoreEvent(vector_store=vector_store)
 
     @step
@@ -694,12 +706,11 @@ class RAGWorkflow(Workflow):
     ) -> HaveEmbeddingEvent | None:
         args: Args = await ctx.get("args")
         if args.embed_model is None:
-            if args.verbose:
-                print("No embedding model")
+            logger.info("No embedding model")
             return None
         else:
             embed_model = EmbeddingObject(base_url=args.embed_base_url).construct(
-                model=args.embed_model, verbose=args.verbose
+                model=args.embed_model
             )
             return HaveEmbeddingEvent(embed_model=embed_model)
 
@@ -709,8 +720,7 @@ class RAGWorkflow(Workflow):
     ) -> HaveLLMEvent | NoLLMEvent:
         args: Args = await ctx.get("args")
         if args.llm is None:
-            if args.verbose:
-                print("No LLM")
+            logger.info("No LLM")
             return NoLLMEvent()
         else:
             llm = LLMObject(
@@ -732,8 +742,7 @@ class RAGWorkflow(Workflow):
     ) -> HaveInputFilesEvent | NoInputFilesEvent | StopEvent:
         args: Args = await ctx.get("args")
         if args.from_ is None:
-            if args.verbose:
-                print("No input files")
+            logger.info("No input files")
             if args.command == "files":
                 return StopEvent([])
             else:
@@ -768,11 +777,9 @@ class RAGWorkflow(Workflow):
     async def locate_persist_dir(
         self, ev: HaveFingerprintEvent, ctx: Context
     ) -> ExistingPersistDirEvent | HavePersistDirEvent | NoExistingPersistDirEvent:
-        args: Args = await ctx.get("args")
         fingerprint: str = ev.fingerprint
         persist_dir = cache_dir(fingerprint)
-        if args.verbose:
-            print(f"Cache directory = {persist_dir}")
+        logger.info(f"Cache directory = {persist_dir}")
         if os.path.isdir(persist_dir):
             return ExistingPersistDirEvent(persist_dir=persist_dir)
         else:
@@ -787,19 +794,18 @@ class RAGWorkflow(Workflow):
         if data is None:
             return None  # Not all required events have arrived yet
         persist_dir_event, embedding_event = data
+        persist_dir_event = cast(ExistingPersistDirEvent, persist_dir_event)
+        embedding_event = cast(HaveEmbeddingEvent, embedding_event)
 
         args: Args = await ctx.get("args")
-        if args.verbose:
-            print("Load index from cache")
+        logger.info("Load index from cache")
         global Settings
         embed_model: BaseEmbedding = embedding_event.embed_model
         Settings.embed_model = embed_model
-        if args.chunk_size is not None:
-            Settings.chunk_size = args.chunk_size
-        if args.chunk_overlap is not None:
-            Settings.chunk_overlap = args.chunk_overlap
+        Settings.chunk_size = args.chunk_size
+        Settings.chunk_overlap = args.chunk_overlap
         persist_dir: Path = persist_dir_event.persist_dir
-        vector_index = load_index_from_storage(
+        vector_index: BaseIndex[IndexDict] = load_index_from_storage(
             StorageContext.from_defaults(persist_dir=str(persist_dir))
         )
         return HaveVectorIndexEvent(vector_index=vector_index)
@@ -807,25 +813,40 @@ class RAGWorkflow(Workflow):
     @step
     async def load_index_from_vector_store(
         self,
-        ev: HaveVectorStoreEvent | NoInputFilesEvent | NoInMemoryVectorStoreEvent,
+        ev: (
+            HaveVectorStoreEvent
+            | HaveEmbeddingEvent
+            | NoInputFilesEvent
+            | NoInMemoryVectorStoreEvent
+        ),
         ctx: Context,
     ) -> HaveVectorIndexEvent | None:
         data = ctx.collect_events(
-            ev, [HaveVectorStoreEvent, NoInputFilesEvent, NoInMemoryVectorStoreEvent]
+            ev,
+            [
+                HaveVectorStoreEvent,
+                HaveEmbeddingEvent,
+                NoInputFilesEvent,
+                NoInMemoryVectorStoreEvent,
+            ],
         )
         if data is None:
             return None  # Not all required events have arrived yet
-        vector_store_event, _, _ = data
+        vector_store_event, embedding_event, _, _ = data
+        vector_store_event = cast(HaveVectorStoreEvent, vector_store_event)
+        embedding_event = cast(HaveEmbeddingEvent, embedding_event)
 
         vector_store = vector_store_event.vector_store
 
         args: Args = await ctx.get("args")
-        if args.verbose:
-            print("Load index from database")
-        vector_index = VectorStoreIndex.from_vector_store(
-            vector_store=vector_store,
-            # embed_model=model,        # jww (2025-05-02): Is this needed?
-            show_progress=args.verbose,
+        logger.info("Load index from database")
+        embed_model: BaseEmbedding = embedding_event.embed_model
+        vector_index: VectorStoreIndex = (
+            VectorStoreIndex.from_vector_store(  # pyright: ignore[reportUnknownMemberType]
+                vector_store=vector_store,
+                embed_model=embed_model,
+                show_progress=args.verbose,
+            )
         )
         return HaveVectorIndexEvent(vector_index=vector_index)
 
@@ -837,13 +858,11 @@ class RAGWorkflow(Workflow):
         if data is None:
             return None  # Not all required events have arrived yet
         input_files_event, _ = data
-
-        args: Args = await ctx.get("args")
+        input_files_event = cast(HaveInputFilesEvent, input_files_event)
 
         file_extractor: dict[str, BaseReader] = {".org": OrgReader()}
 
-        if args.verbose:
-            print("Read documents from disk")
+        logger.info("Read documents from disk")
         input_files: list[Path] = input_files_event.input_files
         documents = SimpleDirectoryReader(
             input_files=input_files,
@@ -852,60 +871,76 @@ class RAGWorkflow(Workflow):
         return HaveDocumentsEvent(documents=documents)
 
     @step
-    async def split_documents(
-        self, ev: HaveDocumentsEvent, ctx: Context
-    ) -> HaveNodesEvent:
+    async def split_documents_without_llm(
+        self, ev: HaveDocumentsEvent | NoLLMEvent, ctx: Context
+    ) -> TransformedNodesEvent | None:
+        data = ctx.collect_events(ev, [HaveDocumentsEvent, NoLLMEvent])
+        if data is None:
+            return None  # Not all required events have arrived yet
+        documents_event, _ = data
+        documents_event = cast(HaveDocumentsEvent, documents_event)
+
         args: Args = await ctx.get("args")
         documents: list[Document] = ev.documents
 
-        # Basic text chunking
-        splitter = SentenceSplitter(
-            chunk_size=args.chunk_size,
-            chunk_overlap=args.chunk_overlap,
-            include_metadata=True,
+        pipeline = IngestionPipeline(
+            transformations=[
+                SentenceSplitter(
+                    chunk_size=args.chunk_size,
+                    chunk_overlap=args.chunk_overlap,
+                    include_metadata=True,
+                ),
+                # # Semantic-aware splitting
+                # SemanticSplitterNodeParser(
+                #     buffer_size=256,
+                #     breakpoint_percentile_threshold=95
+                # )
+            ]
         )
-
-        # # Semantic-aware splitting
-        # semantic_splitter = SemanticSplitterNodeParser(
-        #     buffer_size=256,
-        #     breakpoint_percentile_threshold=95
-        # )
-
-        nodes: list[BaseNode] = splitter(documents)
-        return HaveNodesEvent(nodes=nodes)
-
-    @step
-    async def transform_nodes(
-        self, ev: HaveNodesEvent | NoLLMEvent, ctx: Context
-    ) -> TransformedNodesEvent | None:
-        data = ctx.collect_events(ev, [HaveNodesEvent, NoLLMEvent])
-        if data is None:
-            return None  # Not all required events have arrived yet
-        nodes_event, _ = data
-
-        # args: Args = await ctx.get("args")
-        nodes: list[BaseNode] = nodes_event.nodes
+        # jww (2025-05-03): Make num_workers here customizable
+        nodes: Sequence[BaseNode] = await pipeline.arun(
+            documents=documents, num_workers=4
+        )
         return TransformedNodesEvent(nodes=nodes)
 
     @step
-    async def transform_nodes_with_llm(
-        self, ev: HaveNodesEvent | HaveLLMEvent, ctx: Context
+    async def split_documents_with_llm(
+        self, ev: HaveDocumentsEvent | HaveLLMEvent, ctx: Context
     ) -> TransformedNodesEvent | None:
-        data = ctx.collect_events(ev, [HaveNodesEvent, HaveLLMEvent])
+        data = ctx.collect_events(ev, [HaveDocumentsEvent, HaveLLMEvent])
         if data is None:
             return None  # Not all required events have arrived yet
-        nodes_event, llm_event = data
+        documents_event, llm_event = data
+        documents_event = cast(HaveDocumentsEvent, documents_event)
+        llm_event = cast(HaveLLMEvent, llm_event)
+        llm: LLM = llm_event.llm
 
         args: Args = await ctx.get("args")
-        nodes: list[BaseNode] = nodes_event.nodes
+        documents: list[Document] = ev.documents
+
+        transformations: list[TransformComponent] = [
+            SentenceSplitter(
+                chunk_size=args.chunk_size,
+                chunk_overlap=args.chunk_overlap,
+                include_metadata=True,
+            ),
+            # # Semantic-aware splitting
+            # SemanticSplitterNodeParser(
+            #     buffer_size=256,
+            #     breakpoint_percentile_threshold=95
+            # )
+        ]
+
         if args.questions_answered is not None:
-            if args.verbose:
-                print(f"Generate {args.questions_answered} questions for each chunk")
-            llm: LLM = llm_event.llm
-            questions_answered_extractor = QuestionsAnsweredExtractor(
-                questions=args.questions_answered, llm=llm
+            logger.info(f"Generate {args.questions_answered} questions for each chunk")
+            transformations.append(
+                QuestionsAnsweredExtractor(questions=args.questions_answered, llm=llm)
             )
-            nodes = await questions_answered_extractor.acall(nodes)
+
+        pipeline = IngestionPipeline(transformations=transformations)
+        # jww (2025-05-03): Make num_workers here customizable
+        nodes = await pipeline.arun(documents=documents, num_workers=4)
+
         return TransformedNodesEvent(nodes=nodes)
 
     @step
@@ -925,12 +960,11 @@ class RAGWorkflow(Workflow):
         embedding_event = cast(HaveEmbeddingEvent, embedding_event)
 
         args: Args = await ctx.get("args")
-        nodes: list[BaseNode] = nodes_event.nodes
+        nodes: Sequence[BaseNode] = nodes_event.nodes
         vector_store: BasePydanticVectorStore = vector_store_event.vector_store
         embed_model: BaseEmbedding = embedding_event.embed_model
 
-        if args.verbose:
-            print("Create storage context")
+        logger.info("Create storage context")
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
         vector_index = VectorStoreIndex(
@@ -953,15 +987,16 @@ class RAGWorkflow(Workflow):
         if data is None:
             return None  # Not all required events have arrived yet
         vector_index_event, persist_dir_event, _ = data
-
-        args: Args = await ctx.get("args")
+        vector_index_event = cast(HaveVectorIndexEvent, vector_index_event)
+        persist_dir_event = cast(HavePersistDirEvent, persist_dir_event)
 
         vector_index: BaseIndex[IndexDict] = vector_index_event.vector_index
         persist_dir: Path = persist_dir_event.persist_dir
 
-        if args.verbose:
-            print("Write index to cache")
-        vector_index.storage_context.persist(persist_dir=persist_dir)
+        logger.info("Write index to cache")
+        vector_index.storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
+            persist_dir=persist_dir
+        )
 
         return None
 
@@ -979,15 +1014,12 @@ class RAGWorkflow(Workflow):
         search_text_event = cast(HaveSearchTextEvent, search_text_event)
 
         args: Args = await ctx.get("args")
-        if args.verbose:
-            print("Create retriever object")
+        logger.info("Create retriever object")
         vector_index = vector_index_event.vector_index
         retriever = vector_index.as_retriever(similarity_top_k=args.top_k)
-        if args.verbose:
-            print("Retrieve nodes from vector index")
+        logger.info("Retrieve nodes from vector index")
         nodes = await retriever.aretrieve(search_text_event.text)
-        if args.verbose:
-            print(f"{len(nodes)} nodes found in vector index")
+        logger.info(f"{len(nodes)} nodes found in vector index")
         nodes = [{"text": node.text, "metadata": node.metadata} for node in nodes]
         return NodesRetrievedEvent(retrieved_nodes=nodes)
 
@@ -1005,6 +1037,20 @@ class RAGWorkflow(Workflow):
         return StopEvent(json.dumps(nodes, indent=2))
 
     @step
+    async def cannot_search(
+        self, ev: NoVectorIndexEvent | HaveSearchCommand, ctx: Context
+    ) -> StopEvent | None:
+        data = ctx.collect_events(ev, [NoVectorIndexEvent, HaveSearchCommand])
+        if data is None:
+            return None  # Not all required events have arrived yet
+        no_vector_index_event, search_command = data
+        no_vector_index_event = cast(NoVectorIndexEvent, no_vector_index_event)
+        search_command = cast(HaveSearchCommand, search_command)
+        # jww (2025-05-03): Why is this output twice?
+        logger.error("Cannot search without a vector index")
+        return StopEvent()
+
+    @step
     async def no_vector_index(
         self,
         ev: NoInputFilesEvent | InMemoryVectorStoreEvent,
@@ -1016,60 +1062,39 @@ class RAGWorkflow(Workflow):
         return NoVectorIndexEvent()
 
     @step
-    async def query_llm(
+    async def submit_query_only(
         self,
-        ev: NoVectorIndexEvent | HaveLLMEvent | HaveQueryCommand,
+        ev: NoVectorIndexEvent | HaveQueryCommand,
         ctx: Context,
-    ) -> StopEvent | None:
-        data = ctx.collect_events(
-            ev, [NoVectorIndexEvent, HaveLLMEvent, HaveQueryCommand]
-        )
+    ) -> HaveQueryEvent | None:
+        data = ctx.collect_events(ev, [NoVectorIndexEvent, HaveQueryCommand])
         if data is None:
             return None  # Not all required events have arrived yet
-        _, llm_event, query_command = data
-        llm_event = cast(HaveLLMEvent, llm_event)
+        _, query_command = data
         query_command = cast(HaveQueryCommand, query_command)
 
-        args: Args = await ctx.get("args")
-        if args.verbose:
-            print("Create retriever object")
-
-        if args.verbose:
-            print("Build LLM prompt")
+        logger.info("Build prompt")
         qa_prompt = PromptTemplate("QUERY: {query_str}\nANSWER: ")
 
-        if args.verbose:
-            print("Build query string")
+        logger.info("Build query string")
         query = qa_prompt.format(
             query_str=query_command.query,
         )
-        if args.verbose:
-            print("Submit query to LLM")
-        llm = llm_event.llm
-        response = await llm.acomplete(query)
-        response = clean_special_tokens(response.text)
 
-        return StopEvent(response)
+        return HaveQueryEvent(query=query)
 
     @step
-    async def query_vector_index(
+    async def query_against_vector_index(
         self,
-        ev: NodesRetrievedEvent | HaveLLMEvent | HaveQueryCommand,
+        ev: NodesRetrievedEvent | HaveQueryCommand,
         ctx: Context,
-    ) -> StopEvent | None:
-        data = ctx.collect_events(
-            ev, [NodesRetrievedEvent, HaveLLMEvent, HaveQueryCommand]
-        )
+    ) -> HaveQueryEvent | None:
+        data = ctx.collect_events(ev, [NodesRetrievedEvent, HaveQueryCommand])
         if data is None:
             return None  # Not all required events have arrived yet
-        nodes_event, llm_event, query_command = data
+        nodes_event, query_command = data
         nodes_event = cast(NodesRetrievedEvent, nodes_event)
-        llm_event = cast(HaveLLMEvent, llm_event)
         query_command = cast(HaveQueryCommand, query_command)
-
-        args: Args = await ctx.get("args")
-        if args.verbose:
-            print("Create retriever object")
 
         context_nodes = nodes_event.retrieved_nodes
         context_str = "\n".join([n["text"] for n in context_nodes])
@@ -1084,8 +1109,7 @@ class RAGWorkflow(Workflow):
         # else:
         #     chat_history_str = ""
 
-        if args.verbose:
-            print("Build LLM prompt")
+        logger.info("Build LLM prompt")
         qa_prompt = PromptTemplate(
             """
             CONTEXT information is below:\n
@@ -1100,23 +1124,50 @@ class RAGWorkflow(Workflow):
             """
         )
 
-        if args.verbose:
-            print("Build query string")
+        logger.info("Build query string")
         query = qa_prompt.format(
             context_str=context_str,
             # chat_history_str=chat_history_str,
             query_str=query_command.query,
         )
-        if args.verbose:
-            print("Submit query to LLM")
-        llm = llm_event.llm
-        response = await llm.acomplete(query)
-        response = clean_special_tokens(response.text)
 
-        return StopEvent(response)
+        return HaveQueryEvent(query=query)
 
     @step
-    async def chat_vector_index(
+    async def query_llm(
+        self,
+        ev: HaveQueryEvent | HaveLLMEvent | HaveQueryCommand,
+        ctx: Context,
+    ) -> StopEvent | None:
+        data = ctx.collect_events(ev, [HaveQueryEvent, HaveLLMEvent, HaveQueryCommand])
+        if data is None:
+            return None  # Not all required events have arrived yet
+        have_query_event, llm_event, _ = data
+        have_query_event = cast(HaveQueryEvent, have_query_event)
+        llm_event = cast(HaveLLMEvent, llm_event)
+
+        args: Args = await ctx.get("args")
+
+        logger.info("Submit query to LLM")
+        query = have_query_event.query
+        llm = llm_event.llm
+        if args.stream:
+            generator = await llm.astream_complete(query)
+            async for response in generator:
+                msg = response.delta
+                if msg is not None:
+                    msg = clean_special_tokens(msg)
+                    # Allow the workflow to stream this piece of response
+                    ctx.write_event_to_stream(ProgressEvent(msg=msg))
+
+            return StopEvent()
+        else:
+            response = await llm.acomplete(query)
+            response = clean_special_tokens(response.text)
+            return StopEvent(response)
+
+    @step
+    async def chat_with_vector_index(
         self,
         ev: HaveVectorIndexEvent | HaveChatCommand,
         ctx: Context,
@@ -1125,10 +1176,10 @@ class RAGWorkflow(Workflow):
         if data is None:
             return None  # Not all required events have arrived yet
         vector_index_event, chat_command = data
+        vector_index_event = cast(HaveVectorIndexEvent, vector_index_event)
+        chat_command = cast(HaveChatCommand, chat_command)
 
-        args: Args = await ctx.get("args")
-        if args.verbose:
-            print("Create retriever object")
+        logger.info("Create retriever object")
         return StopEvent()
 
 
@@ -1139,10 +1190,28 @@ async def rag_client(args: Args):
     rag_workflow = RAGWorkflow(verbose=args.verbose, timeout=args.timeout)
     ctx = Context(rag_workflow)
     await ctx.set("args", args)
-    return await rag_workflow.run(ctx=ctx)
+
+    handler = rag_workflow.run(ctx=ctx)
+
+    async for ev in handler.stream_events():
+        if isinstance(ev, ProgressEvent):
+            print(ev.msg, end="")
+
+    result = await handler
+    # draw_most_recent_execution(workflow, filename="execution_log.html")
+    # draw_all_possible_flows(MyWorkflow, filename="streaming_workflow.html")
+    return result
 
 
 def main(args: Args):
+    logging.basicConfig(
+        stream=sys.stdout,
+        encoding="utf-8",
+        level=logging.INFO if args.verbose else logging.WARN,
+        format="%(asctime)s [%(levelname)s] %(message)s",  # Log message format
+        datefmt="%H:%M:%S",
+    )
+
     result = asyncio.run(rag_client(args))
     print(result)
 

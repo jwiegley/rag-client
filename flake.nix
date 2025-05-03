@@ -12,6 +12,15 @@
       version = builtins.substring 0 8 self.lastModifiedDate;
       pkgs = import nixpkgs {
         inherit system;
+        overlays = [
+          (final: prev: {
+            python312Packages = prev.python312Packages // {
+              spacy = prev.python312Packages.spacy.overrideAttrs (old: {
+                meta = old.meta // { broken = false; };
+              });
+            };
+          })
+        ];
       };
 
       llama-index-llms-llama-cpp =
@@ -86,6 +95,42 @@
           };
         };
 
+      llama-index-utils-workflow =
+        with pkgs.python312Packages; buildPythonPackage rec {
+          pname = "llama-index-utils-workflow";
+          version = "0.3.1";
+          pyproject = true;
+
+          disabled = pythonOlder "3.8";
+
+          src = fetchPypi {
+            pname = "llama_index_utils_workflow";
+            inherit version;
+            hash = "sha256-Cv3Nqq4uJDrpkr/9+7PunJUHE2aw4EczPEnpd0clkpA=";
+          };
+
+          pythonRemoveDeps = [];
+
+          build-system = [ poetry-core ];
+
+          dependencies = [
+            llama-index-core
+            pyvis
+          ];
+
+          # Tests are only available in the mono repo
+          doCheck = false;
+
+          pythonImportsCheck = [ "llama_index.utils.workflow" ];
+
+          meta = with lib; {
+            description = "LlamaIndex Workflow Utilities";
+            homepage = "https://github.com/run-llama/llama_index/tree/main/llama-index-integrations/llms/llama-index-utils-workflow";
+            license = licenses.mit;
+            maintainers = with maintainers; [ jwiegley ];
+          };
+        };
+
       typed-argparse =
         with pkgs.python312Packages; buildPythonPackage rec {
           pname = "typed-argparse";
@@ -126,8 +171,6 @@
           stdenv
           venvShellHook
           llama-index-core
-          llama-index-embeddings-gemini
-          llama-index-embeddings-google
           llama-index-embeddings-huggingface
           llama-index-embeddings-ollama
           llama-index-embeddings-openai
@@ -138,6 +181,7 @@
           llama-index-llms-openai-like
           llama-index-readers-file
           llama-index-vector-stores-postgres
+          # llama-index-utils-workflow
           llama-parse
           typed-argparse
           nltk
@@ -168,7 +212,8 @@
           black                 # Python code formatter
           # pyright               # LSP server for Python
           basedpyright          # LSP server for Python
-          isort                 # Manage imports
+          isort                 # Sorts imports
+          autoflake             # Removes unused imports
         ];
       };
     });
