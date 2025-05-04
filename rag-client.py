@@ -243,7 +243,7 @@ class Args(TypedArgs):
     llm_base_url: str | None = arg(
         help="URL to use for talking with LLM (default depends on LLM)",
     )
-    stream: bool = arg(
+    streaming: bool = arg(
         help="Stream output as it arrives from LLM",
     )
     timeout: int = arg(
@@ -550,8 +550,8 @@ class ProgressEvent(Event):
     msg: str
 
 
-class HaveSearchTextEvent(Event):
-    text: str
+class CommandEvent(Event):
+    history: list[str]
 
 
 class HaveSearchCommand(Event):
@@ -559,15 +559,35 @@ class HaveSearchCommand(Event):
 
 
 class HaveQueryCommand(Event):
-    query: str
+    pass
 
 
 class HaveChatCommand(Event):
     pass
 
 
-class HaveQueryEvent(Event):
+class SearchInputEvent(Event):
+    text: str
+
+
+class SearchResultEvent(Event):
+    nodes: list[dict[str, Any]]  # pyright: ignore[reportExplicitAny]
+
+
+class QueryInputEvent(Event):
     query: str
+    history: list[str]
+
+
+class QueryBuiltEvent(Event):
+    user_string: str
+    query: str
+    history: list[str]
+
+
+class QueryResponseEvent(Event):
+    response: str
+    history: list[str]
 
 
 class HaveVectorStoreEvent(Event):
@@ -580,10 +600,6 @@ class PopulatedVectorStoreEvent(Event):
 
 class HaveVectorIndexEvent(Event):
     vector_index: BaseIndex[IndexDict]
-
-
-class NodesRetrievedEvent(Event):
-    retrieved_nodes: list[dict[str, Any]]  # pyright: ignore[reportExplicitAny]
 
 
 class HaveLLMEvent(Event):
@@ -651,25 +667,36 @@ class NoExistingPersistDirEvent(Event):
 
 class RAGWorkflow(Workflow):
     @step
-    async def rag_workflow(
-        self, _ev: StartEvent, ctx: Context
+    async def rag_workflow(self, _ev: StartEvent) -> CommandEvent:
+        return CommandEvent(history=[])
+
+    @step
+    async def process_command(
+        self, ev: CommandEvent, ctx: Context
     ) -> (
-        HaveSearchTextEvent
+        SearchInputEvent
+        | QueryInputEvent
         | HaveSearchCommand
         | HaveQueryCommand
         | HaveChatCommand
         | StopEvent
     ):
         args: Args = await ctx.get("args")
+        history: list[str] = ev.history
         match args.command:
             case "search":
-                ctx.send_event(HaveSearchTextEvent(text=args.args[0]))
-                return HaveSearchCommand()
+                ctx.send_event(HaveSearchCommand())
+                return SearchInputEvent(text=args.args[0])
             case "query":
-                ctx.send_event(HaveSearchTextEvent(text=args.args[0]))
-                return HaveQueryCommand(query=args.args[0])
+                ctx.send_event(HaveQueryCommand())
+                ctx.send_event(SearchInputEvent(text=args.args[0]))
+                return QueryInputEvent(query=args.args[0], history=history)
             case "chat":
-                return HaveChatCommand()
+                print("[USER]")
+                query = input("> ")
+                ctx.send_event(HaveChatCommand())
+                ctx.send_event(SearchInputEvent(text=query))
+                return QueryInputEvent(query=query, history=history)
             case _:
                 return StopEvent(f"Command unrecognized: {args.command}")
 
@@ -877,11 +904,16 @@ class RAGWorkflow(Workflow):
         data = ctx.collect_events(ev, [HaveDocumentsEvent, NoLLMEvent])
         if data is None:
             return None  # Not all required events have arrived yet
-        documents_event, _ = data
+        documents_event, no_llm_event = data
         documents_event = cast(HaveDocumentsEvent, documents_event)
+        no_llm_event = cast(NoLLMEvent, no_llm_event)
+
+        # Whenever we consume the NoLLMEvent, we must generate it again so
+        # that other steps can also use it
+        ctx.send_event(no_llm_event)
 
         args: Args = await ctx.get("args")
-        documents: list[Document] = ev.documents
+        documents: list[Document] = documents_event.documents
 
         pipeline = IngestionPipeline(
             transformations=[
@@ -913,10 +945,15 @@ class RAGWorkflow(Workflow):
         documents_event, llm_event = data
         documents_event = cast(HaveDocumentsEvent, documents_event)
         llm_event = cast(HaveLLMEvent, llm_event)
+
+        # Whenever we consume the HaveLLMEvent, we must generate it again so
+        # that other steps can also use it
+        ctx.send_event(llm_event)
+
         llm: LLM = llm_event.llm
 
         args: Args = await ctx.get("args")
-        documents: list[Document] = ev.documents
+        documents: list[Document] = documents_event.documents
 
         transformations: list[TransformComponent] = [
             SentenceSplitter(
@@ -990,6 +1027,10 @@ class RAGWorkflow(Workflow):
         vector_index_event = cast(HaveVectorIndexEvent, vector_index_event)
         persist_dir_event = cast(HavePersistDirEvent, persist_dir_event)
 
+        # Whenever we consume the HaveVectorIndexEvent, we must generate it
+        # again so that other steps can also use it
+        ctx.send_event(vector_index_event)
+
         vector_index: BaseIndex[IndexDict] = vector_index_event.vector_index
         persist_dir: Path = persist_dir_event.persist_dir
 
@@ -1003,52 +1044,42 @@ class RAGWorkflow(Workflow):
     @step
     async def retrieve_nodes(
         self,
-        ev: HaveVectorIndexEvent | HaveSearchTextEvent,
+        ev: HaveVectorIndexEvent | SearchInputEvent,
         ctx: Context,
-    ) -> NodesRetrievedEvent | None:
-        data = ctx.collect_events(ev, [HaveVectorIndexEvent, HaveSearchTextEvent])
+    ) -> SearchResultEvent | None:
+        data = ctx.collect_events(ev, [HaveVectorIndexEvent, SearchInputEvent])
         if data is None:
             return None  # Not all required events have arrived yet
-        vector_index_event, search_text_event = data
+        vector_index_event, search_input_event = data
         vector_index_event = cast(HaveVectorIndexEvent, vector_index_event)
-        search_text_event = cast(HaveSearchTextEvent, search_text_event)
+        search_input_event = cast(SearchInputEvent, search_input_event)
+
+        # Whenever we consume the HaveVectorIndexEvent, we must generate it
+        # again so that other steps can also use it
+        ctx.send_event(vector_index_event)
 
         args: Args = await ctx.get("args")
         logger.info("Create retriever object")
         vector_index = vector_index_event.vector_index
         retriever = vector_index.as_retriever(similarity_top_k=args.top_k)
         logger.info("Retrieve nodes from vector index")
-        nodes = await retriever.aretrieve(search_text_event.text)
+        nodes = await retriever.aretrieve(search_input_event.text)
         logger.info(f"{len(nodes)} nodes found in vector index")
         nodes = [{"text": node.text, "metadata": node.metadata} for node in nodes]
-        return NodesRetrievedEvent(retrieved_nodes=nodes)
+        return SearchResultEvent(nodes=nodes)
 
     @step
-    async def search_vector_index(
-        self, ev: NodesRetrievedEvent | HaveSearchCommand, ctx: Context
+    async def command_search(
+        self, ev: SearchResultEvent | HaveSearchCommand, ctx: Context
     ) -> StopEvent | None:
-        data = ctx.collect_events(ev, [NodesRetrievedEvent, HaveSearchCommand])
+        data = ctx.collect_events(ev, [SearchResultEvent, HaveSearchCommand])
         if data is None:
             return None  # Not all required events have arrived yet
         nodes_event, _ = data
-        nodes_event = cast(NodesRetrievedEvent, nodes_event)
+        nodes_event = cast(SearchResultEvent, nodes_event)
 
-        nodes = nodes_event.retrieved_nodes
+        nodes = nodes_event.nodes
         return StopEvent(json.dumps(nodes, indent=2))
-
-    @step
-    async def cannot_search(
-        self, ev: NoVectorIndexEvent | HaveSearchCommand, ctx: Context
-    ) -> StopEvent | None:
-        data = ctx.collect_events(ev, [NoVectorIndexEvent, HaveSearchCommand])
-        if data is None:
-            return None  # Not all required events have arrived yet
-        no_vector_index_event, search_command = data
-        no_vector_index_event = cast(NoVectorIndexEvent, no_vector_index_event)
-        search_command = cast(HaveSearchCommand, search_command)
-        # jww (2025-05-03): Why is this output twice?
-        logger.error("Cannot search without a vector index")
-        return StopEvent()
 
     @step
     async def no_vector_index(
@@ -1062,52 +1093,76 @@ class RAGWorkflow(Workflow):
         return NoVectorIndexEvent()
 
     @step
-    async def submit_query_only(
-        self,
-        ev: NoVectorIndexEvent | HaveQueryCommand,
-        ctx: Context,
-    ) -> HaveQueryEvent | None:
-        data = ctx.collect_events(ev, [NoVectorIndexEvent, HaveQueryCommand])
+    async def command_search_not_possible(
+        self, ev: NoVectorIndexEvent | HaveSearchCommand, ctx: Context
+    ) -> StopEvent | None:
+        data = ctx.collect_events(ev, [NoVectorIndexEvent, HaveSearchCommand])
         if data is None:
             return None  # Not all required events have arrived yet
-        _, query_command = data
-        query_command = cast(HaveQueryCommand, query_command)
+        no_vector_index_event, search_command = data
+        no_vector_index_event = cast(NoVectorIndexEvent, no_vector_index_event)
+        search_command = cast(HaveSearchCommand, search_command)
+
+        # Whenever we consume the NoVectorIndexEvent, we must generate it
+        # again so that other steps can also use it
+        ctx.send_event(no_vector_index_event)
+
+        # jww (2025-05-03): Why is this output twice?
+        logger.error("Cannot search without a vector index")
+        return StopEvent()
+
+    @step
+    async def query_only(
+        self,
+        ev: NoVectorIndexEvent | QueryInputEvent,
+        ctx: Context,
+    ) -> QueryBuiltEvent | None:
+        data = ctx.collect_events(ev, [NoVectorIndexEvent, QueryInputEvent])
+        if data is None:
+            return None  # Not all required events have arrived yet
+        no_vector_index_event, query_input_event = data
+        no_vector_index_event = cast(NoVectorIndexEvent, no_vector_index_event)
+        query_input_event = cast(QueryInputEvent, query_input_event)
+
+        # Whenever we consume the NoVectorIndexEvent, we must generate it
+        # again so that other steps can also use it
+        ctx.send_event(no_vector_index_event)
 
         logger.info("Build prompt")
         qa_prompt = PromptTemplate("QUERY: {query_str}\nANSWER: ")
 
         logger.info("Build query string")
         query = qa_prompt.format(
-            query_str=query_command.query,
+            query_str=query_input_event.query,
         )
 
-        return HaveQueryEvent(query=query)
+        return QueryBuiltEvent(
+            user_string=query_input_event.query,
+            query=query,
+            history=query_input_event.history,
+        )
 
     @step
-    async def query_against_vector_index(
+    async def query_with_context(
         self,
-        ev: NodesRetrievedEvent | HaveQueryCommand,
+        ev: SearchResultEvent | QueryInputEvent,
         ctx: Context,
-    ) -> HaveQueryEvent | None:
-        data = ctx.collect_events(ev, [NodesRetrievedEvent, HaveQueryCommand])
+    ) -> QueryBuiltEvent | None:
+        data = ctx.collect_events(ev, [SearchResultEvent, QueryInputEvent])
         if data is None:
             return None  # Not all required events have arrived yet
-        nodes_event, query_command = data
-        nodes_event = cast(NodesRetrievedEvent, nodes_event)
-        query_command = cast(HaveQueryCommand, query_command)
+        nodes_event, query_input_event = data
+        nodes_event = cast(SearchResultEvent, nodes_event)
+        query_input_event = cast(QueryInputEvent, query_input_event)
 
-        context_nodes = nodes_event.retrieved_nodes
+        context_nodes = nodes_event.nodes
         context_str = "\n".join([n["text"] for n in context_nodes])
 
-        # if event.mode == "chat":
-        #     chat_history_str = (
-        #         "\n".join([f"{msg.role}: {msg.content}" for msg in event.chat_history])
-        #         if event.chat_history
-        #         else ""
-        #     )
-        #     chat_history_str = "CHAT HISTORY: " + chat_history_str
-        # else:
-        #     chat_history_str = ""
+        if len(query_input_event.history) > 0:
+            chat_history_str = "\n".join(query_input_event.history)
+            chat_history_str = "CHAT HISTORY: " + chat_history_str
+        else:
+            chat_history_str = ""
 
         logger.info("Build LLM prompt")
         qa_prompt = PromptTemplate(
@@ -1127,31 +1182,39 @@ class RAGWorkflow(Workflow):
         logger.info("Build query string")
         query = qa_prompt.format(
             context_str=context_str,
-            # chat_history_str=chat_history_str,
-            query_str=query_command.query,
+            chat_history_str=chat_history_str,
+            query_str=query_input_event.query,
         )
 
-        return HaveQueryEvent(query=query)
+        return QueryBuiltEvent(
+            user_string=query_input_event.query,
+            query=query,
+            history=query_input_event.history,
+        )
 
     @step
     async def query_llm(
         self,
-        ev: HaveQueryEvent | HaveLLMEvent | HaveQueryCommand,
+        ev: QueryBuiltEvent | HaveLLMEvent,
         ctx: Context,
-    ) -> StopEvent | None:
-        data = ctx.collect_events(ev, [HaveQueryEvent, HaveLLMEvent, HaveQueryCommand])
+    ) -> QueryResponseEvent | None:
+        data = ctx.collect_events(ev, [QueryBuiltEvent, HaveLLMEvent])
         if data is None:
             return None  # Not all required events have arrived yet
-        have_query_event, llm_event, _ = data
-        have_query_event = cast(HaveQueryEvent, have_query_event)
+        query_built_event, llm_event = data
+        query_built_event = cast(QueryBuiltEvent, query_built_event)
         llm_event = cast(HaveLLMEvent, llm_event)
+
+        # Whenever we consume the HaveLLMEvent, we must generate it again so
+        # that other steps can also use it
+        ctx.send_event(llm_event)
 
         args: Args = await ctx.get("args")
 
         logger.info("Submit query to LLM")
-        query = have_query_event.query
+        query = query_built_event.query
         llm = llm_event.llm
-        if args.stream:
+        if args.streaming:
             generator = await llm.astream_complete(query)
             async for response in generator:
                 msg = response.delta
@@ -1160,27 +1223,49 @@ class RAGWorkflow(Workflow):
                     # Allow the workflow to stream this piece of response
                     ctx.write_event_to_stream(ProgressEvent(msg=msg))
 
-            return StopEvent()
+            # jww (2025-05-03): What to do here?
+            return QueryResponseEvent(response="", history=[])
         else:
             response = await llm.acomplete(query)
             response = clean_special_tokens(response.text)
-            return StopEvent(response)
+            return QueryResponseEvent(
+                response=response,
+                history=query_built_event.history
+                + [f"User: {query_built_event.user_string}", f"Assistant: {response}"],
+            )
 
     @step
-    async def chat_with_vector_index(
+    async def command_query(
         self,
-        ev: HaveVectorIndexEvent | HaveChatCommand,
+        ev: QueryResponseEvent | HaveQueryCommand,
         ctx: Context,
     ) -> StopEvent | None:
-        data = ctx.collect_events(ev, [HaveVectorIndexEvent, HaveChatCommand])
+        data = ctx.collect_events(ev, [QueryResponseEvent, HaveQueryCommand])
         if data is None:
             return None  # Not all required events have arrived yet
-        vector_index_event, chat_command = data
-        vector_index_event = cast(HaveVectorIndexEvent, vector_index_event)
-        chat_command = cast(HaveChatCommand, chat_command)
+        query_response_event, _ = data
+        query_response_event = cast(QueryResponseEvent, query_response_event)
 
-        logger.info("Create retriever object")
-        return StopEvent()
+        response = query_response_event.response
+        return StopEvent(response)
+
+    @step
+    async def command_chat(
+        self,
+        ev: QueryResponseEvent | HaveChatCommand,
+        ctx: Context,
+    ) -> CommandEvent | None:
+        data = ctx.collect_events(ev, [QueryResponseEvent, HaveChatCommand])
+        if data is None:
+            return None  # Not all required events have arrived yet
+        print(data)
+        query_response_event, _ = data
+        query_response_event = cast(QueryResponseEvent, query_response_event)
+
+        response = query_response_event.response
+        print(f"[LLM] {response}")
+
+        return CommandEvent(history=query_response_event.history)
 
 
 ### Main

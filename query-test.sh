@@ -89,6 +89,23 @@ case $1 in
             "$@"
         ;;
 
+    chat)
+        ./rag-client.py                                 \
+            --embed-model $embedding                    \
+            --embed-dim 1024                            \
+            --verbose                                   \
+            --chunk-size 512                            \
+            --chunk-overlap 20                          \
+            --top-k 20                                  \
+            --timeout 3600                              \
+            --from $input                               \
+            --db-name "vector_db"                       \
+            --db-table "uhj"                            \
+            --llm $llm                                  \
+            --llm-base-url "http://localhost:8080/v1"   \
+            "$@"
+        ;;
+
     *)
         ./rag-client.py                                         \
             --embed-model $embedding                            \
