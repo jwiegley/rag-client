@@ -2,62 +2,47 @@
 
 import asyncio
 import base64
-from collections.abc import Sequence
 import hashlib
 import json
 import logging
 import os
 import sys
-import typed_argparse as tap
-
 from abc import abstractmethod
+from collections.abc import Sequence
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
-from typing import Any, Literal, NoReturn, cast, no_type_check, override
-from typed_argparse import TypedArgs, arg
-from xdg_base_dirs import xdg_cache_home
-from orgparse.node import OrgNode
+from typing import Any, Literal, NoReturn, no_type_check, override
 
-from llama_index.core.data_structs.data_structs import IndexDict
-from llama_index.core.indices.base import BaseIndex
-from llama_index.core.vector_stores.simple import SimpleVectorStore
+from llama_index.core.base.base_retriever import BaseRetriever
+from llama_index.core.storage.chat_store import SimpleChatStore
+import typed_argparse as tap
 from llama_index.core import (
-    PromptTemplate,
+    ChatPromptTemplate,
     Settings,
     SimpleDirectoryReader,
     StorageContext,
     VectorStoreIndex,
 )
 from llama_index.core.base.embeddings.base import Embedding
+from llama_index.core.chat_engine.context import ContextChatEngine
+from llama_index.core.data_structs.data_structs import IndexDict
 from llama_index.core.embeddings import BaseEmbedding
 from llama_index.core.extractors import QuestionsAnsweredExtractor
 from llama_index.core.indices import (
     load_index_from_storage,  # pyright: ignore[reportUnknownVariableType]
 )
+from llama_index.core.indices.base import BaseIndex
 from llama_index.core.ingestion import IngestionPipeline
+from llama_index.core.llms import ChatMessage, MessageRole
 from llama_index.core.llms.llm import LLM
+from llama_index.core.memory import ChatMemoryBuffer, ChatSummaryMemoryBuffer
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.readers.base import BaseReader
-from llama_index.core.schema import (
-    BaseNode,
-    Document,
-    Node,
-    TransformComponent,
-)
+from llama_index.core.schema import BaseNode, Document, Node, TransformComponent
+from llama_index.core.vector_stores.simple import SimpleVectorStore
 from llama_index.core.vector_stores.types import BasePydanticVectorStore
-from llama_index.core.workflow import (
-    Context,
-    Event,
-    StartEvent,
-    StopEvent,
-    Workflow,
-    step,  # pyright: ignore[reportUnknownVariableType]
-)
-
-# from llama_index.utils.workflow import draw_most_recent_execution
-
 from llama_index.embeddings.huggingface import (  # pyright: ignore[reportMissingTypeStubs]
     HuggingFaceEmbedding,
 )
@@ -81,6 +66,9 @@ from llama_index.llms.openai_like import (  # pyright: ignore[reportMissingTypeS
 from llama_index.vector_stores.postgres import (  # pyright: ignore[reportMissingTypeStubs]
     PGVectorStore,
 )
+from orgparse.node import OrgNode
+from typed_argparse import TypedArgs, arg
+from xdg_base_dirs import xdg_cache_home
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -543,176 +531,125 @@ class LLMObject:
             error(f"LLM model not recognized: {model}")
 
 
-### Events
-
-
-class ProgressEvent(Event):
-    msg: str
-
-
-class CommandEvent(Event):
-    history: list[str]
-
-
-class HaveSearchCommand(Event):
-    pass
-
-
-class HaveQueryCommand(Event):
-    pass
-
-
-class HaveChatCommand(Event):
-    pass
-
-
-class SearchInputEvent(Event):
-    text: str
-
-
-class SearchResultEvent(Event):
-    nodes: list[dict[str, Any]]  # pyright: ignore[reportExplicitAny]
-
-
-class QueryInputEvent(Event):
-    query: str
-    history: list[str]
-
-
-class QueryBuiltEvent(Event):
-    user_string: str
-    query: str
-    history: list[str]
-
-
-class QueryResponseEvent(Event):
-    response: str
-    history: list[str]
-
-
-class HaveVectorStoreEvent(Event):
-    vector_store: BasePydanticVectorStore
-
-
-class PopulatedVectorStoreEvent(Event):
-    vector_store: BasePydanticVectorStore
-
-
-class HaveVectorIndexEvent(Event):
-    vector_index: BaseIndex[IndexDict]
-
-
-class HaveLLMEvent(Event):
-    llm: LLM
-
-
-class HaveEmbeddingEvent(Event):
-    embed_model: BaseEmbedding
-
-
-class HaveInputFilesEvent(Event):
-    input_files: list[Path]
-
-
-class HaveFingerprintEvent(Event):
-    fingerprint: str
-
-
-class HavePersistDirEvent(Event):
-    persist_dir: Path
-
-
-class ExistingPersistDirEvent(Event):
-    persist_dir: Path
-
-
-class HaveDocumentsEvent(Event):
-    documents: list[Document]
-
-
-class TransformedNodesEvent(Event):
-    nodes: Sequence[BaseNode]
-
-
-class InMemoryVectorStoreEvent(Event):
-    pass
-
-
-class NoInMemoryVectorStoreEvent(Event):
-    pass
-
-
-class NoEmbeddingEvent(Event):
-    pass
-
-
-class NoLLMEvent(Event):
-    pass
-
-
-class NoInputFilesEvent(Event):
-    pass
-
-
-class NoVectorIndexEvent(Event):
-    pass
-
-
-class NoExistingPersistDirEvent(Event):
-    pass
-
-
 ### Workflows
 
 
-class RAGWorkflow(Workflow):
-    @step
-    async def rag_workflow(self, _ev: StartEvent) -> CommandEvent:
-        return CommandEvent(history=[])
+@dataclass
+class RAGWorkflow:
+    args: Args
+    vector_store: BasePydanticVectorStore = field(default=SimpleVectorStore())
+    embed_model: BaseEmbedding | None = None
+    retriever: BaseRetriever | None = None
+    llm: LLM | None = None
+    fingerprint: str = ""
+    chat_memory: ChatMemoryBuffer | ChatSummaryMemoryBuffer | None = None
+    chat_history: list[ChatMessage] = []
+    chat_engine: ContextChatEngine | None = None
+    vector_index: BaseIndex[IndexDict] | None = None
 
-    @step
-    async def process_command(
-        self, ev: CommandEvent, ctx: Context
-    ) -> (
-        SearchInputEvent
-        | QueryInputEvent
-        | HaveSearchCommand
-        | HaveQueryCommand
-        | HaveChatCommand
-        | StopEvent
-    ):
-        args: Args = await ctx.get("args")
-        history: list[str] = ev.history
-        match args.command:
-            case "search":
-                ctx.send_event(HaveSearchCommand())
-                return SearchInputEvent(text=args.args[0])
-            case "query":
-                ctx.send_event(HaveQueryCommand())
-                ctx.send_event(SearchInputEvent(text=args.args[0]))
-                return QueryInputEvent(query=args.args[0], history=history)
-            case "chat":
-                print("[USER]")
-                query = input("> ")
-                ctx.send_event(HaveChatCommand())
-                ctx.send_event(SearchInputEvent(text=query))
-                return QueryInputEvent(query=query, history=history)
-            case _:
-                return StopEvent(f"Command unrecognized: {args.command}")
+    async def initialize(self):
+        self.vector_store, self.embed_model, self.llm = await asyncio.gather(
+            self.load_vector_store(),
+            self.load_embedding(),
+            self.load_llm(),
+        )
 
-    @step
-    async def load_vector_store(
-        self, _ev: StartEvent, ctx: Context
-    ) -> HaveVectorStoreEvent | InMemoryVectorStoreEvent | NoInMemoryVectorStoreEvent:
-        args: Args = await ctx.get("args")
+        input_files = await self.find_input_files()
+        if input_files is None:
+            self.vector_index = await self.load_index_from_vector_store()
+        else:
+            fp: str = await self.determine_fingerprint(input_files)
+            persist_dir = cache_dir(fp)
+            if self.fingerprint == fp and os.path.isdir(persist_dir):
+                self.vector_index = await self.load_index_from_cache(persist_dir)
+            else:
+                documents = await self.read_documents(input_files)
+                nodes = await self.split_documents(documents)
+                self.vector_index = await self.populate_vector_store(nodes)
+
+                if isinstance(self.vector_store, SimpleVectorStore):
+                    logger.info("Write index to cache")
+                    self.vector_index.storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
+                        persist_dir=persist_dir
+                    )
+
+        logger.info("Create retriever object")
+        args: Args = self.args
+        self.retriever = self.vector_index.as_retriever(similarity_top_k=args.top_k)
+
+        # jww (2025-05-04): TODO
+        query = ""
+        if self.llm is None:
+            nodes = await self.retrieve_nodes(query)
+        else:
+            chat_store = SimpleChatStore()
+            # chat_store = PostgresChatStore.from_uri(
+            #     uri="postgresql+asyncpg://postgres:password@127.0.0.1:5432/database",
+            # )
+
+            # jww (2025-05-04): Make this configurable
+            self.chat_memory = ChatMemoryBuffer.from_defaults(  # pyright: ignore[reportUnknownMemberType]
+                token_limit=1500,
+                chat_store=chat_store,
+                chat_story_key="user1",
+                llm=self.llm,
+            )
+            self.chat_memory = ChatSummaryMemoryBuffer.from_defaults(  # pyright: ignore[reportUnknownMemberType]
+                token_limit=1500,
+                summarize_prompt=(
+                    "The following is a conversation between the user and assistant. "
+                    "Write a concise summary about the contents of this conversation."
+                ),
+                chat_store=chat_store,
+                chat_story_key="user1",
+                llm=self.llm,
+            )
+            self.chat_engine = ContextChatEngine(
+                retriever=self.retriever,
+                llm=self.llm,
+                memory=self.chat_memory,
+                prefix_messages=[
+                    ChatMessage(
+                        # jww (2025-05-03): This should be configurable
+                        content="You are a helpful AI assistant.",
+                        role=MessageRole.SYSTEM,
+                    ),
+                ],
+            )
+
+            new_message = ChatMessage(role="user", content=query)
+            generator = await self.chat_engine.astream_chat(  # pyright: ignore[reportUnknownMemberType]
+                new_message, self.chat_history
+            )
+            token: str
+            async for token in generator.async_response_gen:
+                print(token, end="")
+
+    async def execute(self, _command: str, _args: list[str]) -> str:
+        return ""
+
+    #     match command:
+    #         case "search":
+    #             return SearchInputEvent(text=args.args[0])
+    #         case "query":
+    #             ctx.send_event(SearchInputEvent(text=args.args[0]))
+    #             return QueryInputEvent(query=args.args[0], history=history)
+    #         case "chat":
+    #             print("[USER]")
+    #             query = input("> ")
+    #             ctx.send_event(SearchInputEvent(text=query))
+    #             return QueryInputEvent(query=query, history=history)
+    #         case _:
+    #             return StopEvent(f"Command unrecognized: {args.command}")
+
+    async def load_vector_store(self):
+        args: Args = self.args
         if args.db_name is None:
             logger.info("In-memory vector store")
-            ctx.send_event(InMemoryVectorStoreEvent())
-            return HaveVectorStoreEvent(vector_store=SimpleVectorStore())
+            return SimpleVectorStore()
         else:
             logger.info("Postgres vector store")
-            ctx.send_event(NoInMemoryVectorStoreEvent())
-            vector_store = PGVectorStoreObject(
+            return PGVectorStoreObject(
                 database=args.db_name,
                 host=args.db_host,
                 password=args.db_pass,
@@ -725,32 +662,24 @@ class RAGWorkflow(Workflow):
                 hnsw_ef_search=args.hnsw_ef_search,
                 hnsw_dist_method=args.hnsw_dist_method,
             ).construct()
-            return HaveVectorStoreEvent(vector_store=vector_store)
 
-    @step
-    async def load_embedding(
-        self, _ev: StartEvent, ctx: Context
-    ) -> HaveEmbeddingEvent | None:
-        args: Args = await ctx.get("args")
+    async def load_embedding(self):
+        args: Args = self.args
         if args.embed_model is None:
             logger.info("No embedding model")
             return None
         else:
-            embed_model = EmbeddingObject(base_url=args.embed_base_url).construct(
+            return EmbeddingObject(base_url=args.embed_base_url).construct(
                 model=args.embed_model
             )
-            return HaveEmbeddingEvent(embed_model=embed_model)
 
-    @step
-    async def load_llm(
-        self, _ev: StartEvent, ctx: Context
-    ) -> HaveLLMEvent | NoLLMEvent:
-        args: Args = await ctx.get("args")
+    async def load_llm(self):
+        args: Args = self.args
         if args.llm is None:
             logger.info("No LLM")
-            return NoLLMEvent()
+            return None
         else:
-            llm = LLMObject(
+            return LLMObject(
                 base_url=args.llm_base_url,
                 api_key=args.llm_api_key,
                 api_version=args.llm_api_version,
@@ -761,199 +690,56 @@ class RAGWorkflow(Workflow):
                 timeout=args.timeout,
                 gpu_layers=args.gpu_layers,
             ).construct(args.llm, verbose=args.verbose)
-            return HaveLLMEvent(llm=llm)
 
-    @step
-    async def find_input_files(
-        self, _ev: StartEvent, ctx: Context
-    ) -> HaveInputFilesEvent | NoInputFilesEvent | StopEvent:
-        args: Args = await ctx.get("args")
+    async def find_input_files(self) -> list[Path] | None:
+        args: Args = self.args
         if args.from_ is None:
             logger.info("No input files")
-            if args.command == "files":
-                return StopEvent([])
-            else:
-                return NoInputFilesEvent()
+            return None
         else:
             input_files = read_files(args.from_, args.recursive)
-            if args.command == "files":
-                return StopEvent(input_files)
-            else:
-                return HaveInputFilesEvent(input_files=input_files)
+            return input_files
 
-    @step
-    async def determine_fingerprint(
-        self, ev: HaveInputFilesEvent, ctx: Context
-    ) -> HaveFingerprintEvent:
-        args: Args = await ctx.get("args")
-        input_files: list[Path] = ev.input_files
+    async def determine_fingerprint(self, input_files: list[Path]) -> str:
         fingerprint = [
             collection_hash(input_files),
-            hashlib.sha512(str(args.chunk_size).encode("utf-8")).hexdigest(),
-            hashlib.sha512(str(args.chunk_overlap).encode("utf-8")).hexdigest(),
+            hashlib.sha512(repr(self.args).encode("utf-8")).hexdigest(),
         ]
-        if args.embed_model is not None:
-            fingerprint.append(
-                hashlib.sha512(args.embed_model.encode("utf-8")).hexdigest()
-            )
         final_hash = "\n".join(fingerprint).encode("utf-8")
         final_base64 = base64.b64encode(final_hash).decode("utf-8")
-        return HaveFingerprintEvent(fingerprint=final_base64[0:32])
+        return final_base64[0:32]
 
-    @step
-    async def locate_persist_dir(
-        self, ev: HaveFingerprintEvent, ctx: Context
-    ) -> ExistingPersistDirEvent | HavePersistDirEvent | NoExistingPersistDirEvent:
-        fingerprint: str = ev.fingerprint
-        persist_dir = cache_dir(fingerprint)
-        logger.info(f"Cache directory = {persist_dir}")
-        if os.path.isdir(persist_dir):
-            return ExistingPersistDirEvent(persist_dir=persist_dir)
-        else:
-            ctx.send_event(NoExistingPersistDirEvent())
-            return HavePersistDirEvent(persist_dir=persist_dir)
-
-    @step
-    async def load_index_from_cache(
-        self, ev: ExistingPersistDirEvent | HaveEmbeddingEvent, ctx: Context
-    ) -> HaveVectorIndexEvent | None:
-        data = ctx.collect_events(ev, [ExistingPersistDirEvent, HaveEmbeddingEvent])
-        if data is None:
-            return None  # Not all required events have arrived yet
-        persist_dir_event, embedding_event = data
-        persist_dir_event = cast(ExistingPersistDirEvent, persist_dir_event)
-        embedding_event = cast(HaveEmbeddingEvent, embedding_event)
-
-        args: Args = await ctx.get("args")
+    async def load_index_from_cache(self, persist_dir: Path) -> BaseIndex[IndexDict]:
+        args: Args = self.args
         logger.info("Load index from cache")
         global Settings
-        embed_model: BaseEmbedding = embedding_event.embed_model
-        Settings.embed_model = embed_model
+        Settings.embed_model = self.embed_model
         Settings.chunk_size = args.chunk_size
         Settings.chunk_overlap = args.chunk_overlap
-        persist_dir: Path = persist_dir_event.persist_dir
-        vector_index: BaseIndex[IndexDict] = load_index_from_storage(
+        return load_index_from_storage(  # pyright: ignore[reportUnknownVariableType]
             StorageContext.from_defaults(persist_dir=str(persist_dir))
         )
-        return HaveVectorIndexEvent(vector_index=vector_index)
 
-    @step
-    async def load_index_from_vector_store(
-        self,
-        ev: (
-            HaveVectorStoreEvent
-            | HaveEmbeddingEvent
-            | NoInputFilesEvent
-            | NoInMemoryVectorStoreEvent
-        ),
-        ctx: Context,
-    ) -> HaveVectorIndexEvent | None:
-        data = ctx.collect_events(
-            ev,
-            [
-                HaveVectorStoreEvent,
-                HaveEmbeddingEvent,
-                NoInputFilesEvent,
-                NoInMemoryVectorStoreEvent,
-            ],
-        )
-        if data is None:
-            return None  # Not all required events have arrived yet
-        vector_store_event, embedding_event, _, _ = data
-        vector_store_event = cast(HaveVectorStoreEvent, vector_store_event)
-        embedding_event = cast(HaveEmbeddingEvent, embedding_event)
-
-        vector_store = vector_store_event.vector_store
-
-        args: Args = await ctx.get("args")
+    async def load_index_from_vector_store(self) -> VectorStoreIndex:
+        args: Args = self.args
         logger.info("Load index from database")
-        embed_model: BaseEmbedding = embedding_event.embed_model
-        vector_index: VectorStoreIndex = (
-            VectorStoreIndex.from_vector_store(  # pyright: ignore[reportUnknownMemberType]
-                vector_store=vector_store,
-                embed_model=embed_model,
-                show_progress=args.verbose,
-            )
+        return VectorStoreIndex.from_vector_store(  # pyright: ignore[reportUnknownMemberType]
+            vector_store=self.vector_store,
+            embed_model=self.embed_model,
+            show_progress=args.verbose,
         )
-        return HaveVectorIndexEvent(vector_index=vector_index)
 
-    @step
-    async def read_documents(
-        self, ev: HaveInputFilesEvent | NoExistingPersistDirEvent, ctx: Context
-    ) -> HaveDocumentsEvent | None:
-        data = ctx.collect_events(ev, [HaveInputFilesEvent, NoExistingPersistDirEvent])
-        if data is None:
-            return None  # Not all required events have arrived yet
-        input_files_event, _ = data
-        input_files_event = cast(HaveInputFilesEvent, input_files_event)
-
+    async def read_documents(self, input_files: list[Path]) -> list[Document]:
         file_extractor: dict[str, BaseReader] = {".org": OrgReader()}
 
         logger.info("Read documents from disk")
-        input_files: list[Path] = input_files_event.input_files
-        documents = SimpleDirectoryReader(
+        return SimpleDirectoryReader(
             input_files=input_files,
             file_extractor=file_extractor,
         ).load_data()
-        return HaveDocumentsEvent(documents=documents)
 
-    @step
-    async def split_documents_without_llm(
-        self, ev: HaveDocumentsEvent | NoLLMEvent, ctx: Context
-    ) -> TransformedNodesEvent | None:
-        data = ctx.collect_events(ev, [HaveDocumentsEvent, NoLLMEvent])
-        if data is None:
-            return None  # Not all required events have arrived yet
-        documents_event, no_llm_event = data
-        documents_event = cast(HaveDocumentsEvent, documents_event)
-        no_llm_event = cast(NoLLMEvent, no_llm_event)
-
-        # Whenever we consume the NoLLMEvent, we must generate it again so
-        # that other steps can also use it
-        ctx.send_event(no_llm_event)
-
-        args: Args = await ctx.get("args")
-        documents: list[Document] = documents_event.documents
-
-        pipeline = IngestionPipeline(
-            transformations=[
-                SentenceSplitter(
-                    chunk_size=args.chunk_size,
-                    chunk_overlap=args.chunk_overlap,
-                    include_metadata=True,
-                ),
-                # # Semantic-aware splitting
-                # SemanticSplitterNodeParser(
-                #     buffer_size=256,
-                #     breakpoint_percentile_threshold=95
-                # )
-            ]
-        )
-        # jww (2025-05-03): Make num_workers here customizable
-        nodes: Sequence[BaseNode] = await pipeline.arun(
-            documents=documents, num_workers=4
-        )
-        return TransformedNodesEvent(nodes=nodes)
-
-    @step
-    async def split_documents_with_llm(
-        self, ev: HaveDocumentsEvent | HaveLLMEvent, ctx: Context
-    ) -> TransformedNodesEvent | None:
-        data = ctx.collect_events(ev, [HaveDocumentsEvent, HaveLLMEvent])
-        if data is None:
-            return None  # Not all required events have arrived yet
-        documents_event, llm_event = data
-        documents_event = cast(HaveDocumentsEvent, documents_event)
-        llm_event = cast(HaveLLMEvent, llm_event)
-
-        # Whenever we consume the HaveLLMEvent, we must generate it again so
-        # that other steps can also use it
-        ctx.send_event(llm_event)
-
-        llm: LLM = llm_event.llm
-
-        args: Args = await ctx.get("args")
-        documents: list[Document] = documents_event.documents
+    async def split_documents(self, documents: list[Document]) -> Sequence[BaseNode]:
+        args: Args = self.args
 
         transformations: list[TransformComponent] = [
             SentenceSplitter(
@@ -961,331 +747,133 @@ class RAGWorkflow(Workflow):
                 chunk_overlap=args.chunk_overlap,
                 include_metadata=True,
             ),
-            # # Semantic-aware splitting
+            # jww (2025-05-04): Semantic-aware splitting
             # SemanticSplitterNodeParser(
             #     buffer_size=256,
             #     breakpoint_percentile_threshold=95
             # )
         ]
 
-        if args.questions_answered is not None:
+        if self.llm is not None and args.questions_answered is not None:
             logger.info(f"Generate {args.questions_answered} questions for each chunk")
             transformations.append(
-                QuestionsAnsweredExtractor(questions=args.questions_answered, llm=llm)
+                QuestionsAnsweredExtractor(
+                    questions=args.questions_answered, llm=self.llm
+                )
             )
 
         pipeline = IngestionPipeline(transformations=transformations)
         # jww (2025-05-03): Make num_workers here customizable
-        nodes = await pipeline.arun(documents=documents, num_workers=4)
+        return await pipeline.arun(documents=documents, num_workers=4)
 
-        return TransformedNodesEvent(nodes=nodes)
-
-    @step
     async def populate_vector_store(
-        self,
-        ev: TransformedNodesEvent | HaveVectorStoreEvent | HaveEmbeddingEvent,
-        ctx: Context,
-    ) -> HaveVectorIndexEvent | None:
-        data = ctx.collect_events(
-            ev, [TransformedNodesEvent, HaveVectorStoreEvent, HaveEmbeddingEvent]
-        )
-        if data is None:
-            return None  # Not all required events have arrived yet
-        nodes_event, vector_store_event, embedding_event = data
-        nodes_event = cast(TransformedNodesEvent, nodes_event)
-        vector_store_event = cast(HaveVectorStoreEvent, vector_store_event)
-        embedding_event = cast(HaveEmbeddingEvent, embedding_event)
-
-        args: Args = await ctx.get("args")
-        nodes: Sequence[BaseNode] = nodes_event.nodes
-        vector_store: BasePydanticVectorStore = vector_store_event.vector_store
-        embed_model: BaseEmbedding = embedding_event.embed_model
+        self, nodes: Sequence[BaseNode]
+    ) -> VectorStoreIndex:
+        args: Args = self.args
 
         logger.info("Create storage context")
-        storage_context = StorageContext.from_defaults(vector_store=vector_store)
+        storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
 
-        vector_index = VectorStoreIndex(
+        return VectorStoreIndex(
             nodes,
             storage_context=storage_context,
-            embed_model=embed_model,
+            embed_model=self.embed_model,
             show_progress=args.verbose,
         )
-        return HaveVectorIndexEvent(vector_index=vector_index)
 
-    @step
-    async def persist_vector_index(
-        self,
-        ev: HaveVectorIndexEvent | HavePersistDirEvent | InMemoryVectorStoreEvent,
-        ctx: Context,
-    ) -> None:
-        data = ctx.collect_events(
-            ev, [HaveVectorIndexEvent, HavePersistDirEvent, InMemoryVectorStoreEvent]
-        )
-        if data is None:
-            return None  # Not all required events have arrived yet
-        vector_index_event, persist_dir_event, _ = data
-        vector_index_event = cast(HaveVectorIndexEvent, vector_index_event)
-        persist_dir_event = cast(HavePersistDirEvent, persist_dir_event)
-
-        # Whenever we consume the HaveVectorIndexEvent, we must generate it
-        # again so that other steps can also use it
-        ctx.send_event(vector_index_event)
-
-        vector_index: BaseIndex[IndexDict] = vector_index_event.vector_index
-        persist_dir: Path = persist_dir_event.persist_dir
-
-        logger.info("Write index to cache")
-        vector_index.storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
-            persist_dir=persist_dir
-        )
-
-        return None
-
-    @step
     async def retrieve_nodes(
-        self,
-        ev: HaveVectorIndexEvent | SearchInputEvent,
-        ctx: Context,
-    ) -> SearchResultEvent | None:
-        data = ctx.collect_events(ev, [HaveVectorIndexEvent, SearchInputEvent])
-        if data is None:
-            return None  # Not all required events have arrived yet
-        vector_index_event, search_input_event = data
-        vector_index_event = cast(HaveVectorIndexEvent, vector_index_event)
-        search_input_event = cast(SearchInputEvent, search_input_event)
-
-        # Whenever we consume the HaveVectorIndexEvent, we must generate it
-        # again so that other steps can also use it
-        ctx.send_event(vector_index_event)
-
-        args: Args = await ctx.get("args")
-        logger.info("Create retriever object")
-        vector_index = vector_index_event.vector_index
-        retriever = vector_index.as_retriever(similarity_top_k=args.top_k)
-        logger.info("Retrieve nodes from vector index")
-        nodes = await retriever.aretrieve(search_input_event.text)
-        logger.info(f"{len(nodes)} nodes found in vector index")
-        nodes = [{"text": node.text, "metadata": node.metadata} for node in nodes]
-        return SearchResultEvent(nodes=nodes)
-
-    @step
-    async def command_search(
-        self, ev: SearchResultEvent | HaveSearchCommand, ctx: Context
-    ) -> StopEvent | None:
-        data = ctx.collect_events(ev, [SearchResultEvent, HaveSearchCommand])
-        if data is None:
-            return None  # Not all required events have arrived yet
-        nodes_event, _ = data
-        nodes_event = cast(SearchResultEvent, nodes_event)
-
-        nodes = nodes_event.nodes
-        return StopEvent(json.dumps(nodes, indent=2))
-
-    @step
-    async def no_vector_index(
-        self,
-        ev: NoInputFilesEvent | InMemoryVectorStoreEvent,
-        ctx: Context,
-    ) -> NoVectorIndexEvent | None:
-        data = ctx.collect_events(ev, [NoInputFilesEvent, InMemoryVectorStoreEvent])
-        if data is None:
-            return None  # Not all required events have arrived yet
-        return NoVectorIndexEvent()
-
-    @step
-    async def command_search_not_possible(
-        self, ev: NoVectorIndexEvent | HaveSearchCommand, ctx: Context
-    ) -> StopEvent | None:
-        data = ctx.collect_events(ev, [NoVectorIndexEvent, HaveSearchCommand])
-        if data is None:
-            return None  # Not all required events have arrived yet
-        no_vector_index_event, search_command = data
-        no_vector_index_event = cast(NoVectorIndexEvent, no_vector_index_event)
-        search_command = cast(HaveSearchCommand, search_command)
-
-        # Whenever we consume the NoVectorIndexEvent, we must generate it
-        # again so that other steps can also use it
-        ctx.send_event(no_vector_index_event)
-
-        # jww (2025-05-03): Why is this output twice?
-        logger.error("Cannot search without a vector index")
-        return StopEvent()
-
-    @step
-    async def query_only(
-        self,
-        ev: NoVectorIndexEvent | QueryInputEvent,
-        ctx: Context,
-    ) -> QueryBuiltEvent | None:
-        data = ctx.collect_events(ev, [NoVectorIndexEvent, QueryInputEvent])
-        if data is None:
-            return None  # Not all required events have arrived yet
-        no_vector_index_event, query_input_event = data
-        no_vector_index_event = cast(NoVectorIndexEvent, no_vector_index_event)
-        query_input_event = cast(QueryInputEvent, query_input_event)
-
-        # Whenever we consume the NoVectorIndexEvent, we must generate it
-        # again so that other steps can also use it
-        ctx.send_event(no_vector_index_event)
-
-        logger.info("Build prompt")
-        qa_prompt = PromptTemplate("QUERY: {query_str}\nANSWER: ")
-
-        logger.info("Build query string")
-        query = qa_prompt.format(
-            query_str=query_input_event.query,
-        )
-
-        return QueryBuiltEvent(
-            user_string=query_input_event.query,
-            query=query,
-            history=query_input_event.history,
-        )
-
-    @step
-    async def query_with_context(
-        self,
-        ev: SearchResultEvent | QueryInputEvent,
-        ctx: Context,
-    ) -> QueryBuiltEvent | None:
-        data = ctx.collect_events(ev, [SearchResultEvent, QueryInputEvent])
-        if data is None:
-            return None  # Not all required events have arrived yet
-        nodes_event, query_input_event = data
-        nodes_event = cast(SearchResultEvent, nodes_event)
-        query_input_event = cast(QueryInputEvent, query_input_event)
-
-        context_nodes = nodes_event.nodes
-        context_str = "\n".join([n["text"] for n in context_nodes])
-
-        if len(query_input_event.history) > 0:
-            chat_history_str = "\n".join(query_input_event.history)
-            chat_history_str = "CHAT HISTORY: " + chat_history_str
+        self, text: str
+    ) -> list[dict[str, Any]]:  # pyright: ignore[reportExplicitAny]
+        if self.retriever is None:
+            return []
         else:
-            chat_history_str = ""
+            logger.info("Retrieve nodes from vector index")
+            nodes = await self.retriever.aretrieve(text)
+            logger.info(f"{len(nodes)} nodes found in vector index")
+            return [{"text": node.text, "metadata": node.metadata} for node in nodes]
+
+    async def build_query(
+        self,
+        query: str,
+        nodes: list[dict[str, Any]],  # pyright: ignore[reportExplicitAny]
+    ) -> list[ChatMessage]:
+        message_templates: list[ChatMessage] = [
+            # jww (2025-05-03): This should be configurable
+            ChatMessage(
+                content="You are a helpful AI assistant.",
+                role=MessageRole.SYSTEM,
+            ),
+        ]
+
+        if len(nodes) > 0:
+            context_str = "\n".join([n["text"] for n in nodes])
+            message_templates.append(
+                ChatMessage(
+                    content="""
+                Context information is below:
+                ---------------------
+                {context_str}
+                ---------------------
+                """,
+                    role=MessageRole.SYSTEM,
+                ),
+            )
+        else:
+            context_str = ""
 
         logger.info("Build LLM prompt")
-        qa_prompt = PromptTemplate(
-            """
-            CONTEXT information is below:\n
-            ---------------------\n
-            {context_str}\n\n
-            {chat_history_str}\n
-            ---------------------\n
-            Given the context information and not prior knowledge,
-            answer the query.\n
-            QUERY: {query_str}\n
-            ANSWER:
-            """
+        message_templates.append(
+            ChatMessage(
+                content="""
+                Given the context information and not prior knowledge,
+                answer the query: {query_str}
+                """,
+                role=MessageRole.USER,
+            ),
         )
+        chat_template = ChatPromptTemplate(message_templates=message_templates)
 
         logger.info("Build query string")
-        query = qa_prompt.format(
+        return chat_template.format_messages(
             context_str=context_str,
-            chat_history_str=chat_history_str,
-            query_str=query_input_event.query,
+            query_str=query,
         )
 
-        return QueryBuiltEvent(
-            user_string=query_input_event.query,
-            query=query,
-            history=query_input_event.history,
-        )
+    # async def query_llm(self, list[ChatMessage]) -> None:
+    #     args: Args = self.args
 
-    @step
-    async def query_llm(
-        self,
-        ev: QueryBuiltEvent | HaveLLMEvent,
-        ctx: Context,
-    ) -> QueryResponseEvent | None:
-        data = ctx.collect_events(ev, [QueryBuiltEvent, HaveLLMEvent])
-        if data is None:
-            return None  # Not all required events have arrived yet
-        query_built_event, llm_event = data
-        query_built_event = cast(QueryBuiltEvent, query_built_event)
-        llm_event = cast(HaveLLMEvent, llm_event)
+    #     logger.info("Submit query to LLM")
+    #     query = query_built_event.query
+    #     llm = llm_event.llm
+    #     if args.streaming:
+    #         generator = await llm.astream_complete(query)
+    #         async for response in generator:
+    #             msg = response.delta
+    #             if msg is not None:
+    #                 msg = clean_special_tokens(msg)
+    #                 # Allow the workflow to stream this piece of response
+    #                 ctx.write_event_to_stream(ProgressEvent(msg=msg))
 
-        # Whenever we consume the HaveLLMEvent, we must generate it again so
-        # that other steps can also use it
-        ctx.send_event(llm_event)
-
-        args: Args = await ctx.get("args")
-
-        logger.info("Submit query to LLM")
-        query = query_built_event.query
-        llm = llm_event.llm
-        if args.streaming:
-            generator = await llm.astream_complete(query)
-            async for response in generator:
-                msg = response.delta
-                if msg is not None:
-                    msg = clean_special_tokens(msg)
-                    # Allow the workflow to stream this piece of response
-                    ctx.write_event_to_stream(ProgressEvent(msg=msg))
-
-            # jww (2025-05-03): What to do here?
-            return QueryResponseEvent(response="", history=[])
-        else:
-            response = await llm.acomplete(query)
-            response = clean_special_tokens(response.text)
-            return QueryResponseEvent(
-                response=response,
-                history=query_built_event.history
-                + [f"User: {query_built_event.user_string}", f"Assistant: {response}"],
-            )
-
-    @step
-    async def command_query(
-        self,
-        ev: QueryResponseEvent | HaveQueryCommand,
-        ctx: Context,
-    ) -> StopEvent | None:
-        data = ctx.collect_events(ev, [QueryResponseEvent, HaveQueryCommand])
-        if data is None:
-            return None  # Not all required events have arrived yet
-        query_response_event, _ = data
-        query_response_event = cast(QueryResponseEvent, query_response_event)
-
-        response = query_response_event.response
-        return StopEvent(response)
-
-    @step
-    async def command_chat(
-        self,
-        ev: QueryResponseEvent | HaveChatCommand,
-        ctx: Context,
-    ) -> CommandEvent | None:
-        data = ctx.collect_events(ev, [QueryResponseEvent, HaveChatCommand])
-        if data is None:
-            return None  # Not all required events have arrived yet
-        print(data)
-        query_response_event, _ = data
-        query_response_event = cast(QueryResponseEvent, query_response_event)
-
-        response = query_response_event.response
-        print(f"[LLM] {response}")
-
-        return CommandEvent(history=query_response_event.history)
+    #         # jww (2025-05-03): What to do here?
+    #         return QueryResponseEvent(response="", history=[])
+    #     else:
+    #         response = await llm.acomplete(query)
+    #         response = clean_special_tokens(response.text)
+    #         return QueryResponseEvent(
+    #             response=response,
+    #             history=query_built_event.history
+    #             + [f"User: {query_built_event.user_string}", f"Assistant: {response}"],
+    #         )
 
 
 ### Main
 
 
-async def rag_client(args: Args):
-    rag_workflow = RAGWorkflow(verbose=args.verbose, timeout=args.timeout)
-    ctx = Context(rag_workflow)
-    await ctx.set("args", args)
+async def rag_client(args: Args) -> str:
+    rag_workflow = RAGWorkflow(args)
 
-    handler = rag_workflow.run(ctx=ctx)
-
-    async for ev in handler.stream_events():
-        if isinstance(ev, ProgressEvent):
-            print(ev.msg, end="")
-
-    result = await handler
-    # draw_most_recent_execution(workflow, filename="execution_log.html")
-    # draw_all_possible_flows(MyWorkflow, filename="streaming_workflow.html")
-    return result
+    await rag_workflow.initialize()
+    return await rag_workflow.execute(args.command, args.args)
 
 
 def main(args: Args):
@@ -1296,9 +884,7 @@ def main(args: Args):
         format="%(asctime)s [%(levelname)s] %(message)s",  # Log message format
         datefmt="%H:%M:%S",
     )
-
-    result = asyncio.run(rag_client(args))
-    print(result)
+    print(asyncio.run(rag_client(args)))
 
 
 if __name__ == "__main__":
@@ -1319,3 +905,28 @@ if __name__ == "__main__":
 # search
 # query
 # chat
+
+# from llama_index.core.tools import FunctionTool
+# from llama_index.llms.openai import OpenAI
+
+
+# def add(x: int, y: int) -> int:
+#     """Useful function to add two numbers."""
+#     return x + y
+
+
+# def multiply(x: int, y: int) -> int:
+#     """Useful function to multiply two numbers."""
+#     return x * y
+
+
+# tools = [
+#     FunctionTool.from_defaults(add),
+#     FunctionTool.from_defaults(multiply),
+# ]
+
+# agent = ReActAgent(
+#     llm=OpenAI(model="gpt-4o"), tools=tools, timeout=120, verbose=True
+# )
+
+# ret = await agent.run(input="Hello!")

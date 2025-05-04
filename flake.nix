@@ -14,17 +14,83 @@
         inherit system;
         overlays = [
           (final: prev: {
-            python312Packages = prev.python312Packages // {
-              spacy = prev.python312Packages.spacy.overrideAttrs (old: {
-                meta = old.meta // { broken = false; };
-              });
-            };
+            pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
+              (pyFinal: pyPrev: {
+                # spacy = pyPrev.spacy.overridePythonAttrs (o: rec {
+                #   meta = o.meta // { broken = false; };
+                # });
+
+                # banks = with pkgs; with pyPrev; buildPythonPackage rec {
+                #   pname = "banks";
+                #   version = "2.1.2";
+                #   pyproject = true;
+
+                #   src = fetchFromGitHub {
+                #     owner = "masci";
+                #     repo = "banks";
+                #     tag = "v${version}";
+                #     hash = "sha256-lOlNYIBMa3G06t5KfRWNd/d8aXjxnWp11n8Kw7Ydy+Y=";
+                #   };
+
+                #   SSL_CERT_FILE = "${cacert}/etc/ssl/certs/ca-bundle.crt";
+
+                #   build-system = [ hatchling ];
+
+                #   dependencies = [
+                #     deprecated
+                #     eval-type-backport
+                #     griffe
+                #     jinja2
+                #     platformdirs
+                #     pydantic
+                #   ];
+
+                #   optional-dependencies = {
+                #     all = [
+                #       litellm
+                #       redis
+                #     ];
+                #   };
+
+                #   nativeCheckInputs = [
+                #     pytest-asyncio
+                #     pytestCheckHook
+                #   ] ++ lib.flatten (builtins.attrValues optional-dependencies);
+
+                #   pythonImportsCheck = [ "banks" ];
+
+                #   meta = {
+                #     description = "Module that provides tools and functions to build prompts text and chat messages from generic blueprints";
+                #     homepage = "https://github.com/masci/banks";
+                #     changelog = "https://github.com/masci/banks/releases/tag/${src.tag}";
+                #     license = lib.licenses.mit;
+                #     maintainers = with lib.maintainers; [ fab ];
+                #   };
+                # };
+
+                # llama-index-core = pyPrev.llama-index-core.overridePythonAttrs (o: rec {
+                #   version = "0.12.34";
+                #   src = pkgs.fetchFromGitHub {
+                #     owner = "run-llama";
+                #     repo = "llama_index";
+                #     tag = "v${version}";
+                #     hash = "sha256-EC84HBcMXuvhcKGyJu9Fy7nFcHLP+vXDbF4ekhc0LlM=";
+                #   };
+                #   dependencies = o.dependencies ++ (with pyFinal; [
+                #     banks
+                #   ]);
+                #   nativeBuildInputs = with pyPrev; [
+                #     hatchling
+                #   ];
+                # });
+              })
+            ];
           })
         ];
       };
 
       llama-index-llms-llama-cpp =
-        with pkgs.python312Packages; buildPythonPackage rec {
+        with pkgs.python3Packages; buildPythonPackage rec {
           pname = "llama-index-llms-llama-cpp";
           version = "0.4.0";
           pyproject = true;
@@ -60,7 +126,7 @@
         };
 
       llama-index-embeddings-openai-like =
-        with pkgs.python312Packages; buildPythonPackage rec {
+        with pkgs.python3Packages; buildPythonPackage rec {
           pname = "llama-index-embeddings-openai-like";
           version = "0.1.0";
           pyproject = true;
@@ -95,44 +161,8 @@
           };
         };
 
-      llama-index-utils-workflow =
-        with pkgs.python312Packages; buildPythonPackage rec {
-          pname = "llama-index-utils-workflow";
-          version = "0.3.1";
-          pyproject = true;
-
-          disabled = pythonOlder "3.8";
-
-          src = fetchPypi {
-            pname = "llama_index_utils_workflow";
-            inherit version;
-            hash = "sha256-Cv3Nqq4uJDrpkr/9+7PunJUHE2aw4EczPEnpd0clkpA=";
-          };
-
-          pythonRemoveDeps = [];
-
-          build-system = [ poetry-core ];
-
-          dependencies = [
-            llama-index-core
-            pyvis
-          ];
-
-          # Tests are only available in the mono repo
-          doCheck = false;
-
-          pythonImportsCheck = [ "llama_index.utils.workflow" ];
-
-          meta = with lib; {
-            description = "LlamaIndex Workflow Utilities";
-            homepage = "https://github.com/run-llama/llama_index/tree/main/llama-index-integrations/llms/llama-index-utils-workflow";
-            license = licenses.mit;
-            maintainers = with maintainers; [ jwiegley ];
-          };
-        };
-
       typed-argparse =
-        with pkgs.python312Packages; buildPythonPackage rec {
+        with pkgs.python3Packages; buildPythonPackage rec {
           pname = "typed-argparse";
           version = "0.3.1";
           pyproject = true;
@@ -166,7 +196,7 @@
           };
         };
 
-      pythonEnv = pkgs.python312.withPackages (
+      pythonEnv = pkgs.python3.withPackages (
         python-pkgs: with python-pkgs; [
           stdenv
           venvShellHook
@@ -181,7 +211,6 @@
           llama-index-llms-openai-like
           llama-index-readers-file
           llama-index-vector-stores-postgres
-          # llama-index-utils-workflow
           llama-parse
           typed-argparse
           nltk
@@ -192,6 +221,8 @@
         ]
       );
     in {
+      inherit pkgs;
+
       packages.default = pkgs.stdenv.mkDerivation {
         name = "rag-client";
         src = ./.;
@@ -210,7 +241,6 @@
         nativeBuildInputs = [
           pythonEnv
           black                 # Python code formatter
-          # pyright               # LSP server for Python
           basedpyright          # LSP server for Python
           isort                 # Sorts imports
           autoflake             # Removes unused imports
