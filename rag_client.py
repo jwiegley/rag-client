@@ -8,25 +8,29 @@ import logging
 import os
 import sys
 from abc import abstractmethod
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import cache
+from io import StringIO
 from pathlib import Path
-from typing import Any, Literal, NoReturn, no_type_check, override
+from typing import Any, Literal, NoReturn, final, no_type_check, override
 
-from llama_index.core.base.base_retriever import BaseRetriever
-from llama_index.core.storage.chat_store import SimpleChatStore
+from llama_index.core.evaluation.guideline import DEFAULT_GUIDELINES
 import typed_argparse as tap
 from llama_index.core import (
-    ChatPromptTemplate,
+    KeywordTableIndex,
+    QueryBundle,
     Settings,
     SimpleDirectoryReader,
+    SimpleKeywordTableIndex,
     StorageContext,
     VectorStoreIndex,
 )
 from llama_index.core.base.embeddings.base import Embedding
+from llama_index.core.chat_engine import SimpleChatEngine
 from llama_index.core.chat_engine.context import ContextChatEngine
+from llama_index.core.chat_engine.types import BaseChatEngine
 from llama_index.core.data_structs.data_structs import IndexDict
 from llama_index.core.embeddings import BaseEmbedding
 from llama_index.core.extractors import QuestionsAnsweredExtractor
@@ -34,13 +38,32 @@ from llama_index.core.indices import (
     load_index_from_storage,  # pyright: ignore[reportUnknownVariableType]
 )
 from llama_index.core.indices.base import BaseIndex
+from llama_index.core.indices.keyword_table.base import BaseKeywordTableIndex
 from llama_index.core.ingestion import IngestionPipeline
-from llama_index.core.llms import ChatMessage, MessageRole
+from llama_index.core.llms import ChatMessage
 from llama_index.core.llms.llm import LLM
 from llama_index.core.memory import ChatMemoryBuffer, ChatSummaryMemoryBuffer
-from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.node_parser import (
+    NodeParser,
+    SemanticSplitterNodeParser,
+    SentenceSplitter,
+)
+from llama_index.core.query_engine import (
+    RetrieverQueryEngine,
+    RetryQueryEngine,
+    RetrySourceQueryEngine,
+)
+from llama_index.core.evaluation import GuidelineEvaluator, RelevancyEvaluator
 from llama_index.core.readers.base import BaseReader
-from llama_index.core.schema import BaseNode, Document, Node, TransformComponent
+from llama_index.core.retrievers import BaseRetriever
+from llama_index.core.schema import (
+    BaseNode,
+    Document,
+    Node,
+    NodeWithScore,
+    TransformComponent,
+)
+from llama_index.core.storage.chat_store import SimpleChatStore
 from llama_index.core.vector_stores.simple import SimpleVectorStore
 from llama_index.core.vector_stores.types import BasePydanticVectorStore
 from llama_index.embeddings.huggingface import (  # pyright: ignore[reportMissingTypeStubs]
@@ -266,6 +289,18 @@ class Args(TypedArgs):
     recursive: bool = arg(
         help="Read directories recursively (default: no)",
     )
+    use_keywords: bool = arg(
+        help="Generate keywords for document retrieval",
+    )
+    retries: bool = arg(
+        help="Retry queries based on relevancy",
+    )
+    source_retries: bool = arg(
+        help="Retry queries (using source modification) based on relevancy",
+    )
+    summarize_chat: bool = arg(
+        help="Summarize chat history when it grows too long",
+    )
     command: str = arg(positional=True, help="Command to execute")
     args: list[str] = arg(positional=True, nargs="*", help="Query to submit to LLM")
 
@@ -375,6 +410,52 @@ class LlamaCppEmbedding(BaseEmbedding):
         return self._get_query_embedding(query)
 
 
+### Retrievers
+
+
+@final
+class CustomRetriever(BaseRetriever):
+    """Custom retriever that performs both semantic search and hybrid search."""
+
+    @no_type_check
+    def __init__(
+        self,
+        vector_retriever: BaseRetriever,
+        keyword_retriever: BaseRetriever,
+        mode: str = "AND",
+    ) -> None:
+        """Init params."""
+
+        self._vector_retriever = vector_retriever
+        self._keyword_retriever = keyword_retriever
+        if mode not in ("AND", "OR"):
+            raise ValueError("Invalid mode.")
+        self._mode = mode
+        super().__init__()
+
+    @override
+    @no_type_check
+    def _retrieve(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
+        """Retrieve nodes given query."""
+
+        vector_nodes = self._vector_retriever.retrieve(query_bundle)
+        keyword_nodes = self._keyword_retriever.retrieve(query_bundle)
+
+        vector_ids = {n.node.node_id for n in vector_nodes}
+        keyword_ids = {n.node.node_id for n in keyword_nodes}
+
+        combined_dict = {n.node.node_id: n for n in vector_nodes}
+        combined_dict.update({n.node.node_id: n for n in keyword_nodes})
+
+        if self._mode == "AND":
+            retrieve_ids = vector_ids.intersection(keyword_ids)
+        else:
+            retrieve_ids = vector_ids.union(keyword_ids)
+
+        retrieve_nodes = [combined_dict[rid] for rid in retrieve_ids]
+        return retrieve_nodes
+
+
 ### VectorStoreObjects
 
 
@@ -461,6 +542,55 @@ class EmbeddingObject:
             error(f"Embedding model not recognized: {model}")
 
 
+### SplitterObjects
+
+
+@dataclass
+class SplitterObject:
+    chunk_size: int
+    chunk_overlap: int
+
+    embed_model: BaseEmbedding | None
+    buffer_size: int
+    breakpoint_percentile_threshold: int
+
+    def construct(self, model: str) -> NodeParser | NoReturn:
+        prefix, model = parse_prefixes(
+            [
+                "Sentence:",
+                "SentenceWindow:",
+                "Semantic:",
+                "Markdown:",
+                "Code:",
+                "Token:",
+                "Json:",
+                "Html:",
+                "Hierarchical:",
+                "Topic:",
+            ],
+            model,
+        )
+        logger.info(f"Load splitter {prefix}:{model}")
+        if prefix == "Sentence:":
+            return SentenceSplitter(
+                chunk_size=self.chunk_size,
+                chunk_overlap=self.chunk_overlap,
+                include_metadata=True,
+            )
+        elif prefix == "Semantic:":
+            if self.embed_model is not None:
+                # jww (2025-05-04): Make this configurable
+                return SemanticSplitterNodeParser(
+                    buffer_size=self.buffer_size,
+                    breakpoint_percentile_threshold=self.breakpoint_percentile_threshold,
+                    embed_model=self.embed_model,
+                )
+            else:
+                error(f"Semantic splitter needs an embedding model")
+        else:
+            error(f"Splitting model not recognized: {model}")
+
+
 ### LLMObjects
 
 
@@ -537,110 +667,35 @@ class LLMObject:
 @dataclass
 class RAGWorkflow:
     args: Args
-    vector_store: BasePydanticVectorStore = field(default=SimpleVectorStore())
+
+    fingerprint: str | None = None
+
+    vector_store: BasePydanticVectorStore = field(default_factory=SimpleVectorStore)
     embed_model: BaseEmbedding | None = None
-    retriever: BaseRetriever | None = None
+
     llm: LLM | None = None
-    fingerprint: str = ""
-    chat_memory: ChatMemoryBuffer | ChatSummaryMemoryBuffer | None = None
-    chat_history: list[ChatMessage] = []
-    chat_engine: ContextChatEngine | None = None
+
+    vector_retriever: BaseRetriever | None = None
+    keyword_retriever: BaseRetriever | None = None
+    retriever: BaseRetriever | None = None
+
     vector_index: BaseIndex[IndexDict] | None = None
+    keyword_index: BaseKeywordTableIndex | None = None
+
+    chat_memory: ChatMemoryBuffer | ChatSummaryMemoryBuffer | None = None
+    chat_history: list[ChatMessage] | None = None
+    chat_engine: BaseChatEngine | None = None
 
     async def initialize(self):
-        self.vector_store, self.embed_model, self.llm = await asyncio.gather(
-            self.load_vector_store(),
-            self.load_embedding(),
-            self.load_llm(),
+        self.vector_store, self.embed_model, self.llm, input_files = (
+            await asyncio.gather(
+                self.load_vector_store(),
+                self.load_embedding(),
+                self.load_llm(),
+                self.find_input_files(),
+            )
         )
-
-        input_files = await self.find_input_files()
-        if input_files is None:
-            self.vector_index = await self.load_index_from_vector_store()
-        else:
-            fp: str = await self.determine_fingerprint(input_files)
-            persist_dir = cache_dir(fp)
-            if self.fingerprint == fp and os.path.isdir(persist_dir):
-                self.vector_index = await self.load_index_from_cache(persist_dir)
-            else:
-                documents = await self.read_documents(input_files)
-                nodes = await self.split_documents(documents)
-                self.vector_index = await self.populate_vector_store(nodes)
-
-                if isinstance(self.vector_store, SimpleVectorStore):
-                    logger.info("Write index to cache")
-                    self.vector_index.storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
-                        persist_dir=persist_dir
-                    )
-
-        logger.info("Create retriever object")
-        args: Args = self.args
-        self.retriever = self.vector_index.as_retriever(similarity_top_k=args.top_k)
-
-        # jww (2025-05-04): TODO
-        query = ""
-        if self.llm is None:
-            nodes = await self.retrieve_nodes(query)
-        else:
-            chat_store = SimpleChatStore()
-            # chat_store = PostgresChatStore.from_uri(
-            #     uri="postgresql+asyncpg://postgres:password@127.0.0.1:5432/database",
-            # )
-
-            # jww (2025-05-04): Make this configurable
-            self.chat_memory = ChatMemoryBuffer.from_defaults(  # pyright: ignore[reportUnknownMemberType]
-                token_limit=1500,
-                chat_store=chat_store,
-                chat_story_key="user1",
-                llm=self.llm,
-            )
-            self.chat_memory = ChatSummaryMemoryBuffer.from_defaults(  # pyright: ignore[reportUnknownMemberType]
-                token_limit=1500,
-                summarize_prompt=(
-                    "The following is a conversation between the user and assistant. "
-                    "Write a concise summary about the contents of this conversation."
-                ),
-                chat_store=chat_store,
-                chat_story_key="user1",
-                llm=self.llm,
-            )
-            self.chat_engine = ContextChatEngine(
-                retriever=self.retriever,
-                llm=self.llm,
-                memory=self.chat_memory,
-                prefix_messages=[
-                    ChatMessage(
-                        # jww (2025-05-03): This should be configurable
-                        content="You are a helpful AI assistant.",
-                        role=MessageRole.SYSTEM,
-                    ),
-                ],
-            )
-
-            new_message = ChatMessage(role="user", content=query)
-            generator = await self.chat_engine.astream_chat(  # pyright: ignore[reportUnknownMemberType]
-                new_message, self.chat_history
-            )
-            token: str
-            async for token in generator.async_response_gen:
-                print(token, end="")
-
-    async def execute(self, _command: str, _args: list[str]) -> str:
-        return ""
-
-    #     match command:
-    #         case "search":
-    #             return SearchInputEvent(text=args.args[0])
-    #         case "query":
-    #             ctx.send_event(SearchInputEvent(text=args.args[0]))
-    #             return QueryInputEvent(query=args.args[0], history=history)
-    #         case "chat":
-    #             print("[USER]")
-    #             query = input("> ")
-    #             ctx.send_event(SearchInputEvent(text=query))
-    #             return QueryInputEvent(query=query, history=history)
-    #         case _:
-    #             return StopEvent(f"Command unrecognized: {args.command}")
+        await self.load_vector_index(input_files)
 
     async def load_vector_store(self):
         args: Args = self.args
@@ -701,45 +756,33 @@ class RAGWorkflow:
             return input_files
 
     async def determine_fingerprint(self, input_files: list[Path]) -> str:
+        args = deepcopy(self.args)
+        args.command = ""
+        args.args = []
         fingerprint = [
             collection_hash(input_files),
-            hashlib.sha512(repr(self.args).encode("utf-8")).hexdigest(),
+            hashlib.sha512(repr(args).encode("utf-8")).hexdigest(),
         ]
         final_hash = "\n".join(fingerprint).encode("utf-8")
         final_base64 = base64.b64encode(final_hash).decode("utf-8")
         return final_base64[0:32]
 
-    async def load_index_from_cache(self, persist_dir: Path) -> BaseIndex[IndexDict]:
-        args: Args = self.args
-        logger.info("Load index from cache")
-        global Settings
-        Settings.embed_model = self.embed_model
-        Settings.chunk_size = args.chunk_size
-        Settings.chunk_overlap = args.chunk_overlap
-        return load_index_from_storage(  # pyright: ignore[reportUnknownVariableType]
-            StorageContext.from_defaults(persist_dir=str(persist_dir))
-        )
+    def read_documents(self, input_files: list[Path]) -> Iterable[Document]:
+        logger.info("Read documents from disk")
 
-    async def load_index_from_vector_store(self) -> VectorStoreIndex:
-        args: Args = self.args
-        logger.info("Load index from database")
-        return VectorStoreIndex.from_vector_store(  # pyright: ignore[reportUnknownMemberType]
-            vector_store=self.vector_store,
-            embed_model=self.embed_model,
-            show_progress=args.verbose,
-        )
-
-    async def read_documents(self, input_files: list[Path]) -> list[Document]:
         file_extractor: dict[str, BaseReader] = {".org": OrgReader()}
 
-        logger.info("Read documents from disk")
+        # jww (2025-05-04): Make num_workers configurable
         return SimpleDirectoryReader(
             input_files=input_files,
             file_extractor=file_extractor,
-        ).load_data()
+        ).load_data(num_workers=4)
 
-    async def split_documents(self, documents: list[Document]) -> Sequence[BaseNode]:
+    async def split_documents(
+        self, documents: Iterable[Document]
+    ) -> Sequence[BaseNode]:
         args: Args = self.args
+        logger.info(f"Split documents")
 
         transformations: list[TransformComponent] = [
             SentenceSplitter(
@@ -768,18 +811,111 @@ class RAGWorkflow:
 
     async def populate_vector_store(
         self, nodes: Sequence[BaseNode]
-    ) -> VectorStoreIndex:
+    ) -> tuple[VectorStoreIndex, BaseKeywordTableIndex | None]:
         args: Args = self.args
 
         logger.info("Create storage context")
         storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
 
-        return VectorStoreIndex(
+        logger.info(f"Populate vector store")
+        vector_index = VectorStoreIndex(
             nodes,
             storage_context=storage_context,
             embed_model=self.embed_model,
             show_progress=args.verbose,
         )
+
+        if args.use_keywords:
+            if self.llm is None:
+                keyword_index = SimpleKeywordTableIndex(
+                    nodes, storage_context=storage_context
+                )
+            else:
+                keyword_index = KeywordTableIndex(
+                    nodes,
+                    storage_context=storage_context,
+                    llm=self.llm,
+                )
+        else:
+            keyword_index = None
+
+        return vector_index, keyword_index
+
+    async def load_index_from_cache(self, persist_dir: Path) -> BaseIndex[IndexDict]:
+        args: Args = self.args
+        logger.info("Load index from cache")
+        global Settings
+        Settings.embed_model = self.embed_model
+        Settings.chunk_size = args.chunk_size
+        Settings.chunk_overlap = args.chunk_overlap
+        return load_index_from_storage(  # pyright: ignore[reportUnknownVariableType]
+            StorageContext.from_defaults(persist_dir=str(persist_dir))
+        )
+
+    async def load_index_from_vector_store(self) -> VectorStoreIndex:
+        args: Args = self.args
+        logger.info("Load index from database")
+        return VectorStoreIndex.from_vector_store(  # pyright: ignore[reportUnknownMemberType]
+            vector_store=self.vector_store,
+            embed_model=self.embed_model,
+            show_progress=args.verbose,
+        )
+
+    async def load_vector_index(self, input_files: list[Path] | None):
+        args: Args = self.args
+        if input_files is None:
+            logger.info("No input files")
+            if not isinstance(self.vector_store, SimpleVectorStore):
+                self.vector_index = await self.load_index_from_vector_store()
+        else:
+            logger.info(f"{len(input_files)} input file(s)")
+            fp: str = await self.determine_fingerprint(input_files)
+            logger.info(f"Fingerprint = {fp}")
+            persist_dir = cache_dir(fp)
+            if (self.fingerprint is None or self.fingerprint == fp) and os.path.isdir(
+                persist_dir
+            ):
+                self.vector_index, self.keyword_index = asyncio.gather(
+                    self.load_index_from_cache(persist_dir / "v"),
+                    self.load_index_from_cache(persist_dir / "k"),
+                )
+            else:
+                documents = self.read_documents(input_files)
+                nodes = await self.split_documents(documents)
+                self.vector_index, self.keyword_index = (
+                    await self.populate_vector_store(nodes)
+                )
+
+                if isinstance(self.vector_store, SimpleVectorStore):
+                    logger.info("Write index to cache")
+                    self.vector_index.storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
+                        persist_dir=(persist_dir / "v")
+                    )
+                if self.keyword_index is not None:
+                    self.keyword_index.storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
+                        persist_dir=persist_dir / "k"
+                    )
+            self.fingerprint = fp
+
+        logger.info("Create retriever object")
+        if self.vector_index is not None:
+            self.vector_retriever = self.vector_index.as_retriever(
+                similarity_top_k=args.top_k
+            )
+        if self.keyword_index is not None:
+            self.keyword_retriever = self.keyword_index.as_retriever()
+
+        if self.vector_retriever is not None:
+            if self.keyword_retriever is not None:
+                self.retriever = CustomRetriever(
+                    vector_retriever=self.vector_retriever,
+                    keyword_retriever=self.keyword_retriever,
+                )
+            else:
+                self.retriever = self.vector_retriever
+        else:
+            if self.keyword_retriever is not None:
+                self.retriever = self.keyword_retriever
 
     async def retrieve_nodes(
         self, text: str
@@ -792,88 +928,184 @@ class RAGWorkflow:
             logger.info(f"{len(nodes)} nodes found in vector index")
             return [{"text": node.text, "metadata": node.metadata} for node in nodes]
 
-    async def build_query(
+    # Query a document collection
+    @no_type_check
+    async def query(
         self,
         query: str,
-        nodes: list[dict[str, Any]],  # pyright: ignore[reportExplicitAny]
-    ) -> list[ChatMessage]:
-        message_templates: list[ChatMessage] = [
-            # jww (2025-05-03): This should be configurable
-            ChatMessage(
-                content="You are a helpful AI assistant.",
-                role=MessageRole.SYSTEM,
-            ),
-        ]
+        streaming: bool = False,
+        print_responses: bool = False,
+    ) -> str | NoReturn:
+        args = self.args
+        if self.retriever is None:
+            error("There is no retriever configured to query")
+        if self.llm is None:
+            error("There is no LLM configured to chat with")
 
-        if len(nodes) > 0:
-            context_str = "\n".join([n["text"] for n in nodes])
-            message_templates.append(
-                ChatMessage(
-                    content="""
-                Context information is below:
-                ---------------------
-                {context_str}
-                ---------------------
-                """,
-                    role=MessageRole.SYSTEM,
-                ),
+        query_engine = RetrieverQueryEngine.from_args(
+            retriever=self.retriever,
+            llm=self.llm,
+            use_async=True,
+            streaming=streaming,
+        )
+        if args.retries or args.source_retries:
+            query_response_evaluator = RelevancyEvaluator(llm=self.llm)
+            # jww (2025-05-04): Allow using different evaluators
+            _guideline_evaluator = GuidelineEvaluator(
+                guidelines=DEFAULT_GUIDELINES
+                + "\nThe response should not be overly long.\n"
+                + "The response should try to summarize where possible.\n"
             )
+            if args.source_retries:
+                query_engine = RetrySourceQueryEngine(
+                    query_engine,
+                    evaluator=query_response_evaluator,
+                    llm=self.llm,
+                )
+            else:
+                query_engine = RetryQueryEngine(
+                    query_engine, evaluator=query_response_evaluator
+                )
+
+        if streaming:
+            response = await query_engine.aquery(query)
+            full_response = StringIO()
+            async for token in response.response_gen:
+                token = clean_special_tokens(token)
+                if print_responses:
+                    print(token, end="", flush=True)
+                _ = full_response.write(token)
+            return full_response.getvalue()
         else:
-            context_str = ""
+            response = await query_engine.aquery(query)
+            if print_responses:
+                print(str(response))
+            return clean_special_tokens(str(response))
 
-        logger.info("Build LLM prompt")
-        message_templates.append(
-            ChatMessage(
-                content="""
-                Given the context information and not prior knowledge,
-                answer the query: {query_str}
-                """,
-                role=MessageRole.USER,
-            ),
+    # Chat with the LLM, possibly in the context of a document collection
+    @no_type_check
+    async def chat(
+        self,
+        query: str,
+        keep_history: bool = True,
+        streaming: bool = False,
+        print_responses: bool = False,
+    ) -> str | NoReturn:
+        args = self.args
+        if self.llm is None:
+            error("There is no LLM configured to chat with")
+
+        chat_store = SimpleChatStore()
+        # chat_store = PostgresChatStore.from_uri(
+        #     uri="postgresql+asyncpg://postgres:password@127.0.0.1:5432/database",
+        # )
+
+        if self.chat_memory is None and keep_history:
+            if args.summarize_chat:
+                self.chat_memory = ChatSummaryMemoryBuffer.from_defaults(
+                    token_limit=args.token_limit,
+                    # jww (2025-05-04): Make this configurable
+                    summarize_prompt=(
+                        "The following is a conversation between the user and assistant. "
+                        "Write a concise summary about the contents of this conversation."
+                    ),
+                    chat_store=chat_store,
+                    chat_story_key="user1",
+                    llm=self.llm,
+                )
+            else:
+                self.chat_memory = ChatMemoryBuffer.from_defaults(
+                    token_limit=args.token_limit,
+                    chat_store=chat_store,
+                    chat_store_key="user1",
+                    llm=self.llm,
+                )
+        if self.chat_engine is None:
+            if self.retriever is None:
+                self.chat_engine = SimpleChatEngine.from_defaults(
+                    llm=self.llm,
+                    memory=self.chat_memory,
+                    system_prompt="You are a helpful AI assistant.",
+                )
+            else:
+                self.chat_engine = ContextChatEngine.from_defaults(
+                    retriever=self.retriever,
+                    llm=self.llm,
+                    memory=self.chat_memory,
+                    system_prompt="You are a helpful AI assistant.",
+                )
+
+        if streaming:
+            generator = await self.chat_engine.astream_chat(message=query)
+            full_response = StringIO()
+            async for token in generator.async_response_gen():
+                token = clean_special_tokens(token)
+                if print_responses:
+                    print(token, end="", flush=True)
+                _ = full_response.write(token)
+            return full_response.getvalue()
+        else:
+            response = await self.chat_engine.achat(message=query)
+            if print_responses:
+                print(str(response))
+            return clean_special_tokens(str(response))
+
+    async def search_command(self, query: str):
+        nodes = await self.retrieve_nodes(query)
+        print(json.dumps(nodes, indent=2))
+
+    @no_type_check
+    async def query_command(self, query: str):
+        args = self.args
+        print(
+            await self.query(
+                query,
+                streaming=args.streaming,
+                print_responses=True,
+            )
         )
-        chat_template = ChatPromptTemplate(message_templates=message_templates)
 
-        logger.info("Build query string")
-        return chat_template.format_messages(
-            context_str=context_str,
-            query_str=query,
-        )
+    @no_type_check
+    async def chat_command(self):
+        args = self.args
+        while True:
+            query = input("\nUSER> ")
+            if query == "exit":
+                break
+            elif query.startswith("search "):
+                await self.search_command(query[7:])
+            elif query.startswith("query "):
+                await self.query_command(query[6:])
+            else:
+                _ = await self.chat(
+                    query,
+                    keep_history=True,
+                    streaming=args.streaming,
+                    print_responses=True,
+                )
+                print()
 
-    # async def query_llm(self, list[ChatMessage]) -> None:
-    #     args: Args = self.args
-
-    #     logger.info("Submit query to LLM")
-    #     query = query_built_event.query
-    #     llm = llm_event.llm
-    #     if args.streaming:
-    #         generator = await llm.astream_complete(query)
-    #         async for response in generator:
-    #             msg = response.delta
-    #             if msg is not None:
-    #                 msg = clean_special_tokens(msg)
-    #                 # Allow the workflow to stream this piece of response
-    #                 ctx.write_event_to_stream(ProgressEvent(msg=msg))
-
-    #         # jww (2025-05-03): What to do here?
-    #         return QueryResponseEvent(response="", history=[])
-    #     else:
-    #         response = await llm.acomplete(query)
-    #         response = clean_special_tokens(response.text)
-    #         return QueryResponseEvent(
-    #             response=response,
-    #             history=query_built_event.history
-    #             + [f"User: {query_built_event.user_string}", f"Assistant: {response}"],
-    #         )
+    @no_type_check
+    async def execute(self, command: str, args: list[str]):
+        match command:
+            case "search":
+                await self.search_command(args[0])
+            case "query":
+                await self.query_command(args[0])
+            case "chat":
+                await self.chat_command()
+            case _:
+                error(f"Command unrecognized: {command}")
 
 
 ### Main
 
 
-async def rag_client(args: Args) -> str:
+@no_type_check
+async def rag_client(args: Args):
     rag_workflow = RAGWorkflow(args)
-
     await rag_workflow.initialize()
-    return await rag_workflow.execute(args.command, args.args)
+    await rag_workflow.execute(args.command, args.args)
 
 
 def main(args: Args):
@@ -884,7 +1116,7 @@ def main(args: Args):
         format="%(asctime)s [%(levelname)s] %(message)s",  # Log message format
         datefmt="%H:%M:%S",
     )
-    print(asyncio.run(rag_client(args)))
+    asyncio.run(rag_client(args))
 
 
 if __name__ == "__main__":

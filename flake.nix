@@ -67,22 +67,6 @@
                 #     maintainers = with lib.maintainers; [ fab ];
                 #   };
                 # };
-
-                # llama-index-core = pyPrev.llama-index-core.overridePythonAttrs (o: rec {
-                #   version = "0.12.34";
-                #   src = pkgs.fetchFromGitHub {
-                #     owner = "run-llama";
-                #     repo = "llama_index";
-                #     tag = "v${version}";
-                #     hash = "sha256-EC84HBcMXuvhcKGyJu9Fy7nFcHLP+vXDbF4ekhc0LlM=";
-                #   };
-                #   dependencies = o.dependencies ++ (with pyFinal; [
-                #     banks
-                #   ]);
-                #   nativeBuildInputs = with pyPrev; [
-                #     hatchling
-                #   ];
-                # });
               })
             ];
           })
@@ -196,6 +180,78 @@
           };
         };
 
+      deepeval =
+        with pkgs.python3Packages; buildPythonPackage rec {
+          pname = "deepeval";
+          version = "2.8.2";
+          pyproject = true;
+
+          disabled = pythonOlder "3.8";
+
+          src = fetchPypi {
+            pname = "deepeval";
+            inherit version;
+            hash = "sha256-jkJGOr/0U1vgveFMENNwRooQrRhyf04lbBO0ChxcXTI=";
+          };
+
+          pythonRemoveDeps = [];
+
+          nativeBuildInputs = [ pythonRelaxDepsHook ];
+
+          build-system = [ poetry-core ];
+
+          dependencies = [
+            coverage
+            google-genai
+            grpcio
+            nest-asyncio
+            ollama
+            openai
+            opentelemetry-api
+            opentelemetry-exporter-otlp-proto-grpc
+            opentelemetry-sdk
+            portalocker
+            posthog
+            pytest
+            pytest-asyncio
+            pytest-repeat
+            pytest-rerunfailures
+            pytest-xdist
+            requests
+            rich
+            sentry-sdk
+            setuptools
+            tabulate
+            tenacity
+            tqdm
+            twine
+            typer
+            aiohttp
+            anthropic
+            black
+          ];
+
+          pythonRelaxDeps = [
+            "google-genai"
+            "anthropic"
+            "posthog"
+            "pytest-rerunfailures"
+            "twine"
+          ];
+
+          # Tests are only available in the mono repo
+          doCheck = false;
+
+          pythonImportsCheck = [ "deepeval" ];
+
+          meta = with lib; {
+            description = "LLM evaluation framework";
+            homepage = "https://pypi.org/project/deepeval/";
+            license = licenses.mit;
+            maintainers = with maintainers; [ jwiegley ];
+          };
+        };
+
       pythonEnv = pkgs.python3.withPackages (
         python-pkgs: with python-pkgs; [
           stdenv
@@ -218,6 +274,8 @@
           orgparse
           pypdf
           xdg-base-dirs
+          pytest
+          # deepeval
         ]
       );
     in {
@@ -229,10 +287,9 @@
         buildInputs = [ pythonEnv ];
         installPhase = ''
           mkdir -p $out/bin
-          # cp rag-client.py $out/bin
           # Create a wrapper to launch the script with the correct Python
           echo '#!${pythonEnv}/bin/python' > $out/bin/rag-client
-          cat rag-client.py >> $out/bin/rag-client
+          cat rag_client.py >> $out/bin/rag-client
           chmod +x $out/bin/rag-client
         '';
       };

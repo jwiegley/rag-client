@@ -7,7 +7,7 @@ llm="OpenAILike:Falcon3-10B-Instruct"
 
 input=$HOME/org/conference/202410151104-ethdenver-denver-2025.org
 
-# ./rag-client.py                                                 \
+# ./rag_client.py                                                 \
 #     --embed-model $embedding                                    \
 #     --embed-dim 1024                                            \
 #     --verbose                                                   \
@@ -23,7 +23,7 @@ input=$HOME/org/conference/202410151104-ethdenver-denver-2025.org
 
 case $1 in
     store)
-        ./rag-client.py                                 \
+        ./rag_client.py                                 \
             --embed-model $embedding                    \
             --embed-dim 1024                            \
             --verbose                                   \
@@ -40,7 +40,7 @@ case $1 in
         ;;
 
     llm)
-        ./rag-client.py                                 \
+        ./rag_client.py                                 \
             --embed-model $embedding                    \
             --embed-dim 1024                            \
             --verbose                                   \
@@ -57,7 +57,7 @@ case $1 in
         ;;
 
     files)
-        ./rag-client.py                                 \
+        ./rag_client.py                                 \
             --embed-model $embedding                    \
             --embed-dim 1024                            \
             --verbose                                   \
@@ -74,7 +74,7 @@ case $1 in
         ;;
 
     query)
-        ./rag-client.py                                 \
+        ./rag_client.py                                 \
             --embed-model $embedding                    \
             --embed-dim 1024                            \
             --verbose                                   \
@@ -84,13 +84,14 @@ case $1 in
             --from $input                               \
             --db-name "vector_db"                       \
             --db-table "uhj"                            \
+            --streaming                                 \
             --llm $llm                                  \
             --llm-base-url "http://localhost:8080/v1"   \
-            "$@"
+            "$@"                                        \
         ;;
 
     chat)
-        ./rag-client.py                                 \
+        ./rag_client.py                                 \
             --embed-model $embedding                    \
             --embed-dim 1024                            \
             --verbose                                   \
@@ -99,15 +100,15 @@ case $1 in
             --top-k 20                                  \
             --timeout 3600                              \
             --from $input                               \
-            --db-name "vector_db"                       \
-            --db-table "uhj"                            \
+            --use-keywords                              \
+            --streaming                                 \
             --llm $llm                                  \
             --llm-base-url "http://localhost:8080/v1"   \
             "$@"
         ;;
 
     *)
-        ./rag-client.py                                         \
+        ./rag_client.py                                         \
             --embed-model $embedding                            \
             --embed-dim 1024                                    \
             --verbose                                           \
