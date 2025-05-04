@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from functools import cache
 from io import StringIO
 from pathlib import Path
-from typing import Any, Literal, NoReturn, final, no_type_check, override
+from typing import Any, Literal, NoReturn, cast, final, no_type_check, override
 
 from llama_index.core.evaluation.guideline import DEFAULT_GUIDELINES
 import typed_argparse as tap
@@ -841,15 +841,19 @@ class RAGWorkflow:
 
         return vector_index, keyword_index
 
-    async def load_index_from_cache(self, persist_dir: Path) -> BaseIndex[IndexDict]:
+    async def load_index_from_cache(
+        self, persist_dir: Path, index_id: str
+    ) -> BaseIndex[IndexDict]:
         args: Args = self.args
         logger.info("Load index from cache")
         global Settings
+        Settings.llm = self.llm
         Settings.embed_model = self.embed_model
         Settings.chunk_size = args.chunk_size
         Settings.chunk_overlap = args.chunk_overlap
         return load_index_from_storage(  # pyright: ignore[reportUnknownVariableType]
-            StorageContext.from_defaults(persist_dir=str(persist_dir))
+            StorageContext.from_defaults(persist_dir=str(persist_dir)),
+            index_id=index_id,
         )
 
     async def load_index_from_vector_store(self) -> VectorStoreIndex:
@@ -875,10 +879,12 @@ class RAGWorkflow:
             if (self.fingerprint is None or self.fingerprint == fp) and os.path.isdir(
                 persist_dir
             ):
-                self.vector_index, self.keyword_index = asyncio.gather(
-                    self.load_index_from_cache(persist_dir / "v"),
-                    self.load_index_from_cache(persist_dir / "k"),
+                vector_index, keyword_index = await asyncio.gather(
+                    self.load_index_from_cache(persist_dir / "v", "vectors"),
+                    self.load_index_from_cache(persist_dir / "k", "keywords"),
                 )
+                self.vector_index = vector_index
+                self.keyword_index = cast(BaseKeywordTableIndex, keyword_index)
             else:
                 documents = self.read_documents(input_files)
                 nodes = await self.split_documents(documents)
