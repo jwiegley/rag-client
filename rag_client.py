@@ -19,7 +19,7 @@ from orgparse.node import OrgNode
 from pathlib import Path
 from typed_argparse import TypedArgs, arg
 from typing import Any, Literal, NoReturn, cast, final, no_type_check, override
-from xdg_base_dirs import xdg_cache_home
+from xdg_base_dirs import xdg_cache_home, xdg_config_home
 
 from llama_index.core import (
     KeywordTableIndex,
@@ -66,7 +66,7 @@ from llama_index.core.schema import (
     NodeWithScore,
     TransformComponent,
 )
-from llama_index.core.storage.chat_store import BaseChatStore, SimpleChatStore
+from llama_index.core.storage.chat_store import SimpleChatStore
 from llama_index.core.vector_stores.simple import SimpleVectorStore
 
 from llama_index.embeddings.huggingface import (  # pyright: ignore[reportMissingTypeStubs]
@@ -97,9 +97,6 @@ from llama_index.storage.docstore.postgres import (  # pyright: ignore[reportMis
 )
 from llama_index.storage.index_store.postgres import (  # pyright: ignore[reportMissingTypeStubs]
     PostgresIndexStore,
-)
-from llama_index.storage.chat_store.postgres import (  # pyright: ignore[reportMissingTypeStubs]
-    PostgresChatStore,
 )
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -276,7 +273,7 @@ class Args(TypedArgs):
         help="LLM temperature value (default: %(default)s)",
     )
     max_tokens: int = arg(
-        default=256,
+        default=200,
         help="LLM maximum answer size in tokens (default: %(default)s)",
     )
     context_window: int = arg(
@@ -290,6 +287,9 @@ class Args(TypedArgs):
     gpu_layers: int = arg(
         default=-1,
         help="Number of GPU layers to use (default: %(default)s)",
+    )
+    chat_user: str | None = arg(
+        help="Chat user name for history saves (no history if unset)",
     )
     token_limit: int = arg(
         default=1500,
@@ -485,7 +485,6 @@ class RAGWorkflow:
     verbose: bool = False
     fingerprint: str | None = None
 
-    storage_context: StorageContext | None = None
     embed_model: BaseEmbedding | None = None
 
     llm: LLM | None = None
@@ -497,7 +496,6 @@ class RAGWorkflow:
     vector_index: BaseIndex[IndexDict] | None = None
     keyword_index: BaseKeywordTableIndex | None = None
 
-    chat_store: BaseChatStore | None = None
     chat_memory: ChatMemoryBuffer | ChatSummaryMemoryBuffer | None = None
     chat_history: list[ChatMessage] | None = None
     chat_engine: BaseChatEngine | None = None
@@ -516,9 +514,7 @@ class RAGWorkflow:
 
     async def postgres_stores(
         self, uri: str, args: Args
-    ) -> tuple[
-        PostgresDocumentStore, PostgresIndexStore, PGVectorStore, SimpleChatStore
-    ]:
+    ) -> tuple[PostgresDocumentStore, PostgresIndexStore, PGVectorStore]:
         logger.info("Create Postgres store objects")
         docstore: PostgresDocumentStore = PostgresDocumentStore.from_uri(
             uri=uri,
@@ -540,12 +536,7 @@ class RAGWorkflow:
                 "hnsw_dist_method": args.hnsw_dist_method,
             },
         )
-        chat_store: SimpleChatStore = SimpleChatStore()
-        # chat_store: PostgresChatStore = PostgresChatStore.from_uri(
-        #     uri=uri,
-        #     table_name="chatstore",
-        # )
-        return docstore, index_store, vector_store, chat_store
+        return docstore, index_store, vector_store
 
     async def load_embedding(
         self, model: str, base_url: str | None = None
@@ -707,13 +698,20 @@ class RAGWorkflow:
         return await pipeline.arun(documents=documents, num_workers=num_workers)
 
     async def populate_vector_store(
-        self, nodes: Sequence[BaseNode], collect_keywords: bool
+        self,
+        nodes: Sequence[BaseNode],
+        collect_keywords: bool,
+        storage_context: StorageContext,
     ) -> tuple[VectorStoreIndex, BaseKeywordTableIndex | None]:
         logger.info(f"Populate vector store")
 
+        index_structs = storage_context.index_store.index_structs()
+        for struct in index_structs:
+            storage_context.index_store.delete_index_struct(key=struct.index_id)
+
         vector_index = VectorStoreIndex(
             nodes,
-            storage_context=self.storage_context,
+            storage_context=storage_context,
             embed_model=self.embed_model,
             show_progress=self.verbose,
         )
@@ -721,12 +719,12 @@ class RAGWorkflow:
         if collect_keywords:
             if self.llm is None:
                 keyword_index = SimpleKeywordTableIndex(
-                    nodes, storage_context=self.storage_context
+                    nodes, storage_context=storage_context
                 )
             else:
                 keyword_index = KeywordTableIndex(
                     nodes,
-                    storage_context=self.storage_context,
+                    storage_context=storage_context,
                     llm=self.llm,
                 )
         else:
@@ -760,27 +758,27 @@ class RAGWorkflow:
             self.fingerprint = fp
 
         if args.db_conn is not None:
-            docstore, index_store, vector_store, self.chat_store = (
-                await self.postgres_stores(uri=args.db_conn, args=args)
+            docstore, index_store, vector_store = await self.postgres_stores(
+                uri=args.db_conn, args=args
             )
         elif persist_dir is not None and os.path.isdir(persist_dir):
             docstore = SimpleDocumentStore.from_persist_dir(str(persist_dir))
             index_store = SimpleIndexStore.from_persist_dir(str(persist_dir))
             vector_store = SimpleVectorStore.from_persist_dir(str(persist_dir))
-            self.chat_store = SimpleChatStore.from_persist_path(
-                str(persist_dir / "chat_store.json")
-            )
         else:
             docstore = SimpleDocumentStore()
             index_store = SimpleIndexStore()
             vector_store = SimpleVectorStore()
-            self.chat_store = SimpleChatStore()
 
-        if input_files is None or (
+        if args.db_conn is not None or (
             persist_dir is not None and os.path.isdir(persist_dir)
         ):
-            logger.info("Read stores from cache or database")
-            self.storage_context = StorageContext.from_defaults(
+            if args.db_conn is not None:
+                logger.info("Read stores from database")
+            else:
+                logger.info("Read stores from cache")
+
+            storage_context = StorageContext.from_defaults(
                 docstore=docstore,
                 index_store=index_store,
                 vector_store=vector_store,
@@ -791,13 +789,23 @@ class RAGWorkflow:
                 vector_index,  # pyright: ignore[reportUnknownVariableType]
                 keyword_index,  # pyright: ignore[reportUnknownVariableType]
             ] = load_indices_from_storage(
-                storage_context=self.storage_context,
+                storage_context=storage_context,
                 embed_model=self.embed_model,
                 llm=self.llm,
             )
             self.vector_index = vector_index
             self.keyword_index = cast(BaseKeywordTableIndex, keyword_index)
         else:
+            storage_context = StorageContext.from_defaults(
+                docstore=docstore,
+                index_store=index_store,
+                vector_store=vector_store,
+                persist_dir=(
+                    str(persist_dir) if persist_dir is not None else DEFAULT_PERSIST_DIR
+                ),
+            )
+
+        if input_files is not None:
             documents = await self.read_documents(input_files)
 
             nodes = await self.split_documents(
@@ -808,26 +816,16 @@ class RAGWorkflow:
                 args=args,
             )
 
-            self.storage_context = StorageContext.from_defaults(
-                docstore=docstore,
-                index_store=index_store,
-                vector_store=vector_store,
-                persist_dir=(
-                    str(persist_dir) if persist_dir is not None else DEFAULT_PERSIST_DIR
-                ),
-            )
-
             self.vector_index, self.keyword_index = await self.populate_vector_store(
-                nodes, collect_keywords=collect_keywords
+                nodes,
+                collect_keywords=collect_keywords,
+                storage_context=storage_context,
             )
 
-            if persist_dir is not None:
-                logger.info("Persist storage context")
-                self.storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
+            if args.db_conn is None and persist_dir is not None:
+                logger.info("Persist storage context to disk")
+                storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
                     persist_dir=persist_dir
-                )
-                self.chat_store.persist(
-                    persist_path=str(persist_dir / "chat_store.json")
                 )
 
     async def load_retriever(self, similarity_top_k: int):
@@ -931,9 +929,10 @@ class RAGWorkflow:
     # Chat with the LLM, possibly in the context of a document collection
     async def chat(
         self,
+        user: str,
         query: str,
         token_limit: int,
-        keep_history: bool = True,
+        chat_store: SimpleChatStore | None = None,
         summarize_chat: bool = False,
         streaming: bool = False,
         print_responses: bool = False,
@@ -941,7 +940,7 @@ class RAGWorkflow:
         if self.llm is None:
             error("There is no LLM configured to chat with")
 
-        if self.chat_memory is None and keep_history:
+        if self.chat_memory is None and chat_store is not None:
             if summarize_chat:
                 self.chat_memory = ChatSummaryMemoryBuffer.from_defaults(  # pyright: ignore[reportUnknownMemberType]
                     token_limit=token_limit,
@@ -950,15 +949,15 @@ class RAGWorkflow:
                         "The following is a conversation between the user and assistant. "
                         "Write a concise summary about the contents of this conversation."
                     ),
-                    chat_store=self.chat_store,
-                    chat_story_key="user1",
+                    chat_store=chat_store,
+                    chat_story_key=user,
                     llm=self.llm,
                 )
             else:
                 self.chat_memory = ChatMemoryBuffer.from_defaults(  # pyright: ignore[reportUnknownMemberType]
                     token_limit=token_limit,
-                    chat_store=self.chat_store,
-                    chat_store_key="user1",
+                    chat_store=chat_store,
+                    chat_store_key=user,
                     llm=self.llm,
                 )
 
@@ -1055,9 +1054,19 @@ async def rag_client(args: Args):
                 streaming=args.streaming,
             )
         case "chat":
+            user = args.chat_user or "user"
+
+            chat_store_json = xdg_config_home() / "rag-client" / "chat_store.json"
+            if args.chat_user is not None:
+                chat_store = SimpleChatStore.from_persist_path(str(chat_store_json))
+            else:
+                chat_store = SimpleChatStore()
+
             while True:
-                query = input("\nUSER> ")
+                query = input(f"\n{user}> ")
                 if query == "exit":
+                    if args.chat_user is not None:
+                        chat_store.persist(persist_path=str(chat_store_json))
                     break
                 elif query.startswith("search "):
                     await search_command(rag, query[7:])
@@ -1069,9 +1078,10 @@ async def rag_client(args: Args):
                     )
                 else:
                     _ = await rag.chat(
-                        query,
+                        user=user,
+                        query=query,
                         token_limit=args.token_limit,
-                        keep_history=True,
+                        chat_store=chat_store,
                         streaming=args.streaming,
                         print_responses=True,
                     )

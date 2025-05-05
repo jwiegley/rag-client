@@ -32,8 +32,7 @@ case $1 in
             --top-k 20                                  \
             --from $input                               \
             --questions-answered 3                      \
-            --db-name "vector_db"                       \
-            --db-table "uhj"                            \
+            --db-conn "postgresql+psycopg2://postgres@localhost:5432/vector_db" \
             --llm $llm                                  \
             --llm-base-url "http://localhost:8080/v1"   \
             store
@@ -49,8 +48,7 @@ case $1 in
             --top-k 20                                  \
             --from $input                               \
             --questions-answered 3                      \
-            --db-name "vector_db"                       \
-            --db-table "uhj"                            \
+            --db-conn "postgresql+psycopg2://postgres@localhost:5432/vector_db" \
             --llm $llm                                  \
             --llm-base-url "http://localhost:8080/v1"   \
             llm
@@ -66,8 +64,7 @@ case $1 in
             --top-k 20                                  \
             --from $input                               \
             --questions-answered 3                      \
-            --db-name "vector_db"                       \
-            --db-table "uhj"                            \
+            --db-conn "postgresql+psycopg2://postgres@localhost:5432/vector_db" \
             --llm $llm                                  \
             --llm-base-url "http://localhost:8080/v1"   \
             files
@@ -82,8 +79,7 @@ case $1 in
             --chunk-overlap 20                          \
             --top-k 20                                  \
             --from $input                               \
-            --db-name "vector_db"                       \
-            --db-table "uhj"                            \
+            --db-conn "postgresql+psycopg2://postgres@localhost:5432/vector_db" \
             --streaming                                 \
             --llm $llm                                  \
             --llm-base-url "http://localhost:8080/v1"   \
@@ -99,7 +95,8 @@ case $1 in
             --chunk-overlap 20                          \
             --top-k 20                                  \
             --timeout 3600                              \
-            --from $input                               \
+            --max-tokens 1000                           \
+            --db-conn "postgresql+psycopg2://postgres@localhost:5432/vector_db" \
             --use-keywords                              \
             --streaming                                 \
             --llm $llm                                  \

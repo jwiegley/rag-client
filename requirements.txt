@@ -11,7 +11,6 @@ llama-index-readers-file>=0.4.7
 llama-index-vector-stores-postgres>=0.5.1
 llama-index-storage-docstore-postgres>=0.3.0
 llama-index-storage-index-store-postgres>=0.4.0
-llama-index-storage-chat-store-postgres>=0.2.1
 llama-parse>=0.6.20
 llama_cpp_python>=0.3.8
 nltk>=3.9.1
