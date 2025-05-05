@@ -50,6 +50,7 @@ from llama_index.core.memory import ChatMemoryBuffer, ChatSummaryMemoryBuffer
 from llama_index.core.node_parser import (
     SemanticSplitterNodeParser,
     SentenceSplitter,
+    SentenceWindowNodeParser,
 )
 from llama_index.core.query_engine import (
     RetrieverQueryEngine,
@@ -240,6 +241,9 @@ class Args(TypedArgs):
     breakpoint_percentile_threshold: int = arg(
         default=95,
         help="Breakpoint percentile threshold (default: %(default)s)",
+    )
+    window_size: int = arg(
+        default=3, help="Window size of sentence window splitter (default: %(default)s)"
     )
     questions_answered: int | None = arg(
         help="If provided, generate N questions related to each chunk",
@@ -661,6 +665,12 @@ class RAGWorkflow:
                 chunk_overlap=args.chunk_overlap,
                 include_metadata=True,
             )
+        elif model == "SentenceWindow":
+            return SentenceWindowNodeParser.from_defaults(
+                window_size=args.window_size,
+                window_metadata_key="window",
+                original_text_metadata_key="original_text",
+            )
         elif model == "Semantic":
             if self.embed_model is not None:
                 return SemanticSplitterNodeParser(
@@ -861,10 +871,10 @@ class RAGWorkflow:
     async def query(
         self,
         query: str,
-        retries: bool = False,
-        source_retries: bool = False,
         streaming: bool = False,
         print_responses: bool = False,
+        retries: bool = False,
+        source_retries: bool = False,
     ) -> str | NoReturn:
         if self.retriever is None:
             error("There is no retriever configured to query")
@@ -875,7 +885,6 @@ class RAGWorkflow:
         query_engine = RetrieverQueryEngine.from_args(
             retriever=self.retriever,
             llm=self.llm,
-            use_async=True,
             streaming=streaming,
         )
 
@@ -883,9 +892,10 @@ class RAGWorkflow:
             relevancy_evaluator = RelevancyEvaluator(llm=self.llm)
             # jww (2025-05-04): Allow using different evaluators
             _guideline_evaluator = GuidelineEvaluator(
+                llm=self.llm,
                 guidelines=DEFAULT_GUIDELINES
                 + "\nThe response should not be overly long.\n"
-                + "The response should try to summarize where possible.\n"
+                + "The response should try to summarize where possible.\n",
             )
             if source_retries:
                 logger.info("Add retry source query engine")
@@ -1011,10 +1021,18 @@ async def search_command(rag: RAGWorkflow, query: str):
     print(json.dumps(nodes, indent=2))
 
 
-async def query_command(rag: RAGWorkflow, query: str, streaming: bool):
+async def query_command(
+    rag: RAGWorkflow,
+    query: str,
+    streaming: bool,
+    retries: bool = False,
+    source_retries: bool = False,
+):
     print(
         await rag.query(
             query,
+            retries=retries,
+            source_retries=source_retries,
             streaming=streaming,
             print_responses=True,
         )
@@ -1049,6 +1067,8 @@ async def rag_client(args: Args):
                 rag,
                 args.args[0],
                 streaming=args.streaming,
+                retries=args.retries,
+                source_retries=args.source_retries,
             )
         case "chat":
             user = args.chat_user or "user"
@@ -1072,6 +1092,8 @@ async def rag_client(args: Args):
                         rag,
                         query[6:],
                         streaming=args.streaming,
+                        retries=args.retries,
+                        source_retries=args.source_retries,
                     )
                 else:
                     _ = await rag.chat(

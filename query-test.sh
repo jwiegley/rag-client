@@ -78,7 +78,7 @@ case $1 in
             --chunk-size 512                            \
             --chunk-overlap 20                          \
             --top-k 20                                  \
-            --from $input                               \
+            --source-retries                               \
             --db-conn "postgresql+psycopg2://postgres@localhost:5432/vector_db" \
             --streaming                                 \
             --llm $llm                                  \
