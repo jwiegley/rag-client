@@ -40,7 +40,12 @@ from llama_index.core.chat_engine.context import ContextChatEngine
 from llama_index.core.chat_engine.types import BaseChatEngine
 from llama_index.core.data_structs.data_structs import IndexDict
 from llama_index.core.embeddings import BaseEmbedding
-from llama_index.core.extractors import QuestionsAnsweredExtractor
+from llama_index.core.extractors import (
+    KeywordExtractor,
+    QuestionsAnsweredExtractor,
+    SummaryExtractor,
+    TitleExtractor,
+)
 from llama_index.core.indices.base import BaseIndex
 from llama_index.core.indices.keyword_table.base import BaseKeywordTableIndex
 from llama_index.core.ingestion import IngestionPipeline
@@ -695,11 +700,17 @@ class RAGWorkflow:
 
         transformations = [await self.load_splitter(split_model, args)]
 
-        if self.llm is not None and questions_answered is not None:
-            logger.info(f"Generate {questions_answered} questions for each chunk")
-            transformations.append(
-                QuestionsAnsweredExtractor(questions=questions_answered, llm=self.llm)
-            )
+        if self.llm is not None:
+            transformations.append(KeywordExtractor(keywords=5, llm=self.llm))
+            transformations.append(SummaryExtractor(summaries=["self"], llm=self.llm))
+            transformations.append(TitleExtractor(nodes=5, llm=self.llm))
+            if questions_answered is not None:
+                logger.info(f"Generate {questions_answered} questions for each chunk")
+                transformations.append(
+                    QuestionsAnsweredExtractor(
+                        questions=questions_answered, llm=self.llm
+                    )
+                )
 
         pipeline = IngestionPipeline(transformations=transformations)
         return await pipeline.arun(documents=documents, num_workers=num_workers)
