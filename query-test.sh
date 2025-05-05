@@ -97,7 +97,7 @@ case $1 in
             --timeout 3600                              \
             --max-tokens 1000                           \
             --db-conn "postgresql+psycopg2://postgres@localhost:5432/vector_db" \
-            --use-keywords                              \
+            --collect-keywords                          \
             --streaming                                 \
             --llm $llm                                  \
             --llm-base-url "http://localhost:8080/v1"   \
@@ -113,8 +113,8 @@ case $1 in
             --chunk-overlap 20                          \
             --top-k 20                                  \
             --timeout 3600                              \
-            --db-conn "postgresql+psycopg2://postgres@localhost:5432/vector_db" \
             --from $input                               \
+            --db-conn "postgresql+psycopg2://postgres@localhost:5432/vector_db" \
             --collect-keywords                          \
             --streaming                                 \
             --llm $llm                                  \

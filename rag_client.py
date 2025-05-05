@@ -482,6 +482,7 @@ class RAGWorkflow:
 
     llm: LLM | None = None
 
+    storage_context: StorageContext | None = None
     vector_retriever: BaseRetriever | None = None
     keyword_retriever: BaseRetriever | None = None
     retriever: BaseRetriever | None = None
@@ -766,7 +767,7 @@ class RAGWorkflow:
             index_store = SimpleIndexStore()
             vector_store = SimpleVectorStore()
 
-        storage_context = StorageContext.from_defaults(
+        self.storage_context = StorageContext.from_defaults(
             docstore=docstore,
             index_store=index_store,
             vector_store=vector_store,
@@ -784,11 +785,15 @@ class RAGWorkflow:
                 logger.info("Read stores from cache")
 
             indices: list[BaseIndex[IndexDict]] = load_indices_from_storage(
-                storage_context=storage_context,
+                storage_context=self.storage_context,
                 embed_model=self.embed_model,
                 llm=self.llm,
             )
-            if len(indices) == 2:
+            if len(indices) == 1:
+                [vector_index] = indices
+                self.vector_index = vector_index
+                self.keyword_index = None
+            else:
                 [vector_index, keyword_index] = indices
                 self.vector_index = vector_index
                 self.keyword_index = cast(BaseKeywordTableIndex, keyword_index)
@@ -809,22 +814,23 @@ class RAGWorkflow:
             self.vector_index, self.keyword_index = await self.populate_vector_store(
                 nodes,
                 collect_keywords=collect_keywords,
-                storage_context=storage_context,
+                storage_context=self.storage_context,
             )
 
             if args.db_conn is None and persist_dir is not None:
                 logger.info("Persist storage context to disk")
-                storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
+                self.storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
                     persist_dir=persist_dir
                 )
 
     async def load_retriever(self, similarity_top_k: int):
-        logger.info("Create retriever object")
         if self.vector_index is not None:
+            logger.info("Create vector retriever")
             self.vector_retriever = self.vector_index.as_retriever(
                 similarity_top_k=similarity_top_k
             )
         if self.keyword_index is not None:
+            logger.info("Create keyword retriever")
             self.keyword_retriever = self.keyword_index.as_retriever()
 
         if self.vector_retriever is not None:
