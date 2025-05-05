@@ -7,26 +7,33 @@ import json
 import logging
 import os
 import sys
-from abc import abstractmethod
+import typed_argparse as tap
+import psycopg2
+
 from collections.abc import Iterable, Sequence
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import cache
 from io import StringIO
+from orgparse.node import OrgNode
 from pathlib import Path
+from typed_argparse import TypedArgs, arg
 from typing import Any, Literal, NoReturn, cast, final, no_type_check, override
+from xdg_base_dirs import xdg_cache_home
 
-from llama_index.core.evaluation.guideline import DEFAULT_GUIDELINES
-import typed_argparse as tap
 from llama_index.core import (
     KeywordTableIndex,
     QueryBundle,
-    Settings,
     SimpleDirectoryReader,
     SimpleKeywordTableIndex,
     StorageContext,
     VectorStoreIndex,
+    load_indices_from_storage,  # pyright: ignore[reportUnknownVariableType]
 )
+from llama_index.core.evaluation.guideline import DEFAULT_GUIDELINES
+from llama_index.core.storage.storage_context import DEFAULT_PERSIST_DIR
+from llama_index.core.storage.docstore import SimpleDocumentStore
+from llama_index.core.storage.index_store import SimpleIndexStore
 from llama_index.core.base.embeddings.base import Embedding
 from llama_index.core.chat_engine import SimpleChatEngine
 from llama_index.core.chat_engine.context import ContextChatEngine
@@ -34,9 +41,6 @@ from llama_index.core.chat_engine.types import BaseChatEngine
 from llama_index.core.data_structs.data_structs import IndexDict
 from llama_index.core.embeddings import BaseEmbedding
 from llama_index.core.extractors import QuestionsAnsweredExtractor
-from llama_index.core.indices import (
-    load_index_from_storage,  # pyright: ignore[reportUnknownVariableType]
-)
 from llama_index.core.indices.base import BaseIndex
 from llama_index.core.indices.keyword_table.base import BaseKeywordTableIndex
 from llama_index.core.ingestion import IngestionPipeline
@@ -44,7 +48,6 @@ from llama_index.core.llms import ChatMessage
 from llama_index.core.llms.llm import LLM
 from llama_index.core.memory import ChatMemoryBuffer, ChatSummaryMemoryBuffer
 from llama_index.core.node_parser import (
-    NodeParser,
     SemanticSplitterNodeParser,
     SentenceSplitter,
 )
@@ -63,9 +66,9 @@ from llama_index.core.schema import (
     NodeWithScore,
     TransformComponent,
 )
-from llama_index.core.storage.chat_store import SimpleChatStore
+from llama_index.core.storage.chat_store import BaseChatStore, SimpleChatStore
 from llama_index.core.vector_stores.simple import SimpleVectorStore
-from llama_index.core.vector_stores.types import BasePydanticVectorStore
+
 from llama_index.embeddings.huggingface import (  # pyright: ignore[reportMissingTypeStubs]
     HuggingFaceEmbedding,
 )
@@ -89,9 +92,15 @@ from llama_index.llms.openai_like import (  # pyright: ignore[reportMissingTypeS
 from llama_index.vector_stores.postgres import (  # pyright: ignore[reportMissingTypeStubs]
     PGVectorStore,
 )
-from orgparse.node import OrgNode
-from typed_argparse import TypedArgs, arg
-from xdg_base_dirs import xdg_cache_home
+from llama_index.storage.docstore.postgres import (  # pyright: ignore[reportMissingTypeStubs]
+    PostgresDocumentStore,
+)
+from llama_index.storage.index_store.postgres import (  # pyright: ignore[reportMissingTypeStubs]
+    PostgresIndexStore,
+)
+from llama_index.storage.chat_store.postgres import (  # pyright: ignore[reportMissingTypeStubs]
+    PostgresChatStore,
+)
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -99,6 +108,10 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 logger = logging.getLogger("rag-client")
+
+
+async def awaitable_none():
+    return None
 
 
 def error(msg: str) -> NoReturn:
@@ -185,22 +198,9 @@ def clean_special_tokens(text: str) -> str:
 
 class Args(TypedArgs):
     verbose: bool = arg(help="Verbose?")
-    db_name: str | None = arg(
-        help="Postgres db (in-memory vector index if unspecified)",
+    db_conn: str | None = arg(
+        help="Postgres connection string (in-memory if unspecified)",
     )
-    db_host: str = arg(
-        default="localhost",
-        help="Postgres db host (default: %(default)s)",
-    )
-    db_port: int = arg(
-        default=5432,
-        help="Postgres db port (default: %(default)s)",
-    )
-    db_user: str = arg(
-        default="postgres",
-        help="Postgres db user (default: %(default)s)",
-    )
-    db_pass: str = arg(default="", help="Postgres db password")
     db_table: str = arg(
         default="vectors",
         help="Postgres db table (default: %(default)s)",
@@ -233,6 +233,16 @@ class Args(TypedArgs):
     chunk_overlap: int = arg(
         default=20,
         help="Chunk overlap (default: %(default)s)",
+    )
+    splitter: str = arg(
+        default="Sentence", help="Document splitting strategy (default: %(default)s)"
+    )
+    buffer_size: int = arg(
+        default=256, help="Buffer size for semantic splitting (default: %(default)s)"
+    )
+    breakpoint_percentile_threshold: int = arg(
+        default=95,
+        help="Breakpoint percentile threshold (default: %(default)s)",
     )
     questions_answered: int | None = arg(
         help="If provided, generate N questions related to each chunk",
@@ -300,6 +310,10 @@ class Args(TypedArgs):
     )
     summarize_chat: bool = arg(
         help="Summarize chat history when it grows too long",
+    )
+    num_workers: int = arg(
+        default=4,
+        help="Number of works to use for various tasks (default: %(default)s)",
     )
     command: str = arg(positional=True, help="Command to execute")
     args: list[str] = arg(positional=True, nargs="*", help="Query to submit to LLM")
@@ -456,61 +470,86 @@ class CustomRetriever(BaseRetriever):
         return retrieve_nodes
 
 
-### VectorStoreObjects
+### Workflows
+
+
+# jww (2025-05-04):
+# - PostgresChatStore
+# - PostgresDocStore
+# - PostgresIndexStore
+# - PostgresVectorStore
 
 
 @dataclass
-class VectorStoreObject:
-    @abstractmethod
-    def construct(self) -> BasePydanticVectorStore:
-        pass
+class RAGWorkflow:
+    verbose: bool = False
+    fingerprint: str | None = None
 
+    storage_context: StorageContext | None = None
+    embed_model: BaseEmbedding | None = None
 
-@dataclass
-class PGVectorStoreObject(VectorStoreObject):
-    database: str
-    host: str
-    password: str
-    port: int
-    user: str
-    table_name: str
-    embed_dim: int
-    hnsw_m: int
-    hnsw_ef_construction: int
-    hnsw_ef_search: int
-    hnsw_dist_method: str
+    llm: LLM | None = None
 
-    @override
-    def construct(self) -> BasePydanticVectorStore:
-        logger.info("Setup PostgreSQL vector store")
-        return PGVectorStore.from_params(
-            database=self.database,
-            host=self.host,
-            password=self.password,
-            port=str(self.port),
-            user=self.user,
-            table_name=self.table_name,
-            embed_dim=self.embed_dim,
-            hnsw_kwargs={
-                "hnsw_m": self.hnsw_m,
-                "hnsw_ef_construction": self.hnsw_ef_construction,
-                "hnsw_ef_search": self.hnsw_ef_search,
-                "hnsw_dist_method": self.hnsw_dist_method,
-            },
-            # create_engine_kwargs={
-            #     "connect_args": {"options": "-c client_encoding=UTF8"}
-            # },
+    vector_retriever: BaseRetriever | None = None
+    keyword_retriever: BaseRetriever | None = None
+    retriever: BaseRetriever | None = None
+
+    vector_index: BaseIndex[IndexDict] | None = None
+    keyword_index: BaseKeywordTableIndex | None = None
+
+    chat_store: BaseChatStore | None = None
+    chat_memory: ChatMemoryBuffer | ChatSummaryMemoryBuffer | None = None
+    chat_history: list[ChatMessage] | None = None
+    chat_engine: BaseChatEngine | None = None
+
+    async def initialize(self, args: Args):
+        if args.embed_model:
+            emb = self.load_embedding(args.embed_model, args.llm_base_url)
+        else:
+            emb = awaitable_none()
+        if args.llm:
+            llm = self.load_llm(args.llm, args)
+        else:
+            llm = awaitable_none()
+        self.embed_model = await emb
+        self.llm = await llm
+
+    async def postgres_stores(
+        self, uri: str, args: Args
+    ) -> tuple[
+        PostgresDocumentStore, PostgresIndexStore, PGVectorStore, SimpleChatStore
+    ]:
+        logger.info("Create Postgres store objects")
+        docstore: PostgresDocumentStore = PostgresDocumentStore.from_uri(
+            uri=uri,
+            table_name="docstore",
         )
+        index_store: PostgresIndexStore = PostgresIndexStore.from_uri(
+            uri=uri,
+            table_name="indexstore",
+        )
+        vector_store: PGVectorStore = PGVectorStore.from_params(
+            connection_string=uri,
+            table_name="vectorstore",
+            port=str(5432),
+            embed_dim=args.embed_dim,
+            hnsw_kwargs={
+                "hnsw_m": args.hnsw_m,
+                "hnsw_ef_construction": args.hnsw_ef_construction,
+                "hnsw_ef_search": args.hnsw_ef_search,
+                "hnsw_dist_method": args.hnsw_dist_method,
+            },
+        )
+        chat_store: SimpleChatStore = SimpleChatStore()
+        # chat_store: PostgresChatStore = PostgresChatStore.from_uri(
+        #     uri=uri,
+        #     table_name="chatstore",
+        # )
+        return docstore, index_store, vector_store, chat_store
 
-
-### EmbeddingObjects
-
-
-@dataclass
-class EmbeddingObject:
-    base_url: str | None
-
-    def construct(self, model: str) -> BaseEmbedding | NoReturn:
+    async def load_embedding(
+        self, model: str, base_url: str | None = None
+    ) -> BaseEmbedding:
         prefix, model = parse_prefixes(
             [
                 "HuggingFace:",
@@ -527,7 +566,7 @@ class EmbeddingObject:
         elif prefix == "Ollama:":
             return OllamaEmbedding(
                 model_name=model,
-                base_url=self.base_url or "http://localhost:11434",
+                base_url=base_url or "http://localhost:11434",
             )
         elif prefix == "LlamaCpp:":
             return LlamaCppEmbedding(model_path=model)
@@ -536,77 +575,12 @@ class EmbeddingObject:
         elif prefix == "OpenAILike:":
             return OpenAILikeEmbedding(
                 model_name=model,
-                api_base=self.base_url or "http://localhost:1234/v1",
+                api_base=base_url or "http://localhost:1234/v1",
             )
         else:
             error(f"Embedding model not recognized: {model}")
 
-
-### SplitterObjects
-
-
-@dataclass
-class SplitterObject:
-    chunk_size: int
-    chunk_overlap: int
-
-    embed_model: BaseEmbedding | None
-    buffer_size: int
-    breakpoint_percentile_threshold: int
-
-    def construct(self, model: str) -> NodeParser | NoReturn:
-        prefix, model = parse_prefixes(
-            [
-                "Sentence:",
-                "SentenceWindow:",
-                "Semantic:",
-                "Markdown:",
-                "Code:",
-                "Token:",
-                "Json:",
-                "Html:",
-                "Hierarchical:",
-                "Topic:",
-            ],
-            model,
-        )
-        logger.info(f"Load splitter {prefix}:{model}")
-        if prefix == "Sentence:":
-            return SentenceSplitter(
-                chunk_size=self.chunk_size,
-                chunk_overlap=self.chunk_overlap,
-                include_metadata=True,
-            )
-        elif prefix == "Semantic:":
-            if self.embed_model is not None:
-                # jww (2025-05-04): Make this configurable
-                return SemanticSplitterNodeParser(
-                    buffer_size=self.buffer_size,
-                    breakpoint_percentile_threshold=self.breakpoint_percentile_threshold,
-                    embed_model=self.embed_model,
-                )
-            else:
-                error(f"Semantic splitter needs an embedding model")
-        else:
-            error(f"Splitting model not recognized: {model}")
-
-
-### LLMObjects
-
-
-@dataclass
-class LLMObject:
-    base_url: str | None
-    api_key: str
-    api_version: str | None
-    temperature: float
-    max_tokens: int
-    context_window: int
-    reasoning_effort: Literal["low", "medium", "high"]
-    timeout: int
-    gpu_layers: int
-
-    def construct(self, model: str, verbose: bool = False) -> LLM | NoReturn:
+    async def load_llm(self, model: str, args: Args) -> LLM:
         prefix, model = parse_prefixes(
             ["Ollama:", "OpenAILike:", "OpenAI:", "LlamaCpp:"],
             model,
@@ -616,224 +590,143 @@ class LLMObject:
         if prefix == "Ollama:":
             return Ollama(
                 model=model,
-                base_url=self.base_url or "http://localhost:11434",
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                context_window=self.context_window,
-                request_timeout=self.timeout,
+                base_url=args.llm_base_url or "http://localhost:11434",
+                temperature=args.temperature,
+                max_tokens=args.max_tokens,
+                context_window=args.context_window,
+                request_timeout=args.timeout,
             )
         elif prefix == "OpenAILike:":
             return OpenAILike(
                 model=model,
-                api_base=self.base_url or "http://localhost:1234/v1",
-                api_key=self.api_key,
-                api_version=self.api_version or "",
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                context_window=self.context_window,
-                reasoning_effort=self.reasoning_effort,
-                timeout=self.timeout,
+                api_base=args.llm_base_url or "http://localhost:1234/v1",
+                api_key=args.llm_api_key,
+                api_version=args.llm_api_version or "",
+                temperature=args.temperature,
+                max_tokens=args.max_tokens,
+                context_window=args.context_window,
+                reasoning_effort=args.reasoning_effort,
+                timeout=args.timeout,
             )
         elif prefix == "OpenAI:":
             return OpenAI(
                 model=model,
-                api_key=self.api_key,
-                api_base=self.base_url,
-                api_version=self.api_version,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                context_window=self.context_window,
-                reasoning_effort=self.reasoning_effort,
-                timeout=self.timeout,
-            )
-        elif prefix == "LlamaCpp:":
-            return LlamaCPP(
-                # model_url=model_url,
-                model_path=model,
-                temperature=self.temperature,
-                max_new_tokens=self.max_tokens,
-                context_window=self.context_window,
-                generate_kwargs={},
-                model_kwargs={"n_gpu_layers": self.gpu_layers},
-                verbose=verbose,
-            )
-        else:
-            error(f"LLM model not recognized: {model}")
-
-
-### Workflows
-
-
-@dataclass
-class RAGWorkflow:
-    args: Args
-
-    fingerprint: str | None = None
-
-    vector_store: BasePydanticVectorStore = field(default_factory=SimpleVectorStore)
-    embed_model: BaseEmbedding | None = None
-
-    llm: LLM | None = None
-
-    vector_retriever: BaseRetriever | None = None
-    keyword_retriever: BaseRetriever | None = None
-    retriever: BaseRetriever | None = None
-
-    vector_index: BaseIndex[IndexDict] | None = None
-    keyword_index: BaseKeywordTableIndex | None = None
-
-    chat_memory: ChatMemoryBuffer | ChatSummaryMemoryBuffer | None = None
-    chat_history: list[ChatMessage] | None = None
-    chat_engine: BaseChatEngine | None = None
-
-    async def initialize(self):
-        self.vector_store, self.embed_model, self.llm, input_files = (
-            await asyncio.gather(
-                self.load_vector_store(),
-                self.load_embedding(),
-                self.load_llm(),
-                self.find_input_files(),
-            )
-        )
-        await self.load_vector_index(input_files)
-
-    async def load_vector_store(self):
-        args: Args = self.args
-        if args.db_name is None:
-            logger.info("In-memory vector store")
-            return SimpleVectorStore()
-        else:
-            logger.info("Postgres vector store")
-            return PGVectorStoreObject(
-                database=args.db_name,
-                host=args.db_host,
-                password=args.db_pass,
-                port=args.db_port,
-                user=args.db_user,
-                table_name=args.db_table,
-                embed_dim=args.embed_dim,
-                hnsw_m=args.hnsw_m,
-                hnsw_ef_construction=args.hnsw_ef_construction,
-                hnsw_ef_search=args.hnsw_ef_search,
-                hnsw_dist_method=args.hnsw_dist_method,
-            ).construct()
-
-    async def load_embedding(self):
-        args: Args = self.args
-        if args.embed_model is None:
-            logger.info("No embedding model")
-            return None
-        else:
-            return EmbeddingObject(base_url=args.embed_base_url).construct(
-                model=args.embed_model
-            )
-
-    async def load_llm(self):
-        args: Args = self.args
-        if args.llm is None:
-            logger.info("No LLM")
-            return None
-        else:
-            return LLMObject(
-                base_url=args.llm_base_url,
                 api_key=args.llm_api_key,
+                api_base=args.llm_base_url,
                 api_version=args.llm_api_version,
                 temperature=args.temperature,
                 max_tokens=args.max_tokens,
                 context_window=args.context_window,
                 reasoning_effort=args.reasoning_effort,
                 timeout=args.timeout,
-                gpu_layers=args.gpu_layers,
-            ).construct(args.llm, verbose=args.verbose)
-
-    async def find_input_files(self) -> list[Path] | None:
-        args: Args = self.args
-        if args.from_ is None:
-            logger.info("No input files")
-            return None
+            )
+        elif prefix == "LlamaCpp:":
+            return LlamaCPP(
+                # model_url=model_url,
+                model_path=model,
+                temperature=args.temperature,
+                max_new_tokens=args.max_tokens,
+                context_window=args.context_window,
+                generate_kwargs={},
+                model_kwargs={"n_gpu_layers": args.gpu_layers},
+                verbose=self.verbose,
+            )
         else:
-            input_files = read_files(args.from_, args.recursive)
-            return input_files
+            error(f"LLM model not recognized: {model}")
 
     async def determine_fingerprint(self, input_files: list[Path]) -> str:
-        args = deepcopy(self.args)
-        args.command = ""
-        args.args = []
+        logger.info("Determine input files fingerprint")
         fingerprint = [
             collection_hash(input_files),
-            hashlib.sha512(repr(args).encode("utf-8")).hexdigest(),
+            # hashlib.sha512(repr(args).encode("utf-8")).hexdigest(),
         ]
         final_hash = "\n".join(fingerprint).encode("utf-8")
         final_base64 = base64.b64encode(final_hash).decode("utf-8")
         return final_base64[0:32]
 
-    def read_documents(self, input_files: list[Path]) -> Iterable[Document]:
+    async def read_documents(self, input_files: list[Path]) -> Iterable[Document]:
         logger.info("Read documents from disk")
-
         file_extractor: dict[str, BaseReader] = {".org": OrgReader()}
-
         # jww (2025-05-04): Make num_workers configurable
         return SimpleDirectoryReader(
             input_files=input_files,
             file_extractor=file_extractor,
         ).load_data(num_workers=4)
 
-    async def split_documents(
-        self, documents: Iterable[Document]
-    ) -> Sequence[BaseNode]:
-        args: Args = self.args
-        logger.info(f"Split documents")
-
-        transformations: list[TransformComponent] = [
-            SentenceSplitter(
+    async def load_splitter(self, model: str, args: Args) -> TransformComponent:
+        # Sentence
+        # SentenceWindow
+        # Semantic
+        # Markdown
+        # Code
+        # Token
+        # Json
+        # Html
+        # Hierarchical
+        # Topic
+        logger.info(f"Load splitter {model}")
+        if model == "Sentence":
+            return SentenceSplitter(
                 chunk_size=args.chunk_size,
                 chunk_overlap=args.chunk_overlap,
                 include_metadata=True,
-            ),
-            # jww (2025-05-04): Semantic-aware splitting
-            # SemanticSplitterNodeParser(
-            #     buffer_size=256,
-            #     breakpoint_percentile_threshold=95
-            # )
-        ]
-
-        if self.llm is not None and args.questions_answered is not None:
-            logger.info(f"Generate {args.questions_answered} questions for each chunk")
-            transformations.append(
-                QuestionsAnsweredExtractor(
-                    questions=args.questions_answered, llm=self.llm
+            )
+        elif model == "Semantic":
+            if self.embed_model is not None:
+                # jww (2025-05-04): Make this configurable
+                return SemanticSplitterNodeParser(
+                    buffer_size=args.buffer_size,
+                    breakpoint_percentile_threshold=args.breakpoint_percentile_threshold,
+                    embed_model=self.embed_model,
                 )
+            else:
+                error(f"Semantic splitter needs an embedding model")
+        else:
+            error(f"Splitting model not recognized: {model}")
+
+    async def split_documents(
+        self,
+        split_model: str,
+        documents: Iterable[Document],
+        questions_answered: int | None,
+        num_workers: int | None,
+        args: Args,  # jww (2025-05-04): this should not be here
+    ) -> Sequence[BaseNode]:
+        logger.info(f"Split documents")
+
+        transformations = [await self.load_splitter(split_model, args)]
+
+        if self.llm is not None and questions_answered is not None:
+            logger.info(f"Generate {questions_answered} questions for each chunk")
+            transformations.append(
+                QuestionsAnsweredExtractor(questions=questions_answered, llm=self.llm)
             )
 
         pipeline = IngestionPipeline(transformations=transformations)
         # jww (2025-05-03): Make num_workers here customizable
-        return await pipeline.arun(documents=documents, num_workers=4)
+        return await pipeline.arun(documents=documents, num_workers=num_workers)
 
     async def populate_vector_store(
-        self, nodes: Sequence[BaseNode]
+        self, nodes: Sequence[BaseNode], collect_keywords: bool
     ) -> tuple[VectorStoreIndex, BaseKeywordTableIndex | None]:
-        args: Args = self.args
-
-        logger.info("Create storage context")
-        storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
-
         logger.info(f"Populate vector store")
+
         vector_index = VectorStoreIndex(
             nodes,
-            storage_context=storage_context,
+            storage_context=self.storage_context,
             embed_model=self.embed_model,
-            show_progress=args.verbose,
+            show_progress=self.verbose,
         )
 
-        if args.use_keywords:
+        if collect_keywords:
             if self.llm is None:
                 keyword_index = SimpleKeywordTableIndex(
-                    nodes, storage_context=storage_context
+                    nodes, storage_context=self.storage_context
                 )
             else:
                 keyword_index = KeywordTableIndex(
                     nodes,
-                    storage_context=storage_context,
+                    storage_context=self.storage_context,
                     llm=self.llm,
                 )
         else:
@@ -841,72 +734,107 @@ class RAGWorkflow:
 
         return vector_index, keyword_index
 
-    async def load_index_from_cache(
-        self, persist_dir: Path, index_id: str
-    ) -> BaseIndex[IndexDict]:
-        args: Args = self.args
-        logger.info("Load index from cache")
-        global Settings
-        Settings.llm = self.llm
-        Settings.embed_model = self.embed_model
-        Settings.chunk_size = args.chunk_size
-        Settings.chunk_overlap = args.chunk_overlap
-        return load_index_from_storage(  # pyright: ignore[reportUnknownVariableType]
-            StorageContext.from_defaults(persist_dir=str(persist_dir)),
-            index_id=index_id,
-        )
+    # global Settings
+    # Settings.llm = self.llm
+    # Settings.embed_model = self.embed_model
+    # Settings.chunk_size = args.chunk_size
+    # Settings.chunk_overlap = args.chunk_overlap
 
-    async def load_index_from_vector_store(self) -> VectorStoreIndex:
-        args: Args = self.args
-        logger.info("Load index from database")
-        return VectorStoreIndex.from_vector_store(  # pyright: ignore[reportUnknownMemberType]
-            vector_store=self.vector_store,
-            embed_model=self.embed_model,
-            show_progress=args.verbose,
-        )
-
-    async def load_vector_index(self, input_files: list[Path] | None):
-        args: Args = self.args
+    async def index_files(
+        self,
+        input_files: list[Path] | None,
+        splitter: str,
+        collect_keywords: bool,
+        questions_answered: int | None,
+        num_workers: int | None,
+        args: Args,  # jww (2025-05-04): Should not be here
+    ):
         if input_files is None:
             logger.info("No input files")
-            if not isinstance(self.vector_store, SimpleVectorStore):
-                self.vector_index = await self.load_index_from_vector_store()
+            persist_dir = None
         else:
             logger.info(f"{len(input_files)} input file(s)")
             fp: str = await self.determine_fingerprint(input_files)
             logger.info(f"Fingerprint = {fp}")
             persist_dir = cache_dir(fp)
-            if (self.fingerprint is None or self.fingerprint == fp) and os.path.isdir(
-                persist_dir
-            ):
-                vector_index, keyword_index = await asyncio.gather(
-                    self.load_index_from_cache(persist_dir / "v", "vectors"),
-                    self.load_index_from_cache(persist_dir / "k", "keywords"),
-                )
-                self.vector_index = vector_index
-                self.keyword_index = cast(BaseKeywordTableIndex, keyword_index)
-            else:
-                documents = self.read_documents(input_files)
-                nodes = await self.split_documents(documents)
-                self.vector_index, self.keyword_index = (
-                    await self.populate_vector_store(nodes)
-                )
-
-                if isinstance(self.vector_store, SimpleVectorStore):
-                    logger.info("Write index to cache")
-                    self.vector_index.storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
-                        persist_dir=(persist_dir / "v")
-                    )
-                if self.keyword_index is not None:
-                    self.keyword_index.storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
-                        persist_dir=persist_dir / "k"
-                    )
             self.fingerprint = fp
 
+        if args.db_conn is not None:
+            docstore, index_store, vector_store, self.chat_store = (
+                await self.postgres_stores(uri=args.db_conn, args=args)
+            )
+        elif persist_dir is not None and os.path.isdir(persist_dir):
+            docstore = SimpleDocumentStore.from_persist_dir(str(persist_dir))
+            index_store = SimpleIndexStore.from_persist_dir(str(persist_dir))
+            vector_store = SimpleVectorStore.from_persist_dir(str(persist_dir))
+            self.chat_store = SimpleChatStore.from_persist_path(
+                str(persist_dir / "chat_store.json")
+            )
+        else:
+            docstore = SimpleDocumentStore()
+            index_store = SimpleIndexStore()
+            vector_store = SimpleVectorStore()
+            self.chat_store = SimpleChatStore()
+
+        if input_files is None or (
+            persist_dir is not None and os.path.isdir(persist_dir)
+        ):
+            logger.info("Read stores from cache or database")
+            self.storage_context = StorageContext.from_defaults(
+                docstore=docstore,
+                index_store=index_store,
+                vector_store=vector_store,
+                persist_dir=str(persist_dir),
+            )
+
+            [
+                vector_index,  # pyright: ignore[reportUnknownVariableType]
+                keyword_index,  # pyright: ignore[reportUnknownVariableType]
+            ] = load_indices_from_storage(
+                storage_context=self.storage_context,
+                embed_model=self.embed_model,
+                llm=self.llm,
+            )
+            self.vector_index = vector_index
+            self.keyword_index = cast(BaseKeywordTableIndex, keyword_index)
+        else:
+            documents = await self.read_documents(input_files)
+
+            nodes = await self.split_documents(
+                splitter,
+                documents,
+                questions_answered=questions_answered,
+                num_workers=num_workers,
+                args=args,
+            )
+
+            self.storage_context = StorageContext.from_defaults(
+                docstore=docstore,
+                index_store=index_store,
+                vector_store=vector_store,
+                persist_dir=(
+                    str(persist_dir) if persist_dir is not None else DEFAULT_PERSIST_DIR
+                ),
+            )
+
+            self.vector_index, self.keyword_index = await self.populate_vector_store(
+                nodes, collect_keywords=collect_keywords
+            )
+
+            if persist_dir is not None:
+                logger.info("Persist storage context")
+                self.storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
+                    persist_dir=persist_dir
+                )
+                self.chat_store.persist(
+                    persist_path=str(persist_dir / "chat_store.json")
+                )
+
+    async def load_retriever(self, similarity_top_k: int):
         logger.info("Create retriever object")
         if self.vector_index is not None:
             self.vector_retriever = self.vector_index.as_retriever(
-                similarity_top_k=args.top_k
+                similarity_top_k=similarity_top_k
             )
         if self.keyword_index is not None:
             self.keyword_retriever = self.keyword_index.as_retriever()
@@ -927,6 +855,7 @@ class RAGWorkflow:
         self, text: str
     ) -> list[dict[str, Any]]:  # pyright: ignore[reportExplicitAny]
         if self.retriever is None:
+            logger.info("No retriever")
             return []
         else:
             logger.info("Retrieve nodes from vector index")
@@ -935,26 +864,27 @@ class RAGWorkflow:
             return [{"text": node.text, "metadata": node.metadata} for node in nodes]
 
     # Query a document collection
-    @no_type_check
     async def query(
         self,
         query: str,
+        retries: bool = False,
+        source_retries: bool = False,
         streaming: bool = False,
         print_responses: bool = False,
     ) -> str | NoReturn:
-        args = self.args
         if self.retriever is None:
             error("There is no retriever configured to query")
         if self.llm is None:
             error("There is no LLM configured to chat with")
 
+        logger.info("Query with retriever query engine")
         query_engine = RetrieverQueryEngine.from_args(
             retriever=self.retriever,
             llm=self.llm,
             use_async=True,
             streaming=streaming,
         )
-        if args.retries or args.source_retries:
+        if retries or source_retries:
             query_response_evaluator = RelevancyEvaluator(llm=self.llm)
             # jww (2025-05-04): Allow using different evaluators
             _guideline_evaluator = GuidelineEvaluator(
@@ -962,70 +892,76 @@ class RAGWorkflow:
                 + "\nThe response should not be overly long.\n"
                 + "The response should try to summarize where possible.\n"
             )
-            if args.source_retries:
+            if source_retries:
+                logger.info("Add retry source query engine")
                 query_engine = RetrySourceQueryEngine(
                     query_engine,
                     evaluator=query_response_evaluator,
                     llm=self.llm,
                 )
             else:
+                logger.info("Add retry query engine")
                 query_engine = RetryQueryEngine(
                     query_engine, evaluator=query_response_evaluator
                 )
 
         if streaming:
+            logger.info("Submit query to LLM")
             response = await query_engine.aquery(query)
             full_response = StringIO()
-            async for token in response.response_gen:
-                token = clean_special_tokens(token)
+            async for (  # pyright: ignore[reportUnknownVariableType]
+                token
+            ) in (  # pyright: ignore[reportUnknownMemberType, reportGeneralTypeIssues]
+                response.response_gen  # pyright: ignore[reportAttributeAccessIssue]
+            ):
+                token = clean_special_tokens(
+                    token  # pyright: ignore[reportUnknownArgumentType]
+                )
                 if print_responses:
                     print(token, end="", flush=True)
                 _ = full_response.write(token)
             return full_response.getvalue()
         else:
+            logger.info("Submit query to LLM")
             response = await query_engine.aquery(query)
             if print_responses:
                 print(str(response))
             return clean_special_tokens(str(response))
 
     # Chat with the LLM, possibly in the context of a document collection
-    @no_type_check
     async def chat(
         self,
         query: str,
+        token_limit: int,
         keep_history: bool = True,
+        summarize_chat: bool = False,
         streaming: bool = False,
         print_responses: bool = False,
     ) -> str | NoReturn:
-        args = self.args
         if self.llm is None:
             error("There is no LLM configured to chat with")
 
-        chat_store = SimpleChatStore()
-        # chat_store = PostgresChatStore.from_uri(
-        #     uri="postgresql+asyncpg://postgres:password@127.0.0.1:5432/database",
-        # )
-
         if self.chat_memory is None and keep_history:
-            if args.summarize_chat:
-                self.chat_memory = ChatSummaryMemoryBuffer.from_defaults(
-                    token_limit=args.token_limit,
+            if summarize_chat:
+                self.chat_memory = ChatSummaryMemoryBuffer.from_defaults(  # pyright: ignore[reportUnknownMemberType]
+                    token_limit=token_limit,
                     # jww (2025-05-04): Make this configurable
                     summarize_prompt=(
                         "The following is a conversation between the user and assistant. "
                         "Write a concise summary about the contents of this conversation."
                     ),
-                    chat_store=chat_store,
+                    chat_store=self.chat_store,
                     chat_story_key="user1",
                     llm=self.llm,
                 )
             else:
-                self.chat_memory = ChatMemoryBuffer.from_defaults(
-                    token_limit=args.token_limit,
-                    chat_store=chat_store,
+                self.chat_memory = ChatMemoryBuffer.from_defaults(  # pyright: ignore[reportUnknownMemberType]
+                    token_limit=token_limit,
+                    chat_store=self.chat_store,
                     chat_store_key="user1",
                     llm=self.llm,
                 )
+
         if self.chat_engine is None:
             if self.retriever is None:
                 self.chat_engine = SimpleChatEngine.from_defaults(
@@ -1042,76 +978,115 @@ class RAGWorkflow:
                 )
 
         if streaming:
-            generator = await self.chat_engine.astream_chat(message=query)
+            logger.info("Submit chat to LLM")
+            generator = await self.chat_engine.astream_chat(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+                message=query
+            )
             full_response = StringIO()
-            async for token in generator.async_response_gen():
-                token = clean_special_tokens(token)
+            async for (  # pyright: ignore[reportUnknownVariableType]
+                token
+            ) in (
+                generator.async_response_gen()  # pyright: ignore[reportUnknownMemberType]
+            ):
+                token = clean_special_tokens(
+                    token  # pyright: ignore[reportUnknownArgumentType]
+                )
                 if print_responses:
                     print(token, end="", flush=True)
                 _ = full_response.write(token)
             return full_response.getvalue()
         else:
-            response = await self.chat_engine.achat(message=query)
-            if print_responses:
-                print(str(response))
-            return clean_special_tokens(str(response))
-
-    async def search_command(self, query: str):
-        nodes = await self.retrieve_nodes(query)
-        print(json.dumps(nodes, indent=2))
-
-    @no_type_check
-    async def query_command(self, query: str):
-        args = self.args
-        print(
-            await self.query(
-                query,
-                streaming=args.streaming,
-                print_responses=True,
+            logger.info("Submit chat to LLM")
+            response = await self.chat_engine.achat(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                message=query
             )
-        )
-
-    @no_type_check
-    async def chat_command(self):
-        args = self.args
-        while True:
-            query = input("\nUSER> ")
-            if query == "exit":
-                break
-            elif query.startswith("search "):
-                await self.search_command(query[7:])
-            elif query.startswith("query "):
-                await self.query_command(query[6:])
-            else:
-                _ = await self.chat(
-                    query,
-                    keep_history=True,
-                    streaming=args.streaming,
-                    print_responses=True,
-                )
-                print()
-
-    @no_type_check
-    async def execute(self, command: str, args: list[str]):
-        match command:
-            case "search":
-                await self.search_command(args[0])
-            case "query":
-                await self.query_command(args[0])
-            case "chat":
-                await self.chat_command()
-            case _:
-                error(f"Command unrecognized: {command}")
+            if print_responses:
+                print(str(response))  # pyright: ignore[reportUnknownArgumentType]
+            return clean_special_tokens(
+                str(response)  # pyright: ignore[reportUnknownArgumentType]
+            )
 
 
 ### Main
 
 
-@no_type_check
+async def search_command(rag: RAGWorkflow, query: str):
+    nodes = await rag.retrieve_nodes(query)
+    print(json.dumps(nodes, indent=2))
+
+
+async def query_command(rag: RAGWorkflow, query: str, streaming: bool):
+    print(
+        await rag.query(
+            query,
+            streaming=streaming,
+            print_responses=True,
+        )
+    )
+
+
 async def rag_client(args: Args):
-    rag_workflow = RAGWorkflow(args)
-    await rag_workflow.initialize()
-    await rag_workflow.execute(args.command, args.args)
+    rag = RAGWorkflow(verbose=args.verbose)
+    await rag.initialize(args)
+
+    if args.from_:
+        input_files = read_files(args.from_, args.recursive)
+    else:
+        input_files = None
+
+    await rag.index_files(
+        input_files,
+        splitter=args.splitter,
+        collect_keywords=args.use_keywords,
+        questions_answered=args.questions_answered,
+        num_workers=args.num_workers,
+        args=args,
+    )
+
+    await rag.load_retriever(similarity_top_k=args.top_k)
+
+    match args.command:
+        case "search":
+            await search_command(rag, args.args[0])
+        case "query":
+            await query_command(
+                rag,
+                args.args[0],
+                streaming=args.streaming,
+            )
+        case "chat":
+            while True:
+                query = input("\nUSER> ")
+                if query == "exit":
+                    break
+                elif query.startswith("search "):
+                    await search_command(rag, query[7:])
+                elif query.startswith("query "):
+                    await query_command(
+                        rag,
+                        query[6:],
+                        streaming=args.streaming,
+                    )
+                else:
+                    _ = await rag.chat(
+                        query,
+                        token_limit=args.token_limit,
+                        keep_history=True,
+                        streaming=args.streaming,
+                        print_responses=True,
+                    )
+                    print()
+        case _:
+            error(f"Command unrecognized: {args.command}")
+
+
+def rebuild_postgres_db(db_name: str):
+    connection_string = "postgresql://postgres:password@localhost:5432"
+    with psycopg2.connect(connection_string) as conn:
+        conn.autocommit = True
+        with conn.cursor() as c:
+            c.execute(f"DROP DATABASE IF EXISTS {db_name}")
+            c.execute(f"CREATE DATABASE {db_name}")
 
 
 def main(args: Args):

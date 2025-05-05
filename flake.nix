@@ -254,8 +254,6 @@
 
       pythonEnv = pkgs.python3.withPackages (
         python-pkgs: with python-pkgs; [
-          stdenv
-          venvShellHook
           llama-index-core
           llama-index-embeddings-huggingface
           llama-index-embeddings-ollama
@@ -268,40 +266,132 @@
           llama-index-readers-file
           llama-index-vector-stores-postgres
           llama-parse
-          typed-argparse
           nltk
           numpy_2
           orgparse
           pypdf
-          xdg-base-dirs
           pytest
+          pycopg2
+          stdenv
+          typed-argparse
+          venvShellHook
+          xdg-base-dirs
           # deepeval
         ]
       );
+
+      # Required system libraries that pip-installed packages might need
+      sysLibs = with pkgs; [
+        stdenv.cc.cc.lib  # libstdc++
+        zlib
+        glib
+        libpq
+        openssl
+      ];
+
+      libPath = pkgs.lib.makeLibraryPath sysLibs;
     in {
       inherit pkgs;
 
-      packages.default = pkgs.stdenv.mkDerivation {
-        name = "rag-client";
-        src = ./.;
-        buildInputs = [ pythonEnv ];
+      packages.default = with pkgs; stdenv.mkDerivation {
+        pname = "rag-client";
+        version = "1.0.0";
+        src = self;
+
+        buildInputs = [
+          python3
+          python3Packages.pip
+          python3Packages.wheel
+          makeWrapper
+        ] ++ sysLibs;
+
+        buildPhase = ''
+          # Create a temporary virtual environment
+          export HOME=$TMPDIR
+          export TMPDIR=$TMPDIR
+          ${python3}/bin/python -m venv venv
+          source venv/bin/activate
+
+          # Install dependencies from requirements.txt
+          pip install --no-cache-dir -U pip
+          pip install --no-cache-dir -r requirements.txt
+
+          # Copy application source
+          mkdir -p $out/lib/python/rag-client
+          cp -r src/* $out/lib/python/rag-client/ || true
+
+          # Copy all site-packages from venv to our output
+          site_packages=$(find venv/lib -name site-packages)
+          mkdir -p $out/lib/python
+          cp -r $site_packages/* $out/lib/python/
+        '';
+
         installPhase = ''
+          # Create bin directory and executable wrapper
           mkdir -p $out/bin
-          # Create a wrapper to launch the script with the correct Python
-          echo '#!${pythonEnv}/bin/python' > $out/bin/rag-client
-          cat rag_client.py >> $out/bin/rag-client
-          chmod +x $out/bin/rag-client
+
+          # Create wrapper script with proper library paths
+          makeWrapper ${python3}/bin/python $out/bin/rag-client \
+          --prefix LD_LIBRARY_PATH : ${libPath} \
+          --prefix DYLD_LIBRARY_PATH : ${libPath} \
+          --prefix PYTHONPATH : "$out/lib/python:$out/lib/python/rag-client" \
+          --add-flags "-m app.main"
         '';
       };
 
-      devShell = with pkgs; mkShell {
+      # packages.default = pkgs.stdenv.mkDerivation {
+      #   name = "rag-client";
+      #   src = ./.;
+      #   buildInputs = [ pythonEnv ];
+      #   installPhase = ''
+      #     mkdir -p $out/bin
+      #     # Create a wrapper to launch the script with the correct Python
+      #     echo '#!${pythonEnv}/bin/python' > $out/bin/rag-client
+      #     cat rag_client.py >> $out/bin/rag-client
+      #     chmod +x $out/bin/rag-client
+      #   '';
+      # };
+
+      # App definition allows running without installation
+      apps.default = {
+        type = "app";
+        program = "${self.packages.${system}.default}/bin/rag-client";
+      };
+
+      devShells.default = with pkgs; mkShell {
+        buildInputs = [ python3 ] ++ sysLibs;
+
+        shellHook = ''
+          # Create and activate virtual environment
+          [ ! -d .venv ] && python -m venv .venv
+          source .venv/bin/activate
+          # Update pip and install dependencies
+          pip install -U pip
+          [ -f requirements.txt ] && pip install -r requirements.txt
+          # Make sure we find the libraries
+          export LD_LIBRARY_PATH=${libPath}:$LD_LIBRARY_PATH
+          export DYLD_LIBRARY_PATH=${libPath}:$DYLD_LIBRARY_PATH
+          export PYTHONPATH="$PWD:$PYTHONPATH"
+        '';
+
         nativeBuildInputs = [
-          pythonEnv
           black                 # Python code formatter
           basedpyright          # LSP server for Python
           isort                 # Sorts imports
           autoflake             # Removes unused imports
+          pylint
         ];
       };
+
+      # devShell = with pkgs; mkShell {
+      #   nativeBuildInputs = [
+      #     pythonEnv
+      #     black                 # Python code formatter
+      #     basedpyright          # LSP server for Python
+      #     isort                 # Sorts imports
+      #     autoflake             # Removes unused imports
+      #     pylint
+      #   ];
+      # };
     });
 }

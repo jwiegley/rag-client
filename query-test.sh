@@ -107,6 +107,24 @@ case $1 in
             "$@"
         ;;
 
+    search)
+        ./rag_client.py                                 \
+            --embed-model $embedding                    \
+            --embed-dim 1024                            \
+            --verbose                                   \
+            --chunk-size 512                            \
+            --chunk-overlap 20                          \
+            --top-k 20                                  \
+            --timeout 3600                              \
+            --from $input                               \
+            --use-keywords                              \
+            --streaming                                 \
+            --db-conn "postgresql+psycopg2://postgres@localhost:5432/vector_db" \
+            --llm $llm                                  \
+            --llm-base-url "http://localhost:8080/v1"   \
+            "$@"
+        ;;
+
     *)
         ./rag_client.py                                         \
             --embed-model $embedding                            \
