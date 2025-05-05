@@ -113,10 +113,10 @@ case $1 in
             --chunk-overlap 20                          \
             --top-k 20                                  \
             --timeout 3600                              \
-            --from $input                               \
-            --use-keywords                              \
-            --streaming                                 \
             --db-conn "postgresql+psycopg2://postgres@localhost:5432/vector_db" \
+            --from $input                               \
+            --collect-keywords                          \
+            --streaming                                 \
             --llm $llm                                  \
             --llm-base-url "http://localhost:8080/v1"   \
             "$@"

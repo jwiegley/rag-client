@@ -299,7 +299,7 @@ class Args(TypedArgs):
     recursive: bool = arg(
         help="Read directories recursively (default: no)",
     )
-    use_keywords: bool = arg(
+    collect_keywords: bool = arg(
         help="Generate keywords for document retrieval",
     )
     retries: bool = arg(
@@ -473,13 +473,6 @@ class CustomRetriever(BaseRetriever):
 ### Workflows
 
 
-# jww (2025-05-04):
-# - PostgresChatStore
-# - PostgresDocStore
-# - PostgresIndexStore
-# - PostgresVectorStore
-
-
 @dataclass
 class RAGWorkflow:
     verbose: bool = False
@@ -526,8 +519,12 @@ class RAGWorkflow:
         )
         vector_store: PGVectorStore = PGVectorStore.from_params(
             connection_string=uri,
-            table_name="vectorstore",
+            database="vector_db",
+            host="localhost",
+            password="",
             port=str(5432),
+            user="postgres",
+            table_name="vectorstore",
             embed_dim=args.embed_dim,
             hnsw_kwargs={
                 "hnsw_m": args.hnsw_m,
@@ -635,14 +632,15 @@ class RAGWorkflow:
         final_base64 = base64.b64encode(final_hash).decode("utf-8")
         return final_base64[0:32]
 
-    async def read_documents(self, input_files: list[Path]) -> Iterable[Document]:
+    async def read_documents(
+        self, input_files: list[Path], num_workers: int | None
+    ) -> Iterable[Document]:
         logger.info("Read documents from disk")
         file_extractor: dict[str, BaseReader] = {".org": OrgReader()}
-        # jww (2025-05-04): Make num_workers configurable
         return SimpleDirectoryReader(
             input_files=input_files,
             file_extractor=file_extractor,
-        ).load_data(num_workers=4)
+        ).load_data(num_workers=num_workers)
 
     async def load_splitter(self, model: str, args: Args) -> TransformComponent:
         # Sentence
@@ -664,7 +662,6 @@ class RAGWorkflow:
             )
         elif model == "Semantic":
             if self.embed_model is not None:
-                # jww (2025-05-04): Make this configurable
                 return SemanticSplitterNodeParser(
                     buffer_size=args.buffer_size,
                     breakpoint_percentile_threshold=args.breakpoint_percentile_threshold,
@@ -694,7 +691,6 @@ class RAGWorkflow:
             )
 
         pipeline = IngestionPipeline(transformations=transformations)
-        # jww (2025-05-03): Make num_workers here customizable
         return await pipeline.arun(documents=documents, num_workers=num_workers)
 
     async def populate_vector_store(
@@ -770,43 +766,37 @@ class RAGWorkflow:
             index_store = SimpleIndexStore()
             vector_store = SimpleVectorStore()
 
-        if args.db_conn is not None or (
-            persist_dir is not None and os.path.isdir(persist_dir)
-        ):
+        storage_context = StorageContext.from_defaults(
+            docstore=docstore,
+            index_store=index_store,
+            vector_store=vector_store,
+            persist_dir=(
+                str(persist_dir) if persist_dir is not None else DEFAULT_PERSIST_DIR
+            ),
+        )
+
+        persisted = persist_dir is not None and os.path.isdir(persist_dir)
+
+        if args.db_conn is not None or persisted:
             if args.db_conn is not None:
                 logger.info("Read stores from database")
             else:
                 logger.info("Read stores from cache")
 
-            storage_context = StorageContext.from_defaults(
-                docstore=docstore,
-                index_store=index_store,
-                vector_store=vector_store,
-                persist_dir=str(persist_dir),
-            )
-
-            [
-                vector_index,  # pyright: ignore[reportUnknownVariableType]
-                keyword_index,  # pyright: ignore[reportUnknownVariableType]
-            ] = load_indices_from_storage(
+            indices: list[BaseIndex[IndexDict]] = load_indices_from_storage(
                 storage_context=storage_context,
                 embed_model=self.embed_model,
                 llm=self.llm,
             )
-            self.vector_index = vector_index
-            self.keyword_index = cast(BaseKeywordTableIndex, keyword_index)
-        else:
-            storage_context = StorageContext.from_defaults(
-                docstore=docstore,
-                index_store=index_store,
-                vector_store=vector_store,
-                persist_dir=(
-                    str(persist_dir) if persist_dir is not None else DEFAULT_PERSIST_DIR
-                ),
-            )
+            if len(indices) == 2:
+                [vector_index, keyword_index] = indices
+                self.vector_index = vector_index
+                self.keyword_index = cast(BaseKeywordTableIndex, keyword_index)
 
-        if input_files is not None:
-            documents = await self.read_documents(input_files)
+        if input_files is not None and not persisted:
+            documents = await self.read_documents(
+                input_files, num_workers=args.num_workers
+            )
 
             nodes = await self.split_documents(
                 splitter,
@@ -882,8 +872,9 @@ class RAGWorkflow:
             use_async=True,
             streaming=streaming,
         )
+
         if retries or source_retries:
-            query_response_evaluator = RelevancyEvaluator(llm=self.llm)
+            relevancy_evaluator = RelevancyEvaluator(llm=self.llm)
             # jww (2025-05-04): Allow using different evaluators
             _guideline_evaluator = GuidelineEvaluator(
                 guidelines=DEFAULT_GUIDELINES
@@ -894,13 +885,13 @@ class RAGWorkflow:
                 logger.info("Add retry source query engine")
                 query_engine = RetrySourceQueryEngine(
                     query_engine,
-                    evaluator=query_response_evaluator,
+                    evaluator=relevancy_evaluator,
                     llm=self.llm,
                 )
             else:
                 logger.info("Add retry query engine")
                 query_engine = RetryQueryEngine(
-                    query_engine, evaluator=query_response_evaluator
+                    query_engine, evaluator=relevancy_evaluator
                 )
 
         if streaming:
@@ -1036,7 +1027,7 @@ async def rag_client(args: Args):
     await rag.index_files(
         input_files,
         splitter=args.splitter,
-        collect_keywords=args.use_keywords,
+        collect_keywords=args.collect_keywords,
         questions_answered=args.questions_answered,
         num_workers=args.num_workers,
         args=args,
