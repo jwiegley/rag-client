@@ -9,7 +9,7 @@ llm="Falcon3-10B-Instruct"
 
 input=$HOME/org/conference/202410151104-ethdenver-denver-2025.org
 
-# ./rag_client.py                                                 \
+# ./main.py                                                 \
 #     --embed-model $embedding                                    \
 #     --embed-dim 1024                                            \
 #     --verbose                                                   \
@@ -25,7 +25,7 @@ input=$HOME/org/conference/202410151104-ethdenver-denver-2025.org
 
 case $1 in
     store)
-        ./rag_client.py                                 \
+        ./main.py                                 \
             --embed-provider $embedding_provider        \
             --embed-model $embedding                    \
             --embed-dim 1024                            \
@@ -43,7 +43,7 @@ case $1 in
         ;;
 
     llm)
-        ./rag_client.py                                 \
+        ./main.py                                 \
             --embed-provider $embedding_provider        \
             --embed-model $embedding                    \
             --embed-dim 1024                            \
@@ -61,7 +61,7 @@ case $1 in
         ;;
 
     files)
-        ./rag_client.py                                 \
+        ./main.py                                 \
             --embed-provider $embedding_provider        \
             --embed-model $embedding                    \
             --embed-dim 1024                            \
@@ -80,7 +80,7 @@ case $1 in
 
     queryold)
             # --source-retries                               \
-        ./rag_client.py                                 \
+        ./main.py                                 \
             --embed-provider $embedding_provider        \
             --embed-model $embedding                    \
             --embed-dim 1024                            \
@@ -97,11 +97,11 @@ case $1 in
         ;;
 
     query)
-        ./rag_client.py --config chat.yaml "$@"
+        ./main.py --config chat.yaml "$@"
         ;;
 
     chat)
-        ./rag_client.py                                 \
+        ./main.py                                 \
             --embed-provider $embedding_provider        \
             --embed-model $embedding                    \
             --embed-dim 1024                            \
@@ -121,7 +121,7 @@ case $1 in
         ;;
 
     search)
-        ./rag_client.py                                 \
+        ./main.py                                 \
             --embed-provider $embedding_provider        \
             --embed-model $embedding                    \
             --embed-dim 1024                            \
@@ -141,7 +141,7 @@ case $1 in
         ;;
 
     *)
-        ./rag_client.py                                         \
+        ./main.py                                         \
             --embed-provider $embedding_provider        \
             --embed-model $embedding                            \
             --embed-dim 1024                                    \
