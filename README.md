@@ -33,13 +33,14 @@ pip install -r requirements.txt  # Includes llama-index, pgvector, sqlalchemy
 *Ideal for*: One-off research sessions, temporary document analysis
 
 ```
-echo "/path/to/docs/*.md" | python rag-client.py     \
-  --read-files                                       \
-  --embed-model "HuggingFace:BAAI/bge-large-en-v1.5" \
-  --chunk-size 512                                   \
-  --chunk-overlap 20                                 \
-  --top-k 15                                         \
-  --search "Keyword analysis"
+echo "/path/to/docs/*.md" | python rag-client.py \
+  --from -                                       \
+  --embed-provider "HuggingFace"                 \
+  --embed-model "BAAI/bge-large-en-v1.5"         \
+  --chunk-size 512                               \
+  --chunk-overlap 20                             \
+  --top-k 15                                     \
+  search "Keyword analysis"
 ```
 
 - Auto-caches index to `~/.cache/rag-client` using file content hashes
@@ -55,10 +56,12 @@ echo "/path/to/docs/*.md" | python rag-client.py     \
 find /storage/pdfs -name '*.pdf' | python rag-client.py \
   --db-name research_papers                             \
   --db-table ai_ethics                                  \
-  --embed-model "HuggingFace:BAAI/bge-large-en-v1.5"    \
+  --embed-provider "HuggingFace"                        \
+  --embed-model "BAAI/bge-large-en-v1.5"                \
   --chunk-size 512                                      \
   --chunk-overlap 20                                    \
-  --read-files
+  --from -                                              \
+  index
 ```
 
 2. **Querying**:
@@ -67,11 +70,12 @@ find /storage/pdfs -name '*.pdf' | python rag-client.py \
 python rag-client.py                        \
   --db-name research_papers                 \
   --db-table ai_ethics                      \
-  --llm "OpenAILike:Falcon3-10B-Instruct"   \
+  --llm-provider "OpenAILike"               \
+  --llm "Falcon3-10B-Instruct"              \
   --llm-base-url "http://localhost:8080/v1" \
   --timeout 600                             \
   --top-k 25                                \
-  --query "Compare AI safety approaches"
+  query "Compare AI safety approaches"
 ```
 
 3. **Chat sessions**:
@@ -82,10 +86,30 @@ Simply remove the `--search` or `--query` options:
 python rag-client.py                        \
   --db-name research_papers                 \
   --db-table ai_ethics                      \
-  --llm "OpenAILike:Falcon3-10B-Instruct"   \
+  --llm-provider "OpenAILike"               \
+  --llm "Falcon3-10B-Instruct"              \
   --llm-base-url "http://localhost:8080/v1" \
   --timeout 600                             \
-  --top-k 25
+  --top-k 25                                \
+  chat
+```
+
+3. **Present an OpenAI-compatible API**:
+
+Simply remove the `--search` or `--query` options:
+
+```
+python rag-client.py                        \
+  --db-name research_papers                 \
+  --db-table ai_ethics                      \
+  --llm-provider "OpenAILike"               \
+  --llm "Falcon3-10B-Instruct"              \
+  --llm-base-url "http://localhost:8080/v1" \
+  --timeout 600                             \
+  --top-k 25                                \
+  --host localhost                          \
+  --port 9090                               \
+  serve
 ```
 
 ## Configuration Highlights
@@ -98,7 +122,8 @@ values.
 #### Embedding
 
 ```
---embed-model=PROVIDER:MODEL
+--embed-provider=PROVIDER
+--embed-model=MODEL
 --embed-dim=DIMENSIONS
 --chunk-size=CHUNKING_SIZE
 --chunk-overlap=OVERLAP_SIZE
@@ -119,7 +144,8 @@ The LLM parameter is only needed for chat queries, and not if you are only
 embedding and searching a document collection.
 
 ```
---llm=PROVIDER:MODEL
+--llm-provider=PROVIDER
+--llm=MODEL
 --llm-api-key=API_KEY_IF_NEEDED
 --llm-base-url=http://localhost:8080/v1  # Local model endpoint
 --timeout=TIMEOUT_IN_SECS
