@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+ #!/usr/bin/env python
 
 import asyncio
 import base64
@@ -858,7 +858,10 @@ class RAGWorkflow:
                 )
 
         logger.info("Submit query to LLM")
-        return await query_engine.aquery(query)
+        if streaming:
+            return await query_engine.aquery(query)
+        else:
+            return await query_engine.aquery(query)
 
     async def reset_chat(self):
         self.chat_engine = None
