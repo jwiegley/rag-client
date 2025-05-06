@@ -70,7 +70,8 @@ case $1 in
             files
         ;;
 
-    query)
+    queryold)
+            # --source-retries                               \
         ./rag_client.py                                 \
             --embed-model $embedding                    \
             --embed-dim 1024                            \
@@ -78,12 +79,15 @@ case $1 in
             --chunk-size 512                            \
             --chunk-overlap 20                          \
             --top-k 20                                  \
-            --source-retries                               \
             --db-conn "postgresql+psycopg2://postgres@localhost:5432/vector_db" \
             --streaming                                 \
             --llm $llm                                  \
             --llm-base-url "http://localhost:8080/v1"   \
             "$@"                                        \
+        ;;
+
+    query)
+        ./rag_client.py --config chat.yaml "$@"
         ;;
 
     chat)

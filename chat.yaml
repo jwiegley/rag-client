@@ -1,0 +1,14 @@
+embed_model: "HuggingFace:BAAI/bge-large-en-v1.5"
+embed_dim: 1024
+verbose: true
+chunk_size: 512
+chunk_overlap: 20
+top_k: 20
+timeout: 3600
+max-tokens: 1000
+db_conn: "postgresql+psycopg2://postgres@localhost:5432/vector_db"
+collect_keywords: true
+source_retries: false
+streaming: true
+llm: "OpenAILike:Falcon3-10B-Instruct"
+llm_base_url: "http://localhost:8080/v1"

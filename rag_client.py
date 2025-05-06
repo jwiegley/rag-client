@@ -7,17 +7,24 @@ import json
 import logging
 import os
 import sys
-import typed_argparse as tap
+import yaml
+import argparse
 import psycopg2
+
+from llama_index.core.base.response.schema import (
+    RESPONSE_TYPE,
+    AsyncStreamingResponse,
+    Response,
+)
+from llama_index.core.response_synthesizers import ResponseMode
 
 from collections.abc import Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import cache
-from io import StringIO
 from orgparse.node import OrgNode
 from pathlib import Path
-from typed_argparse import TypedArgs, arg
+from typed_argparse import TypedArgs
 from typing import Any, Literal, NoReturn, cast, final, no_type_check, override
 from xdg_base_dirs import xdg_cache_home, xdg_config_home
 
@@ -37,7 +44,11 @@ from llama_index.core.storage.index_store import SimpleIndexStore
 from llama_index.core.base.embeddings.base import Embedding
 from llama_index.core.chat_engine import SimpleChatEngine
 from llama_index.core.chat_engine.context import ContextChatEngine
-from llama_index.core.chat_engine.types import BaseChatEngine
+from llama_index.core.chat_engine.types import (
+    AgentChatResponse,
+    BaseChatEngine,
+    StreamingAgentChatResponse,
+)
 from llama_index.core.data_structs.data_structs import IndexDict
 from llama_index.core.embeddings import BaseEmbedding
 from llama_index.core.extractors import (
@@ -105,12 +116,14 @@ from llama_index.storage.index_store.postgres import (  # pyright: ignore[report
     PostgresIndexStore,
 )
 
+IndexList = list[BaseIndex[IndexDict]]
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 ### Utility functions
 
 
-logger = logging.getLogger("rag-client")
+logger = logging.getLogger("rag_client")
 
 
 async def awaitable_none():
@@ -200,132 +213,46 @@ def clean_special_tokens(text: str) -> str:
 
 
 class Args(TypedArgs):
-    verbose: bool = arg(help="Verbose?")
-    db_conn: str | None = arg(
-        help="Postgres connection string (in-memory if unspecified)",
-    )
-    db_table: str = arg(
-        default="vectors",
-        help="Postgres db table (default: %(default)s)",
-    )
-    hnsw_m: int = arg(
-        default=16,
-        help="Bi-dir links for each node (default: %(default)s)",
-    )
-    hnsw_ef_construction: int = arg(
-        default=64,
-        help="Dynamic candidate list size (default: %(default)s)",
-    )
-    hnsw_ef_search: int = arg(
-        default=40,
-        help="Candidate list size during search (default: %(default)s)",
-    )
-    hnsw_dist_method: str = arg(
-        default="vector_cosine_ops",
-        help="Distance method for similarity (default: %(default)s)",
-    )
-    embed_model: str | None = arg(help="Embedding model")
-    embed_base_url: str | None = arg(
-        help="URL to use for talking with embedding model",
-    )
-    embed_dim: int = arg(
-        default=512,
-        help="Embedding dimensions (default: %(default)s)",
-    )
-    chunk_size: int = arg(default=512, help="Chunk size (default: %(default)s)")
-    chunk_overlap: int = arg(
-        default=20,
-        help="Chunk overlap (default: %(default)s)",
-    )
-    splitter: str = arg(
-        default="Sentence", help="Document splitting strategy (default: %(default)s)"
-    )
-    buffer_size: int = arg(
-        default=256, help="Buffer size for semantic splitting (default: %(default)s)"
-    )
-    breakpoint_percentile_threshold: int = arg(
-        default=95,
-        help="Breakpoint percentile threshold (default: %(default)s)",
-    )
-    window_size: int = arg(
-        default=3, help="Window size of sentence window splitter (default: %(default)s)"
-    )
-    questions_answered: int | None = arg(
-        help="If provided, generate N questions related to each chunk",
-    )
-    top_k: int = arg(
-        default=3,
-        help="Top K document nodes (default: %(default)s)",
-    )
-    llm: str | None = arg(
-        help="LLM to use for text generation and chat",
-    )
-    llm_api_key: str = arg(
-        default="fake",
-        help="API key to use with LLM",
-    )
-    llm_api_version: str | None = arg(
-        help="API version to use with LLM (if required)",
-    )
-    llm_base_url: str | None = arg(
-        help="URL to use for talking with LLM (default depends on LLM)",
-    )
-    streaming: bool = arg(
-        help="Stream output as it arrives from LLM",
-    )
-    timeout: int = arg(
-        default=60,
-        help="Max time to wait in seconds (default: %(default)s)",
-    )
-    temperature: float = arg(
-        default=1.0,
-        help="LLM temperature value (default: %(default)s)",
-    )
-    max_tokens: int = arg(
-        default=200,
-        help="LLM maximum answer size in tokens (default: %(default)s)",
-    )
-    context_window: int = arg(
-        default=8192,
-        help="LLM context window size (default: %(default)s)",
-    )
-    reasoning_effort: Literal["low", "medium", "high"] = arg(
-        default="medium",
-        help="LLM reasoning effort (default: %(default)s)",
-    )
-    gpu_layers: int = arg(
-        default=-1,
-        help="Number of GPU layers to use (default: %(default)s)",
-    )
-    chat_user: str | None = arg(
-        help="Chat user name for history saves (no history if unset)",
-    )
-    token_limit: int = arg(
-        default=1500,
-        help="Token limit used for chat history (default: %(default)s)",
-    )
-    from_: str | None = arg("--from", help="Where to read files from (optional)")
-    recursive: bool = arg(
-        help="Read directories recursively (default: no)",
-    )
-    collect_keywords: bool = arg(
-        help="Generate keywords for document retrieval",
-    )
-    retries: bool = arg(
-        help="Retry queries based on relevancy",
-    )
-    source_retries: bool = arg(
-        help="Retry queries (using source modification) based on relevancy",
-    )
-    summarize_chat: bool = arg(
-        help="Summarize chat history when it grows too long",
-    )
-    num_workers: int = arg(
-        default=4,
-        help="Number of works to use for various tasks (default: %(default)s)",
-    )
-    command: str = arg(positional=True, help="Command to execute")
-    args: list[str] = arg(positional=True, nargs="*", help="Query to submit to LLM")
+    config: str | None
+    verbose: bool
+    db_conn: str | None
+    hnsw_m: int
+    hnsw_ef_construction: int
+    hnsw_ef_search: int
+    hnsw_dist_method: str
+    embed_model: str | None
+    embed_base_url: str | None
+    embed_dim: int
+    chunk_size: int
+    chunk_overlap: int
+    splitter: str
+    buffer_size: int
+    breakpoint_percentile_threshold: int
+    window_size: int
+    questions_answered: int | None
+    top_k: int
+    llm: str | None
+    llm_api_key: str
+    llm_api_version: str | None
+    llm_base_url: str | None
+    streaming: bool
+    timeout: int
+    temperature: float
+    max_tokens: int
+    context_window: int
+    reasoning_effort: Literal["low", "medium", "high"]
+    gpu_layers: int
+    chat_user: str | None
+    token_limit: int
+    from_: str | None
+    recursive: bool
+    collect_keywords: bool
+    retries: bool
+    source_retries: bool
+    summarize_chat: bool
+    num_workers: int
+    command: str
+    args: list[str]
 
 
 ### Readers
@@ -701,9 +628,13 @@ class RAGWorkflow:
         transformations = [await self.load_splitter(split_model, args)]
 
         if self.llm is not None:
-            transformations.append(KeywordExtractor(keywords=5, llm=self.llm))
-            transformations.append(SummaryExtractor(summaries=["self"], llm=self.llm))
-            transformations.append(TitleExtractor(nodes=5, llm=self.llm))
+            transformations.extend(
+                [
+                    KeywordExtractor(keywords=5, llm=self.llm),
+                    SummaryExtractor(summaries=["self"], llm=self.llm),
+                    TitleExtractor(nodes=5, llm=self.llm),
+                ]
+            )
             if questions_answered is not None:
                 logger.info(f"Generate {questions_answered} questions for each chunk")
                 transformations.append(
@@ -805,10 +736,12 @@ class RAGWorkflow:
             else:
                 logger.info("Read stores from cache")
 
-            indices: list[BaseIndex[IndexDict]] = load_indices_from_storage(
-                storage_context=self.storage_context,
-                embed_model=self.embed_model,
-                llm=self.llm,
+            indices: IndexList = (  # pyright: ignore[reportUnknownVariableType]
+                load_indices_from_storage(
+                    storage_context=self.storage_context,
+                    embed_model=self.embed_model,
+                    llm=self.llm,
+                )
             )
             if len(indices) == 1:
                 [vector_index] = indices
@@ -883,10 +816,9 @@ class RAGWorkflow:
         self,
         query: str,
         streaming: bool = False,
-        print_responses: bool = False,
         retries: bool = False,
         source_retries: bool = False,
-    ) -> str | NoReturn:
+    ) -> RESPONSE_TYPE | NoReturn:
         if self.retriever is None:
             error("There is no retriever configured to query")
         if self.llm is None:
@@ -896,7 +828,17 @@ class RAGWorkflow:
         query_engine = RetrieverQueryEngine.from_args(
             retriever=self.retriever,
             llm=self.llm,
+            use_async=True,
             streaming=streaming,
+            # response_mode=ResponseMode.REFINE,
+            response_mode=ResponseMode.COMPACT,
+            # response_mode=ResponseMode.SIMPLE_SUMMARIZE,
+            # response_mode=ResponseMode.TREE_SUMMARIZE,
+            # response_mode=ResponseMode.GENERATION, # ignore context
+            # response_mode=ResponseMode.NO_TEXT, # only context
+            # response_mode=ResponseMode.CONTEXT_ONLY,
+            # response_mode=ResponseMode.ACCUMULATE,
+            # response_mode=ResponseMode.COMPACT_ACCUMULATE,
         )
 
         if retries or source_retries:
@@ -921,28 +863,15 @@ class RAGWorkflow:
                     query_engine, evaluator=relevancy_evaluator
                 )
 
+        logger.info("Submit query to LLM")
         if streaming:
-            logger.info("Submit query to LLM")
-            response = await query_engine.aquery(query)
-            full_response = StringIO()
-            async for (  # pyright: ignore[reportUnknownVariableType]
-                token
-            ) in (  # pyright: ignore[reportUnknownMemberType, reportGeneralTypeIssues]
-                response.response_gen  # pyright: ignore[reportAttributeAccessIssue]
-            ):
-                token = clean_special_tokens(
-                    token  # pyright: ignore[reportUnknownArgumentType]
-                )
-                if print_responses:
-                    print(token, end="", flush=True)
-                _ = full_response.write(token)
-            return full_response.getvalue()
+            return await query_engine.aquery(query)
         else:
-            logger.info("Submit query to LLM")
-            response = await query_engine.aquery(query)
-            if print_responses:
-                print(str(response))
-            return clean_special_tokens(str(response))
+            return await query_engine.aquery(query)
+
+    async def reset_chat(self):
+        self.chat_engine = None
+        self.chat_memory = None
 
     # Chat with the LLM, possibly in the context of a document collection
     async def chat(
@@ -953,8 +882,7 @@ class RAGWorkflow:
         chat_store: SimpleChatStore | None = None,
         summarize_chat: bool = False,
         streaming: bool = False,
-        print_responses: bool = False,
-    ) -> str | NoReturn:
+    ) -> StreamingAgentChatResponse | AgentChatResponse | NoReturn:
         if self.llm is None:
             error("There is no LLM configured to chat with")
 
@@ -994,33 +922,14 @@ class RAGWorkflow:
                     system_prompt="You are a helpful AI assistant.",
                 )
 
+        logger.info("Submit chat to LLM")
         if streaming:
-            logger.info("Submit chat to LLM")
-            generator = await self.chat_engine.astream_chat(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+            return await self.chat_engine.astream_chat(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
                 message=query
             )
-            full_response = StringIO()
-            async for (  # pyright: ignore[reportUnknownVariableType]
-                token
-            ) in (
-                generator.async_response_gen()  # pyright: ignore[reportUnknownMemberType]
-            ):
-                token = clean_special_tokens(
-                    token  # pyright: ignore[reportUnknownArgumentType]
-                )
-                if print_responses:
-                    print(token, end="", flush=True)
-                _ = full_response.write(token)
-            return full_response.getvalue()
         else:
-            logger.info("Submit chat to LLM")
-            response = await self.chat_engine.achat(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            return await self.chat_engine.achat(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
                 message=query
-            )
-            if print_responses:
-                print(str(response))  # pyright: ignore[reportUnknownArgumentType]
-            return clean_special_tokens(
-                str(response)  # pyright: ignore[reportUnknownArgumentType]
             )
 
 
@@ -1039,18 +948,51 @@ async def query_command(
     retries: bool = False,
     source_retries: bool = False,
 ):
-    print(
-        await rag.query(
-            query,
-            retries=retries,
-            source_retries=source_retries,
-            streaming=streaming,
-            print_responses=True,
-        )
+    response: RESPONSE_TYPE = await rag.query(
+        query,
+        retries=retries,
+        source_retries=source_retries,
+        streaming=streaming,
     )
+    match response:
+        case AsyncStreamingResponse():
+            async for token in response.async_response_gen():
+                token = clean_special_tokens(token)
+                print(token, end="", flush=True)
+            print()
+        case Response():
+            print(response.response)
+        case _:
+            error(f"query_command cannot render response: {response}")
 
 
-async def rag_client(args: Args):
+async def chat_command(
+    rag: RAGWorkflow,
+    user: str,
+    query: str,
+    streaming: bool,
+    token_limit: int,
+    chat_store: SimpleChatStore | None = None,
+    summarize_chat: bool = False,
+):
+    response: StreamingAgentChatResponse | AgentChatResponse = await rag.chat(
+        user=user,
+        query=query,
+        token_limit=token_limit,
+        chat_store=chat_store,
+        streaming=streaming,
+        summarize_chat=summarize_chat,
+    )
+    if streaming:
+        async for token in response.async_response_gen():
+            token = clean_special_tokens(token)
+            print(token, end="", flush=True)
+        print()
+    else:
+        print(response.response)
+
+
+async def rag_initialize(args: Args) -> RAGWorkflow:
     rag = RAGWorkflow(verbose=args.verbose)
     await rag.initialize(args)
 
@@ -1069,7 +1011,11 @@ async def rag_client(args: Args):
     )
 
     await rag.load_retriever(similarity_top_k=args.top_k)
+    return rag
 
+
+async def rag_client(args: Args):
+    rag: RAGWorkflow = await rag_initialize(args)
     match args.command:
         case "search":
             await search_command(rag, args.args[0])
@@ -1107,15 +1053,14 @@ async def rag_client(args: Args):
                         source_retries=args.source_retries,
                     )
                 else:
-                    _ = await rag.chat(
+                    await chat_command(
+                        rag,
                         user=user,
                         query=query,
                         token_limit=args.token_limit,
                         chat_store=chat_store,
                         streaming=args.streaming,
-                        print_responses=True,
                     )
-                    print()
         case _:
             error(f"Command unrecognized: {args.command}")
 
@@ -1127,6 +1072,222 @@ def rebuild_postgres_db(db_name: str):
         with conn.cursor() as c:
             c.execute(f"DROP DATABASE IF EXISTS {db_name}")
             c.execute(f"CREATE DATABASE {db_name}")
+
+
+def parse_args(
+    arguments: list[str] = sys.argv[1:], config_path: Path | None = None
+) -> Args:
+    parser = argparse.ArgumentParser()
+
+    _ = parser.add_argument(
+        "--config", "-c", type=str, help="Yaml config file, to set argument defaults"
+    )
+    _ = parser.add_argument("--verbose", action="store_true", help="Verbose?")
+    _ = parser.add_argument(
+        "--db_conn",
+        type=str,
+        help="Postgres connection string (in-memory if unspecified)",
+    )
+    _ = parser.add_argument(
+        "--hnsw_m",
+        type=int,
+        default=16,
+        help="Bi-dir links for each node (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--hnsw_ef_construction",
+        type=int,
+        default=64,
+        help="Dynamic candidate list size (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--hnsw_ef_search",
+        type=int,
+        default=40,
+        help="Candidate list size during search (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--hnsw_dist_method",
+        type=str,
+        default="vector_cosine_ops",
+        help="Distance method for similarity (default: %(default)s)",
+    )
+    _ = parser.add_argument("--embed_model", type=str, help="Embedding model")
+    _ = parser.add_argument(
+        "--embed_base_url",
+        type=str,
+        help="URL to use for talking with embedding model",
+    )
+    _ = parser.add_argument(
+        "--embed_dim",
+        type=int,
+        default=512,
+        help="Embedding dimensions (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--chunk_size", type=int, default=512, help="Chunk size (default: %(default)s)"
+    )
+    _ = parser.add_argument(
+        "--chunk_overlap",
+        type=int,
+        default=20,
+        help="Chunk overlap (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--splitter",
+        type=str,
+        default="Sentence",
+        help="Document splitting strategy (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--buffer_size",
+        type=int,
+        default=256,
+        help="Buffer size for semantic splitting (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--breakpoint_percentile_threshold",
+        type=int,
+        default=95,
+        help="Breakpoint percentile threshold (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--window_size",
+        type=int,
+        default=3,
+        help="Window size of sentence window splitter (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--questions_answered",
+        type=int,
+        help="If provided, generate N questions related to each chunk",
+    )
+    _ = parser.add_argument(
+        "--top_k",
+        type=int,
+        default=3,
+        help="Top K document nodes (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--llm",
+        type=str,
+        help="LLM to use for text generation and chat",
+    )
+    _ = parser.add_argument(
+        "--llm_api_key",
+        type=str,
+        default="fake",
+        help="API key to use with LLM",
+    )
+    _ = parser.add_argument(
+        "--llm_api_version",
+        type=str,
+        help="API version to use with LLM (if required)",
+    )
+    _ = parser.add_argument(
+        "--llm_base_url",
+        type=str,
+        help="URL to use for talking with LLM (default depends on LLM)",
+    )
+    _ = parser.add_argument(
+        "--streaming",
+        action="store_true",
+        help="Stream output as it arrives from LLM",
+    )
+    _ = parser.add_argument(
+        "--timeout",
+        type=int,
+        default=60,
+        help="Max time to wait in seconds (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--temperature",
+        type=float,
+        default=1.0,
+        help="LLM temperature value (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--max_tokens",
+        type=int,
+        default=200,
+        help="LLM maximum answer size in tokens (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--context_window",
+        type=int,
+        default=8192,
+        help="LLM context window size (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--reasoning_effort",
+        choices=["low", "medium", "high"],
+        default="medium",
+        help="LLM reasoning effort (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--gpu_layers",
+        type=int,
+        default=-1,
+        help="Number of GPU layers to use (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--chat_user",
+        type=str,
+        help="Chat user name for history saves (no history if unset)",
+    )
+    _ = parser.add_argument(
+        "--token_limit",
+        type=int,
+        default=1500,
+        help="Token limit used for chat history (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--from", dest="from_", type=str, help="Where to read files from (optional)"
+    )
+    _ = parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Read directories recursively (default: no)",
+    )
+    _ = parser.add_argument(
+        "--collect_keywords",
+        action="store_true",
+        help="Generate keywords for document retrieval",
+    )
+    _ = parser.add_argument(
+        "--retries",
+        action="store_true",
+        help="Retry queries based on relevancy",
+    )
+    _ = parser.add_argument(
+        "--source_retries",
+        action="store_true",
+        help="Retry queries (using source modification) based on relevancy",
+    )
+    _ = parser.add_argument(
+        "--summarize_chat",
+        action="store_true",
+        help="Summarize chat history when it grows too long",
+    )
+    _ = parser.add_argument(
+        "--num_workers",
+        type=int,
+        default=4,
+        help="Number of works to use for various tasks (default: %(default)s)",
+    )
+    _ = parser.add_argument("command")
+    _ = parser.add_argument("args", nargs=argparse.REMAINDER)
+
+    args: argparse.Namespace
+    args, _remaining = parser.parse_known_args(arguments)
+    if args.config or config_path is not None:  # pyright: ignore[reportAny]
+        with open(
+            args.config or str(config_path), "r"  # pyright: ignore[reportAny]
+        ) as f:
+            config = yaml.safe_load(f)  # pyright: ignore[reportAny]
+        parser.set_defaults(**config)
+
+    return Args.from_argparse(parser.parse_args())
 
 
 def main(args: Args):
@@ -1141,7 +1302,7 @@ def main(args: Args):
 
 
 if __name__ == "__main__":
-    tap.Parser(Args).bind(main).run()
+    main(parse_args())
 
 # store
 # llm
