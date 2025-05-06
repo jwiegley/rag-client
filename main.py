@@ -79,9 +79,7 @@ async def chat_command(
         print(response.response)
 
 
-async def rag_client(args: Args):
-    rag = await rag_initialize(args)
-
+async def rag_client(rag: RAGWorkflow, args: Args):
     match args.command:
         case "search":
             await search_command(rag, args.args[0])
@@ -133,6 +131,7 @@ async def rag_client(args: Args):
 
 def main(args: Args):
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
     logging.basicConfig(
         stream=sys.stdout,
         encoding="utf-8",
@@ -140,19 +139,26 @@ def main(args: Args):
         format="%(asctime)s [%(levelname)s] %(message)s",  # Log message format
         datefmt="%H:%M:%S",
     )
-    if args.command == "serve":
-        rag = asyncio.run(rag_initialize(args))
-        api.workflow = rag
-        api.llm_model = args.llm
-        api.embed_model = args.embed_model
-        api.token_limit = args.token_limit
-        api.start_api_server(
-            host=args.host,
-            port=args.port,
-            reload=args.reload_server,
-        )
-    else:
-        asyncio.run(rag_client(args))
+
+    rag = asyncio.run(rag_initialize(args))
+
+    match args.command:
+        case "serve":
+            api.workflow = rag
+            api.llm_model = args.llm
+            api.embed_model = args.embed_model
+            api.token_limit = args.token_limit
+            # This cannot run inside asyncio.run, since it creates its own
+            # async event loop.
+            api.start_api_server(
+                host=args.host,
+                port=args.port,
+                reload=args.reload_server,
+            )
+        case "index":
+            pass
+        case _:
+            asyncio.run(rag_client(rag, args))
 
 
 if __name__ == "__main__":
