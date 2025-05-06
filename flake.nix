@@ -264,6 +264,7 @@
           llama-index-llms-ollama
           llama-index-llms-openai
           llama-index-llms-openai-like
+          llama-index-llms-perplexity
           llama-index-readers-file
           llama-index-vector-stores-postgres
           llama-parse

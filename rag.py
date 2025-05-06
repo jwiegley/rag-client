@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+# pyright: reportMissingTypeStubs=false
+# pyright: reportExplicitAny=false
 
 import asyncio
 import base64
@@ -55,6 +57,7 @@ from llama_index.core.extractors import (
 from llama_index.core.indices.base import BaseIndex
 from llama_index.core.indices.keyword_table.base import BaseKeywordTableIndex
 from llama_index.core.ingestion import IngestionPipeline
+from llama_index.core.tools import FunctionTool
 from llama_index.core.llms import ChatMessage
 from llama_index.core.llms.llm import LLM
 from llama_index.core.memory import ChatMemoryBuffer, ChatSummaryMemoryBuffer
@@ -81,39 +84,26 @@ from llama_index.core.schema import (
 from llama_index.core.storage.chat_store import SimpleChatStore
 from llama_index.core.vector_stores.simple import SimpleVectorStore
 
-from llama_index.embeddings.huggingface import (  # pyright: ignore[reportMissingTypeStubs]
+from llama_index.embeddings.huggingface import (
     HuggingFaceEmbedding,
 )
-from llama_index.embeddings.ollama import (  # pyright: ignore[reportMissingTypeStubs]
-    OllamaEmbedding,
-)
-from llama_index.embeddings.openai import (  # pyright: ignore[reportMissingTypeStubs]
-    OpenAIEmbedding,
-)
-from llama_index.embeddings.openai_like import (  # pyright: ignore[reportMissingTypeStubs]
-    OpenAILikeEmbedding,
-)
-from llama_index.llms.llama_cpp import (  # pyright: ignore[reportMissingTypeStubs]
-    LlamaCPP,
-)
-from llama_index.llms.ollama import Ollama  # pyright: ignore[reportMissingTypeStubs]
+from llama_index.embeddings.ollama import OllamaEmbedding
+from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.embeddings.openai_like import OpenAILikeEmbedding
+from llama_index.llms.llama_cpp import LlamaCPP
+from llama_index.llms.ollama import Ollama
 from llama_index.llms.openai import OpenAI
-from llama_index.llms.openai_like import (  # pyright: ignore[reportMissingTypeStubs]
-    OpenAILike,
-)
-from llama_index.vector_stores.postgres import (  # pyright: ignore[reportMissingTypeStubs]
-    PGVectorStore,
-)
-from llama_index.storage.docstore.postgres import (  # pyright: ignore[reportMissingTypeStubs]
-    PostgresDocumentStore,
-)
-from llama_index.storage.index_store.postgres import (  # pyright: ignore[reportMissingTypeStubs]
-    PostgresIndexStore,
-)
+from llama_index.llms.openai_like import OpenAILike
+from llama_index.llms.perplexity import Perplexity
+from llama_index.llms.lmstudio import LMStudio
+from llama_index.llms.openrouter import OpenRouter
+from llama_index.vector_stores.postgres import PGVectorStore
+from llama_index.storage.docstore.postgres import PostgresDocumentStore
+from llama_index.storage.index_store.postgres import PostgresIndexStore
 
 IndexList = list[BaseIndex[IndexDict]]
 
-### Utility functions
+# Utility functions
 
 
 logger = logging.getLogger("rag")
@@ -209,7 +199,7 @@ def clean_special_tokens(text: str) -> str:
     return text
 
 
-### Args
+# Args
 
 
 class Args(TypedArgs):
@@ -260,7 +250,7 @@ class Args(TypedArgs):
     args: list[str]
 
 
-### Readers
+# Readers
 
 
 @cache
@@ -319,7 +309,7 @@ class OrgReader(BaseReader):
         return documents
 
 
-### Embeddings
+# Embeddings
 
 
 @no_type_check
@@ -365,7 +355,7 @@ class LlamaCppEmbedding(BaseEmbedding):
         return self._get_query_embedding(query)
 
 
-### Retrievers
+# Retrievers
 
 
 @final
@@ -411,7 +401,7 @@ class CustomRetriever(BaseRetriever):
         return retrieve_nodes
 
 
-### Workflows
+# Workflows
 
 
 @dataclass
@@ -550,6 +540,37 @@ class RAGWorkflow:
                 model_kwargs={"n_gpu_layers": args.gpu_layers},
                 verbose=self.verbose,
             )
+        elif provider == "Perplexity":
+            return Perplexity(
+                model_name=model,
+                api_key=args.llm_api_key,
+                temperature=args.temperature,
+                max_tokens=args.max_tokens,
+                context_window=args.context_window,
+                reasoning_effort=args.reasoning_effort,
+                # This will determine if the search component is necessary
+                # in this particular context
+                enable_search_classifier=True,
+                timeout=args.timeout,
+            )
+        elif provider == "OpenRouter":
+            return OpenRouter(
+                model_name=model,
+                api_key=args.llm_api_key,
+                temperature=args.temperature,
+                max_tokens=args.max_tokens,
+                context_window=args.context_window,
+                reasoning_effort=args.reasoning_effort,
+                timeout=args.timeout,
+            )
+        elif provider == "LMStudio":
+            return LMStudio(
+                model_name=model,
+                base_url=args.llm_base_url or "http://localhost:1234/v1",
+                temperature=args.temperature,
+                context_window=args.context_window,
+                timeout=args.timeout,
+            )
         else:
             error(f"LLM model not recognized: {model}")
 
@@ -605,7 +626,7 @@ class RAGWorkflow:
                     embed_model=self.embed_model,
                 )
             else:
-                error(f"Semantic splitter needs an embedding model")
+                error("Semantic splitter needs an embedding model")
         else:
             error(f"Splitting model not recognized: {model}")
 
@@ -617,7 +638,7 @@ class RAGWorkflow:
         num_workers: int | None,
         args: Args,  # jww (2025-05-04): this should not be here
     ) -> Sequence[BaseNode]:
-        logger.info(f"Split documents")
+        logger.info("Split documents")
 
         transformations = [await self.load_splitter(split_model, args)]
 
@@ -646,7 +667,7 @@ class RAGWorkflow:
         collect_keywords: bool,
         storage_context: StorageContext,
     ) -> tuple[VectorStoreIndex, BaseKeywordTableIndex | None]:
-        logger.info(f"Populate vector store")
+        logger.info("Populate vector store")
 
         index_structs = storage_context.index_store.index_structs()
         for struct in index_structs:
@@ -730,12 +751,10 @@ class RAGWorkflow:
             else:
                 logger.info("Read stores from cache")
 
-            indices: IndexList = (  # pyright: ignore[reportUnknownVariableType]
-                load_indices_from_storage(
-                    storage_context=self.storage_context,
-                    embed_model=self.embed_model,
-                    llm=self.llm,
-                )
+            indices: IndexList = load_indices_from_storage(
+                storage_context=self.storage_context,
+                embed_model=self.embed_model,
+                llm=self.llm,
             )
             if len(indices) == 1:
                 [vector_index] = indices
@@ -793,9 +812,7 @@ class RAGWorkflow:
             if self.keyword_retriever is not None:
                 self.retriever = self.keyword_retriever
 
-    async def retrieve_nodes(
-        self, text: str
-    ) -> list[dict[str, Any]]:  # pyright: ignore[reportExplicitAny]
+    async def retrieve_nodes(self, text: str) -> list[dict[str, Any]]:
         if self.retriever is None:
             logger.info("No retriever")
             return []
@@ -924,6 +941,32 @@ class RAGWorkflow:
             )
 
 
+def query_perplexity(query: str) -> str:
+    """
+    Queries the Perplexity API via the LlamaIndex integration.
+
+    This function instantiates a Perplexity LLM with updated default settings
+    (using model "sonar-pro" and enabling search classifier so that the API can
+    intelligently decide if a search is needed), wraps the query into a ChatMessage,
+    and returns the generated response content.
+    """
+    pplx_api_key = "your-perplexity-api-key"  # Replace with your actual API key
+
+    llm = Perplexity(
+        api_key=pplx_api_key,
+        model="sonar-pro",
+        temperature=0.7,
+    )
+
+    messages = [ChatMessage(role="user", content=query)]
+    response = llm.chat(messages)
+    return response.message.content or ""
+
+
+def query_perplexity_tool() -> FunctionTool:
+    return FunctionTool.from_defaults(fn=query_perplexity)
+
+
 async def rag_initialize(args: Args) -> RAGWorkflow:
     if args.from_:
         input_files = read_files(args.from_, args.recursive)
@@ -958,7 +1001,7 @@ def rebuild_postgres_db(db_name: str):
     with psycopg2.connect(connection_string2) as conn:
         conn.autocommit = True
         with conn.cursor() as c:
-            c.execute(f"CREATE EXTENSION vector;")
+            c.execute("CREATE EXTENSION vector;")
 
 
 def parse_args(
@@ -1166,18 +1209,18 @@ def parse_args(
         "--host",
         type=str,
         default="localhost",
-        help="Host to serve from with \"serve\" command (default: %(default)s)",
+        help='Host to serve from with "serve" command (default: %(default)s)',
     )
     _ = parser.add_argument(
         "--port",
         type=int,
         default=8000,
-        help="Port to serve from with \"serve\" command (default: %(default)s)",
+        help='Port to serve from with "serve" command (default: %(default)s)',
     )
     _ = parser.add_argument(
         "--reload-server",
         action="store_true",
-        help="Auto-reload source when using \"serve\" command (for devel)",
+        help='Auto-reload source when using "serve" command (for devel)',
     )
     _ = parser.add_argument("command")
     _ = parser.add_argument("args", nargs=argparse.REMAINDER)
@@ -1192,6 +1235,7 @@ def parse_args(
         parser.set_defaults(**config)
 
     return Args.from_argparse(parser.parse_args())
+
 
 # store
 # llm
