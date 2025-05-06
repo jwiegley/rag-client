@@ -1,29 +1,30 @@
+import asyncio
+import json
+import os
+import time
+import uvicorn
+
 from collections.abc import AsyncGenerator, Sequence
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from typing import Any
+
+from llama_index.core.llms import ChatMessage
+from llama_index.core.storage.chat_store import SimpleChatStore
 from llama_index.core.chat_engine.types import (
     AgentChatResponse,
     StreamingAgentChatResponse,
 )
-from llama_index.core.storage.chat_store import SimpleChatStore
-from pydantic import BaseModel
-from typing import Any
-import uvicorn
-import json
-import os
-import logging
-import sys
-import time
-import asyncio
-import rag_client as rag
-from llama_index.core.llms import ChatMessage
 
-# Initialize FastAPI app
-app = FastAPI(title="OpenAI API Compatible Interface")
+from rag import *
+
+# Initialize FastAPI api
+api = FastAPI(title="OpenAI API Compatible Interface")
 
 # Add CORS middleware
-app.add_middleware(
+api.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
@@ -32,16 +33,10 @@ app.add_middleware(
 )
 
 
-logging.basicConfig(
-    stream=sys.stdout,
-    encoding="utf-8",
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",  # Log message format
-    datefmt="%H:%M:%S",
-)
-
-args = rag.parse_args()
-workflow: rag.RAGWorkflow | None = None
+token_limit = 200
+llm_model: str | None = None
+embed_model: str | None = None
+workflow: RAGWorkflow | None = None
 
 
 # Models for request validation
@@ -107,7 +102,7 @@ def verify_api_key(authorization: str | None = None):
 
 
 # Chat completions endpoint
-@app.post("/v1/chat/completions")
+@api.post("/v1/chat/completions")
 async def create_chat_completion(
     request: ChatCompletionRequest,
     api_key: (  # pyright: ignore[reportUnusedParameter]
@@ -158,7 +153,7 @@ async def create_chat_completion(
 
 
 # Text completions endpoint
-@app.post("/v1/completions")
+@api.post("/v1/completions")
 async def create_completion(
     request: CompletionRequest,
     api_key: (  # pyright: ignore[reportUnusedParameter]
@@ -209,7 +204,7 @@ async def create_completion(
 
 
 # Embeddings endpoint
-@app.post("/v1/embeddings")
+@api.post("/v1/embeddings")
 async def create_embeddings(
     request: EmbeddingRequest,
     api_key: (  # pyright: ignore[reportUnusedParameter]
@@ -246,7 +241,7 @@ async def create_embeddings(
 
 
 # Models endpoint
-@app.get("/v1/models")
+@api.get("/v1/models")
 async def list_models(
     api_key: (  # pyright: ignore[reportUnusedParameter]
         str | None
@@ -258,7 +253,7 @@ async def list_models(
         "object": "list",
         "data": [
             {
-                "id": (args.llm or args.embed_model or "invalid") + "-RAG",
+                "id": (llm_model or embed_model or "invalid") + "-RAG",
                 "object": "model",
                 "created": int(time.time()),
                 "owned_by": "your-organization",
@@ -276,11 +271,12 @@ async def process_chat_messages(
     """Process chat messages with your custom logic."""
     user_message = next((msg for msg in messages if msg.role == "user"), None)
     if not user_message:
-        rag.error("No user message found")
+        error("No user message found")
 
-    global workflow
+    # global workflow
     if workflow is None:
-        workflow = await rag.rag_initialize(args)
+        error("RAGWorkflow not initialized")
+        # workflow = await rag_initialize(args)
 
     await workflow.reset_chat()
 
@@ -290,7 +286,7 @@ async def process_chat_messages(
     return await workflow.chat(
         user="user1",
         query=user_message.content or "",
-        token_limit=args.token_limit,
+        token_limit=token_limit,
         chat_store=chat_store,
         streaming=streaming,
     )
@@ -402,11 +398,10 @@ async def stream_completion_response(
 
 
 # Root endpoint for API status
-@app.get("/")
+@api.get("/")
 async def root():
     return {"status": "API is running", "version": "1.0.0"}
 
 
-# Run the server
-if __name__ == "__main__":
-    uvicorn.run("app:app", host="localhost", port=8000, reload=True)
+def start_api_server(host: str, port: int, reload: bool):
+    uvicorn.run("api:api", host=host, port=port, reload=reload)

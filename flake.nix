@@ -254,6 +254,7 @@
 
       pythonEnv = pkgs.python3.withPackages (
         python-pkgs: with python-pkgs; [
+          stdenv
           llama-index-core
           llama-index-embeddings-huggingface
           llama-index-embeddings-ollama
@@ -270,11 +271,8 @@
           numpy_2
           orgparse
           pypdf
-          pytest
-          pycopg2
-          stdenv
+          psycopg2
           typed-argparse
-          venvShellHook
           xdg-base-dirs
           # deepeval
         ]
@@ -293,50 +291,14 @@
     in {
       inherit pkgs;
 
-      packages.default = with pkgs; stdenv.mkDerivation {
+      packages.default = with pkgs; python311Packages.buildPythonApplication {
         pname = "rag-client";
         version = "1.0.0";
-        src = self;
+        src = ./.;
 
-        buildInputs = [
-          python3
-          python3Packages.pip
-          python3Packages.wheel
-          makeWrapper
-        ] ++ sysLibs;
+        propagatedBuildInputs = [ pythonEnv ];
 
-        buildPhase = ''
-          # Create a temporary virtual environment
-          export HOME=$TMPDIR
-          export TMPDIR=$TMPDIR
-          ${python3}/bin/python -m venv venv
-          source venv/bin/activate
-
-          # Install dependencies from requirements.txt
-          pip install --no-cache-dir -U pip
-          pip install --no-cache-dir -r requirements.txt
-
-          # Copy application source
-          mkdir -p $out/lib/python/rag-client
-          cp -r src/* $out/lib/python/rag-client/ || true
-
-          # Copy all site-packages from venv to our output
-          site_packages=$(find venv/lib -name site-packages)
-          mkdir -p $out/lib/python
-          cp -r $site_packages/* $out/lib/python/
-        '';
-
-        installPhase = ''
-          # Create bin directory and executable wrapper
-          mkdir -p $out/bin
-
-          # Create wrapper script with proper library paths
-          makeWrapper ${python3}/bin/python $out/bin/rag-client \
-          --prefix LD_LIBRARY_PATH : ${libPath} \
-          --prefix DYLD_LIBRARY_PATH : ${libPath} \
-          --prefix PYTHONPATH : "$out/lib/python:$out/lib/python/rag-client" \
-          --add-flags "-m app.main"
-        '';
+        entryPoints = "main:main";
       };
 
       # packages.default = pkgs.stdenv.mkDerivation {

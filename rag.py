@@ -3,7 +3,6 @@
 import asyncio
 import base64
 import hashlib
-import json
 import logging
 import os
 import sys
@@ -11,11 +10,7 @@ import yaml
 import argparse
 import psycopg2
 
-from llama_index.core.base.response.schema import (
-    RESPONSE_TYPE,
-    AsyncStreamingResponse,
-    Response,
-)
+from llama_index.core.base.response.schema import RESPONSE_TYPE
 from llama_index.core.response_synthesizers import ResponseMode
 
 from collections.abc import Iterable, Sequence
@@ -26,7 +21,7 @@ from orgparse.node import OrgNode
 from pathlib import Path
 from typed_argparse import TypedArgs
 from typing import Any, Literal, NoReturn, cast, final, no_type_check, override
-from xdg_base_dirs import xdg_cache_home, xdg_config_home
+from xdg_base_dirs import xdg_cache_home
 
 from llama_index.core import (
     KeywordTableIndex,
@@ -118,12 +113,10 @@ from llama_index.storage.index_store.postgres import (  # pyright: ignore[report
 
 IndexList = list[BaseIndex[IndexDict]]
 
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
 ### Utility functions
 
 
-logger = logging.getLogger("rag_client")
+logger = logging.getLogger("rag")
 
 
 async def awaitable_none():
@@ -260,6 +253,9 @@ class Args(TypedArgs):
     source_retries: bool
     summarize_chat: bool
     num_workers: int
+    host: str
+    port: int
+    reload_server: bool
     command: str
     args: list[str]
 
@@ -931,65 +927,6 @@ class RAGWorkflow:
             )
 
 
-### Main
-
-
-async def search_command(rag: RAGWorkflow, query: str):
-    nodes = await rag.retrieve_nodes(query)
-    print(json.dumps(nodes, indent=2))
-
-
-async def query_command(
-    rag: RAGWorkflow,
-    query: str,
-    streaming: bool,
-    retries: bool = False,
-    source_retries: bool = False,
-):
-    response: RESPONSE_TYPE = await rag.query(
-        query,
-        retries=retries,
-        source_retries=source_retries,
-        streaming=streaming,
-    )
-    match response:
-        case AsyncStreamingResponse():
-            async for token in response.async_response_gen():
-                token = clean_special_tokens(token)
-                print(token, end="", flush=True)
-            print()
-        case Response():
-            print(response.response)
-        case _:
-            error(f"query_command cannot render response: {response}")
-
-
-async def chat_command(
-    rag: RAGWorkflow,
-    user: str,
-    query: str,
-    streaming: bool,
-    token_limit: int,
-    chat_store: SimpleChatStore | None = None,
-    summarize_chat: bool = False,
-):
-    response: StreamingAgentChatResponse | AgentChatResponse = await rag.chat(
-        user=user,
-        query=query,
-        token_limit=token_limit,
-        chat_store=chat_store,
-        streaming=streaming,
-        summarize_chat=summarize_chat,
-    )
-    if streaming:
-        async for token in response.async_response_gen():
-            token = clean_special_tokens(token)
-            print(token, end="", flush=True)
-        print()
-    else:
-        print(response.response)
-
-
 async def rag_initialize(args: Args) -> RAGWorkflow:
     if args.from_:
         input_files = read_files(args.from_, args.recursive)
@@ -1010,58 +947,6 @@ async def rag_initialize(args: Args) -> RAGWorkflow:
     await rag.load_retriever(similarity_top_k=args.top_k)
 
     return rag
-
-
-async def rag_client(args: Args):
-    rag = await rag_initialize(args)
-
-    match args.command:
-        case "search":
-            await search_command(rag, args.args[0])
-        case "query":
-            await query_command(
-                rag,
-                args.args[0],
-                streaming=args.streaming,
-                retries=args.retries,
-                source_retries=args.source_retries,
-            )
-        case "chat":
-            user = args.chat_user or "user"
-
-            chat_store_json = xdg_config_home() / "rag-client" / "chat_store.json"
-            if args.chat_user is not None:
-                chat_store = SimpleChatStore.from_persist_path(str(chat_store_json))
-            else:
-                chat_store = SimpleChatStore()
-
-            while True:
-                query = input(f"\n{user}> ")
-                if query == "exit":
-                    if args.chat_user is not None:
-                        chat_store.persist(persist_path=str(chat_store_json))
-                    break
-                elif query.startswith("search "):
-                    await search_command(rag, query[7:])
-                elif query.startswith("query "):
-                    await query_command(
-                        rag,
-                        query[6:],
-                        streaming=args.streaming,
-                        retries=args.retries,
-                        source_retries=args.source_retries,
-                    )
-                else:
-                    await chat_command(
-                        rag,
-                        user=user,
-                        query=query,
-                        token_limit=args.token_limit,
-                        chat_store=chat_store,
-                        streaming=args.streaming,
-                    )
-        case _:
-            error(f"Command unrecognized: {args.command}")
 
 
 def rebuild_postgres_db(db_name: str):
@@ -1280,6 +1165,23 @@ def parse_args(
         default=4,
         help="Number of works to use for various tasks (default: %(default)s)",
     )
+    _ = parser.add_argument(
+        "--host",
+        type=str,
+        default="localhost",
+        help="Host to serve from with \"serve\" command (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port to serve from with \"serve\" command (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--reload-server",
+        action="store_true",
+        help="Auto-reload source when using \"serve\" command (for devel)",
+    )
     _ = parser.add_argument("command")
     _ = parser.add_argument("args", nargs=argparse.REMAINDER)
 
@@ -1293,21 +1195,6 @@ def parse_args(
         parser.set_defaults(**config)
 
     return Args.from_argparse(parser.parse_args())
-
-
-def main(args: Args):
-    logging.basicConfig(
-        stream=sys.stdout,
-        encoding="utf-8",
-        level=logging.INFO if args.verbose else logging.WARN,
-        format="%(asctime)s [%(levelname)s] %(message)s",  # Log message format
-        datefmt="%H:%M:%S",
-    )
-    asyncio.run(rag_client(args))
-
-
-if __name__ == "__main__":
-    main(parse_args())
 
 # store
 # llm
