@@ -2,8 +2,10 @@
 
 unset SSL_CERT_FILE
 
-embedding="HuggingFace:BAAI/bge-large-en-v1.5"
-llm="OpenAILike:Falcon3-10B-Instruct"
+embedding_provider="HuggingFace"
+embedding="BAAI/bge-large-en-v1.5"
+llm_provider="OpenAILike"
+llm="Falcon3-10B-Instruct"
 
 input=$HOME/org/conference/202410151104-ethdenver-denver-2025.org
 
@@ -24,6 +26,7 @@ input=$HOME/org/conference/202410151104-ethdenver-denver-2025.org
 case $1 in
     store)
         ./rag_client.py                                 \
+            --embed-provider $embedding_provider        \
             --embed-model $embedding                    \
             --embed-dim 1024                            \
             --verbose                                   \
@@ -33,6 +36,7 @@ case $1 in
             --from $input                               \
             --questions-answered 3                      \
             --db-conn "postgresql+psycopg2://postgres@localhost:5432/vector_db" \
+            --llm-provider $llm_provider                \
             --llm $llm                                  \
             --llm-base-url "http://localhost:8080/v1"   \
             store
@@ -40,6 +44,7 @@ case $1 in
 
     llm)
         ./rag_client.py                                 \
+            --embed-provider $embedding_provider        \
             --embed-model $embedding                    \
             --embed-dim 1024                            \
             --verbose                                   \
@@ -49,6 +54,7 @@ case $1 in
             --from $input                               \
             --questions-answered 3                      \
             --db-conn "postgresql+psycopg2://postgres@localhost:5432/vector_db" \
+            --llm-provider $llm_provider                \
             --llm $llm                                  \
             --llm-base-url "http://localhost:8080/v1"   \
             llm
@@ -56,6 +62,7 @@ case $1 in
 
     files)
         ./rag_client.py                                 \
+            --embed-provider $embedding_provider        \
             --embed-model $embedding                    \
             --embed-dim 1024                            \
             --verbose                                   \
@@ -65,6 +72,7 @@ case $1 in
             --from $input                               \
             --questions-answered 3                      \
             --db-conn "postgresql+psycopg2://postgres@localhost:5432/vector_db" \
+            --llm-provider $llm_provider                \
             --llm $llm                                  \
             --llm-base-url "http://localhost:8080/v1"   \
             files
@@ -73,6 +81,7 @@ case $1 in
     queryold)
             # --source-retries                               \
         ./rag_client.py                                 \
+            --embed-provider $embedding_provider        \
             --embed-model $embedding                    \
             --embed-dim 1024                            \
             --verbose                                   \
@@ -81,6 +90,7 @@ case $1 in
             --top-k 20                                  \
             --db-conn "postgresql+psycopg2://postgres@localhost:5432/vector_db" \
             --streaming                                 \
+            --llm-provider $llm_provider                \
             --llm $llm                                  \
             --llm-base-url "http://localhost:8080/v1"   \
             "$@"                                        \
@@ -92,6 +102,7 @@ case $1 in
 
     chat)
         ./rag_client.py                                 \
+            --embed-provider $embedding_provider        \
             --embed-model $embedding                    \
             --embed-dim 1024                            \
             --verbose                                   \
@@ -103,6 +114,7 @@ case $1 in
             --db-conn "postgresql+psycopg2://postgres@localhost:5432/vector_db" \
             --collect-keywords                          \
             --streaming                                 \
+            --llm-provider $llm_provider                \
             --llm $llm                                  \
             --llm-base-url "http://localhost:8080/v1"   \
             "$@"
@@ -110,6 +122,7 @@ case $1 in
 
     search)
         ./rag_client.py                                 \
+            --embed-provider $embedding_provider        \
             --embed-model $embedding                    \
             --embed-dim 1024                            \
             --verbose                                   \
@@ -121,6 +134,7 @@ case $1 in
             --db-conn "postgresql+psycopg2://postgres@localhost:5432/vector_db" \
             --collect-keywords                          \
             --streaming                                 \
+            --llm-provider $llm_provider                \
             --llm $llm                                  \
             --llm-base-url "http://localhost:8080/v1"   \
             "$@"
@@ -128,6 +142,7 @@ case $1 in
 
     *)
         ./rag_client.py                                         \
+            --embed-provider $embedding_provider        \
             --embed-model $embedding                            \
             --embed-dim 1024                                    \
             --verbose                                           \
@@ -135,6 +150,7 @@ case $1 in
             --chunk-overlap 20                                  \
             --top-k 20                                          \
             --timeout 600                                       \
+            --llm-provider $llm_provider                \
             --llm $llm                                          \
             --llm-base-url "http://192.168.50.5:8080/v1"        \
             "$@"

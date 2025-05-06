@@ -142,32 +142,39 @@ def parse_prefixes(prefixes: list[str], s: str) -> tuple[str | None, str]:
     return None, s  # No matching prefix found
 
 
-def list_files(directory: Path, recursive: bool = False) -> list[Path]:
+async def list_files(directory: Path, recursive: bool = False) -> list[Path]:
     if recursive:
-        file_list: list[Path] = []
-        for root, _, files in os.walk(directory):
-            for file in files:
-                if file not in [".", ".."]:
-                    file_list.append(Path(root) / Path(file))
-        return file_list
+        # Run the blocking os.walk in a thread
+        def walk_files() -> list[Path]:
+            file_list: list[Path] = []
+            for root, _, files in os.walk(directory):
+                for file in files:
+                    if file not in [".", ".."]:
+                        file_list.append(Path(root) / Path(file))
+            return file_list
+
+        return await asyncio.to_thread(walk_files)
     else:
+        # Run blocking I/O in threads
+        files = await asyncio.to_thread(os.listdir, directory)
         return [
             directory / f
-            for f in os.listdir(directory)
-            if os.path.isfile(os.path.join(directory, f))
+            for f in files
+            if await asyncio.to_thread(os.path.isfile, os.path.join(directory, f))
         ]
 
 
-def read_files(read_from: str, recursive: bool = False) -> list[Path] | NoReturn:
+async def read_files(read_from: str, recursive: bool = False) -> list[Path] | NoReturn:
     if read_from == "-":
+        # Reading from stdin is still blocking; consider using asyncio streams if needed
         input_files = [Path(line.strip()) for line in sys.stdin if line.strip()]
         if not input_files:
             error("No filenames provided on standard input")
         return input_files
-    elif os.path.isfile(read_from):
+    elif await asyncio.to_thread(os.path.isfile, read_from):
         return [Path(read_from)]
-    elif os.path.isdir(read_from):
-        return list_files(Path(read_from), recursive)
+    elif await asyncio.to_thread(os.path.isdir, read_from):
+        return await list_files(Path(read_from), recursive)
     else:
         error(f"Input path is unrecognized or non-existent: {read_from}")
 
@@ -220,6 +227,7 @@ class Args(TypedArgs):
     hnsw_ef_construction: int
     hnsw_ef_search: int
     hnsw_dist_method: str
+    embed_provider: str | None
     embed_model: str | None
     embed_base_url: str | None
     embed_dim: int
@@ -231,6 +239,7 @@ class Args(TypedArgs):
     window_size: int
     questions_answered: int | None
     top_k: int
+    llm_provider: str | None
     llm: str | None
     llm_api_key: str
     llm_api_version: str | None
@@ -431,14 +440,18 @@ class RAGWorkflow:
     chat_engine: BaseChatEngine | None = None
 
     async def initialize(self, args: Args):
-        if args.embed_model:
-            emb = self.load_embedding(args.embed_model, args.llm_base_url)
+        if args.embed_provider and args.embed_model:
+            emb = self.load_embedding(
+                args.embed_provider, args.embed_model, args.llm_base_url
+            )
         else:
             emb = awaitable_none()
-        if args.llm:
-            llm = self.load_llm(args.llm, args)
+
+        if args.llm_provider and args.llm:
+            llm = self.load_llm(args.llm_provider, args.llm, args)
         else:
             llm = awaitable_none()
+
         self.embed_model = await emb
         self.llm = await llm
 
@@ -473,31 +486,21 @@ class RAGWorkflow:
         return docstore, index_store, vector_store
 
     async def load_embedding(
-        self, model: str, base_url: str | None = None
+        self, provider: str, model: str, base_url: str | None = None
     ) -> BaseEmbedding:
-        prefix, model = parse_prefixes(
-            [
-                "HuggingFace:",
-                "Ollama:",
-                "OpenAILike:",
-                "OpenAI:",
-                "LlamaCpp:",
-            ],
-            model,
-        )
-        logger.info(f"Load embedding {prefix}:{model}")
-        if prefix == "HuggingFace:":
+        logger.info(f"Load embedding {provider}:{model}")
+        if provider == "HuggingFace":
             return HuggingFaceEmbedding(model_name=model)
-        elif prefix == "Ollama:":
+        elif provider == "Ollama":
             return OllamaEmbedding(
                 model_name=model,
                 base_url=base_url or "http://localhost:11434",
             )
-        elif prefix == "LlamaCpp:":
+        elif provider == "LlamaCpp":
             return LlamaCppEmbedding(model_path=model)
-        elif prefix == "OpenAI:":
+        elif provider == "OpenAI":
             return OpenAIEmbedding(model_name=model)
-        elif prefix == "OpenAILike:":
+        elif provider == "OpenAILike":
             return OpenAILikeEmbedding(
                 model_name=model,
                 api_base=base_url or "http://localhost:1234/v1",
@@ -505,14 +508,9 @@ class RAGWorkflow:
         else:
             error(f"Embedding model not recognized: {model}")
 
-    async def load_llm(self, model: str, args: Args) -> LLM:
-        prefix, model = parse_prefixes(
-            ["Ollama:", "OpenAILike:", "OpenAI:", "LlamaCpp:"],
-            model,
-        )
-
-        logger.info(f"Load LLM {prefix}:{model}")
-        if prefix == "Ollama:":
+    async def load_llm(self, provider: str, model: str, args: Args) -> LLM:
+        logger.info(f"Load LLM {provider}:{model}")
+        if provider == "Ollama":
             return Ollama(
                 model=model,
                 base_url=args.llm_base_url or "http://localhost:11434",
@@ -521,7 +519,7 @@ class RAGWorkflow:
                 context_window=args.context_window,
                 request_timeout=args.timeout,
             )
-        elif prefix == "OpenAILike:":
+        elif provider == "OpenAILike":
             return OpenAILike(
                 model=model,
                 api_base=args.llm_base_url or "http://localhost:1234/v1",
@@ -533,7 +531,7 @@ class RAGWorkflow:
                 reasoning_effort=args.reasoning_effort,
                 timeout=args.timeout,
             )
-        elif prefix == "OpenAI:":
+        elif provider == "OpenAI":
             return OpenAI(
                 model=model,
                 api_key=args.llm_api_key,
@@ -545,7 +543,7 @@ class RAGWorkflow:
                 reasoning_effort=args.reasoning_effort,
                 timeout=args.timeout,
             )
-        elif prefix == "LlamaCpp:":
+        elif provider == "LlamaCpp":
             return LlamaCPP(
                 # model_url=model_url,
                 model_path=model,
@@ -993,29 +991,30 @@ async def chat_command(
 
 
 async def rag_initialize(args: Args) -> RAGWorkflow:
-    rag = RAGWorkflow(verbose=args.verbose)
-    await rag.initialize(args)
-
     if args.from_:
         input_files = read_files(args.from_, args.recursive)
     else:
-        input_files = None
+        input_files = awaitable_none()
 
+    rag = RAGWorkflow(verbose=args.verbose)
+
+    await rag.initialize(args)
     await rag.index_files(
-        input_files,
+        input_files=await input_files,
         splitter=args.splitter,
         collect_keywords=args.collect_keywords,
         questions_answered=args.questions_answered,
         num_workers=args.num_workers,
         args=args,
     )
-
     await rag.load_retriever(similarity_top_k=args.top_k)
+
     return rag
 
 
 async def rag_client(args: Args):
-    rag: RAGWorkflow = await rag_initialize(args)
+    rag = await rag_initialize(args)
+
     match args.command:
         case "search":
             await search_command(rag, args.args[0])
@@ -1072,6 +1071,12 @@ def rebuild_postgres_db(db_name: str):
         with conn.cursor() as c:
             c.execute(f"DROP DATABASE IF EXISTS {db_name}")
             c.execute(f"CREATE DATABASE {db_name}")
+
+    connection_string2 = "postgresql://postgres:password@localhost:5432/{db_name}"
+    with psycopg2.connect(connection_string2) as conn:
+        conn.autocommit = True
+        with conn.cursor() as c:
+            c.execute(f"CREATE EXTENSION vector;")
 
 
 def parse_args(
