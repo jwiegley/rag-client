@@ -145,6 +145,42 @@
           };
         };
 
+      llama-index-llms-perplexity =
+        with pkgs.python3Packages; buildPythonPackage rec {
+          pname = "llama-index-llms-perplexity";
+          version = "0.3.3";
+          pyproject = true;
+
+          disabled = pythonOlder "3.8";
+
+          src = fetchPypi {
+            pname = "llama_index_llms_perplexity";
+            inherit version;
+            hash = "sha256-UomDqXexuFGLEUR7OOo0GRtlD6pqbaSFs+19ufbCS7Q=";
+          };
+
+          pythonRemoveDeps = [];
+
+          build-system = [ poetry-core ];
+
+          dependencies = [
+            llama-index-core
+            llama-index-llms-openai
+          ];
+
+          # Tests are only available in the mono repo
+          doCheck = false;
+
+          pythonImportsCheck = [ "llama_index.llms.perplexity" ];
+
+          meta = with lib; {
+            description = "LlamaIndex LLMS Integration for Perplexity";
+            homepage = "https://github.com/run-llama/llama_index/tree/main/llama-index-integrations/llms/llama-index-llms-perplexity";
+            license = licenses.mit;
+            maintainers = with maintainers; [ jwiegley ];
+          };
+        };
+
       typed-argparse =
         with pkgs.python3Packages; buildPythonPackage rec {
           pname = "typed-argparse";
@@ -275,6 +311,7 @@
           psycopg2
           typed-argparse
           xdg-base-dirs
+          pytest
           # deepeval
         ]
       );
