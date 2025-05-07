@@ -12,5 +12,5 @@ collect_keywords: true
 source_retries: false
 streaming: true
 llm_provider: "OpenAILike"
-llm: "Falcon3-10B-Instruct"
+llm_model: "Falcon3-10B-Instruct"
 llm_base_url: "http://localhost:8080/v1"

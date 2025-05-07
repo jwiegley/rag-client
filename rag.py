@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # pyright: reportMissingTypeStubs=false
 # pyright: reportExplicitAny=false
 
@@ -8,8 +7,6 @@ import hashlib
 import logging
 import os
 import sys
-import yaml
-import argparse
 import psycopg2
 
 from llama_index.core.base.response.schema import RESPONSE_TYPE
@@ -212,6 +209,8 @@ class Args(TypedArgs):
     hnsw_dist_method: str
     embed_provider: str | None
     embed_model: str | None
+    embed_api_key: str | None
+    embed_api_version: str | None
     embed_base_url: str | None
     embed_dim: int
     chunk_size: int
@@ -221,9 +220,14 @@ class Args(TypedArgs):
     breakpoint_percentile_threshold: int
     window_size: int
     questions_answered: int | None
+    questions_answered_provider: str | None
+    questions_answered_model: str | None
+    questions_answered_api_key: str | None
+    questions_answered_api_version: str | None
+    questions_answered_base_url: str | None
     top_k: int
     llm_provider: str | None
-    llm: str | None
+    llm_model: str | None
     llm_api_key: str
     llm_api_version: str | None
     llm_base_url: str | None
@@ -238,9 +242,24 @@ class Args(TypedArgs):
     token_limit: int
     from_: str | None
     recursive: bool
+    metadata_extractor_provider: str | None
+    metadata_extractor_model: str | None
+    metadata_extractor_api_key: str | None
+    metadata_extractor_api_version: str | None
+    metadata_extractor_base_url: str | None
     collect_keywords: bool
+    keywords_provider: str | None
+    keywords_model: str | None
+    keywords_api_key: str | None
+    keywords_api_version: str | None
+    keywords_base_url: str | None
     retries: bool
     source_retries: bool
+    evaluator_provider: str | None
+    evaluator_model: str | None
+    evaluator_api_key: str | None
+    evaluator_api_version: str | None
+    evaluator_base_url: str | None
     summarize_chat: bool
     num_workers: int
     host: str
@@ -409,9 +428,12 @@ class RAGWorkflow:
     verbose: bool = False
     fingerprint: str | None = None
 
-    embed_model: BaseEmbedding | None = None
-
+    embed_llm: BaseEmbedding | None = None
     llm: LLM | None = None
+    questions_answered_llm: LLM | None = None
+    metadata_extractor_llm: LLM | None = None
+    keywords_llm: LLM | None = None
+    evaluator_llm: LLM | None = None
 
     storage_context: StorageContext | None = None
     vector_retriever: BaseRetriever | None = None
@@ -426,20 +448,90 @@ class RAGWorkflow:
     chat_engine: BaseChatEngine | None = None
 
     async def initialize(self, args: Args):
-        if args.embed_provider and args.embed_model:
-            emb = self.load_embedding(
-                args.embed_provider, args.embed_model, args.llm_base_url
+        embed_llm = (
+            self.load_embedding(
+                args.embed_provider,
+                args.embed_model,
+                args.timeout,
+                args.embed_api_key,
+                args.embed_api_version,
+                args.embed_base_url,
             )
-        else:
-            emb = awaitable_none()
+            if args.embed_provider and args.embed_model
+            else awaitable_none()
+        )
+        llm = (
+            self.load_llm(
+                args.llm_provider,
+                args.llm_model,
+                args.timeout,
+                args.llm_api_key,
+                args.llm_api_version,
+                args.llm_base_url,
+                args,
+            )
+            if args.llm_provider and args.llm_model
+            else awaitable_none()
+        )
+        questions_answered_llm = (
+            self.load_llm(
+                args.questions_answered_provider,
+                args.questions_answered_model,
+                args.timeout,
+                args.questions_answered_api_key,
+                args.questions_answered_api_version,
+                args.questions_answered_base_url,
+                args,
+            )
+            if args.questions_answered_provider and args.questions_answered_model
+            else awaitable_none()
+        )
+        metadata_extractor_llm = (
+            self.load_llm(
+                args.metadata_extractor_provider,
+                args.metadata_extractor_model,
+                args.timeout,
+                args.metadata_extractor_api_key,
+                args.metadata_extractor_api_version,
+                args.metadata_extractor_base_url,
+                args,
+            )
+            if args.metadata_extractor_provider and args.metadata_extractor_model
+            else awaitable_none()
+        )
+        keywords_llm = (
+            self.load_llm(
+                args.keywords_provider,
+                args.keywords_model,
+                args.timeout,
+                args.keywords_api_key,
+                args.keywords_api_version,
+                args.keywords_base_url,
+                args,
+            )
+            if args.keywords_provider and args.keywords_model
+            else awaitable_none()
+        )
+        evaluator_llm = (
+            self.load_llm(
+                args.evaluator_provider,
+                args.evaluator_model,
+                args.timeout,
+                args.evaluator_api_key,
+                args.evaluator_api_version,
+                args.evaluator_base_url,
+                args,
+            )
+            if args.evaluator_provider and args.evaluator_model
+            else awaitable_none()
+        )
 
-        if args.llm_provider and args.llm:
-            llm = self.load_llm(args.llm_provider, args.llm, args)
-        else:
-            llm = awaitable_none()
-
-        self.embed_model = await emb
+        self.embed_llm = await embed_llm
         self.llm = await llm
+        self.questions_answered_llm = await questions_answered_llm
+        self.metadata_extractor_llm = await metadata_extractor_llm
+        self.keywords_llm = await keywords_llm
+        self.evaluator_llm = await evaluator_llm
 
     async def postgres_stores(
         self, uri: str, args: Args
@@ -472,11 +564,20 @@ class RAGWorkflow:
         return docstore, index_store, vector_store
 
     async def load_embedding(
-        self, provider: str, model: str, base_url: str | None = None
+        self,
+        provider: str,
+        model: str,
+        timeout: int,
+        api_key: str | None,
+        api_version: str | None,
+        base_url: str | None,
     ) -> BaseEmbedding:
         logger.info(f"Load embedding {provider}:{model}")
         if provider == "HuggingFace":
-            return HuggingFaceEmbedding(model_name=model)
+            return HuggingFaceEmbedding(
+                model_name=model,
+                show_progress_bar=self.verbose,
+            )
         elif provider == "Ollama":
             return OllamaEmbedding(
                 model_name=model,
@@ -485,49 +586,66 @@ class RAGWorkflow:
         elif provider == "LlamaCpp":
             return LlamaCppEmbedding(model_path=model)
         elif provider == "OpenAI":
-            return OpenAIEmbedding(model_name=model)
+            return OpenAIEmbedding(
+                model_name=model,
+                api_key=api_key,
+                api_version=api_version,
+                api_base=base_url,
+                timeout=timeout,
+            )
         elif provider == "OpenAILike":
             return OpenAILikeEmbedding(
                 model_name=model,
-                api_base=base_url or "http://localhost:1234/v1",
+                api_key=api_key or "fake_key",
+                api_version=api_version,
+                api_base=base_url,
+                timeout=timeout,
             )
         else:
             error(f"Embedding model not recognized: {model}")
 
-    async def load_llm(self, provider: str, model: str, args: Args) -> LLM:
+    async def load_llm(
+        self,
+        provider: str,
+        model: str,
+        timeout: int,
+        api_key: str | None,
+        api_version: str | None,
+        base_url: str | None,
+        args: Args,
+    ) -> LLM:
         logger.info(f"Load LLM {provider}:{model}")
         if provider == "Ollama":
             return Ollama(
                 model=model,
-                base_url=args.llm_base_url or "http://localhost:11434",
+                base_url=base_url or "http://localhost:11434",
                 temperature=args.temperature,
                 max_tokens=args.max_tokens,
                 context_window=args.context_window,
-                request_timeout=args.timeout,
             )
         elif provider == "OpenAILike":
             return OpenAILike(
                 model=model,
-                api_base=args.llm_base_url or "http://localhost:1234/v1",
-                api_key=args.llm_api_key,
-                api_version=args.llm_api_version or "",
+                api_base=base_url or "http://localhost:1234/v1",
+                api_key=api_key or "fake_key",
+                api_version=api_version or "",
                 temperature=args.temperature,
                 max_tokens=args.max_tokens,
                 context_window=args.context_window,
                 reasoning_effort=args.reasoning_effort,
-                timeout=args.timeout,
+                timeout=timeout,
             )
         elif provider == "OpenAI":
             return OpenAI(
                 model=model,
-                api_key=args.llm_api_key,
-                api_base=args.llm_base_url,
-                api_version=args.llm_api_version,
+                api_key=api_key,
+                api_base=base_url,
+                api_version=api_version,
                 temperature=args.temperature,
                 max_tokens=args.max_tokens,
                 context_window=args.context_window,
                 reasoning_effort=args.reasoning_effort,
-                timeout=args.timeout,
+                timeout=timeout,
             )
         elif provider == "LlamaCpp":
             return LlamaCPP(
@@ -543,7 +661,7 @@ class RAGWorkflow:
         elif provider == "Perplexity":
             return Perplexity(
                 model_name=model,
-                api_key=args.llm_api_key,
+                api_key=api_key,
                 temperature=args.temperature,
                 max_tokens=args.max_tokens,
                 context_window=args.context_window,
@@ -551,25 +669,25 @@ class RAGWorkflow:
                 # This will determine if the search component is necessary
                 # in this particular context
                 enable_search_classifier=True,
-                timeout=args.timeout,
+                timeout=timeout,
             )
         elif provider == "OpenRouter":
             return OpenRouter(
                 model_name=model,
-                api_key=args.llm_api_key,
+                api_key=api_key,
                 temperature=args.temperature,
                 max_tokens=args.max_tokens,
                 context_window=args.context_window,
                 reasoning_effort=args.reasoning_effort,
-                timeout=args.timeout,
+                timeout=timeout,
             )
         elif provider == "LMStudio":
             return LMStudio(
                 model_name=model,
-                base_url=args.llm_base_url or "http://localhost:1234/v1",
+                base_url=base_url or "http://localhost:1234/v1",
                 temperature=args.temperature,
                 context_window=args.context_window,
-                timeout=args.timeout,
+                timeout=timeout,
             )
         else:
             error(f"LLM model not recognized: {model}")
@@ -619,11 +737,11 @@ class RAGWorkflow:
                 original_text_metadata_key="original_text",
             )
         elif model == "Semantic":
-            if self.embed_model is not None:
+            if self.embed_llm is not None:
                 return SemanticSplitterNodeParser(
                     buffer_size=args.buffer_size,
                     breakpoint_percentile_threshold=args.breakpoint_percentile_threshold,
-                    embed_model=self.embed_model,
+                    embed_model=self.embed_llm,
                 )
             else:
                 error("Semantic splitter needs an embedding model")
@@ -645,16 +763,21 @@ class RAGWorkflow:
         if self.llm is not None:
             transformations.extend(
                 [
-                    KeywordExtractor(keywords=5, llm=self.llm),
-                    SummaryExtractor(summaries=["self"], llm=self.llm),
-                    TitleExtractor(nodes=5, llm=self.llm),
+                    KeywordExtractor(keywords=5, llm=self.keywords_llm or self.llm),
+                    SummaryExtractor(
+                        summaries=["self"], llm=self.metadata_extractor_llm or self.llm
+                    ),
+                    TitleExtractor(
+                        nodes=5, llm=self.metadata_extractor_llm or self.llm
+                    ),
                 ]
             )
             if questions_answered is not None:
                 logger.info(f"Generate {questions_answered} questions for each chunk")
                 transformations.append(
                     QuestionsAnsweredExtractor(
-                        questions=questions_answered, llm=self.llm
+                        questions=questions_answered,
+                        llm=self.questions_answered_llm or self.llm,
                     )
                 )
 
@@ -676,7 +799,7 @@ class RAGWorkflow:
         vector_index = VectorStoreIndex(
             nodes,
             storage_context=storage_context,
-            embed_model=self.embed_model,
+            embed_model=self.embed_llm,
             show_progress=self.verbose,
         )
 
@@ -689,7 +812,7 @@ class RAGWorkflow:
                 keyword_index = KeywordTableIndex(
                     nodes,
                     storage_context=storage_context,
-                    llm=self.llm,
+                    llm=self.keywords_llm or self.llm,
                 )
         else:
             keyword_index = None
@@ -698,7 +821,7 @@ class RAGWorkflow:
 
     # global Settings
     # Settings.llm = self.llm
-    # Settings.embed_model = self.embed_model
+    # Settings.embed_model = self.embed_llm
     # Settings.chunk_size = args.chunk_size
     # Settings.chunk_overlap = args.chunk_overlap
 
@@ -753,7 +876,7 @@ class RAGWorkflow:
 
             indices: IndexList = load_indices_from_storage(
                 storage_context=self.storage_context,
-                embed_model=self.embed_model,
+                embed_model=self.embed_llm,
                 llm=self.llm,
             )
             if len(indices) == 1:
@@ -853,10 +976,10 @@ class RAGWorkflow:
         )
 
         if retries or source_retries:
-            relevancy_evaluator = RelevancyEvaluator(llm=self.llm)
+            relevancy_evaluator = RelevancyEvaluator(llm=self.evaluator_llm or self.llm)
             # jww (2025-05-04): Allow using different evaluators
             _guideline_evaluator = GuidelineEvaluator(
-                llm=self.llm,
+                llm=self.evaluator_llm or self.llm,
                 guidelines=DEFAULT_GUIDELINES
                 + "\nThe response should not be overly long.\n"
                 + "The response should try to summarize where possible.\n",
@@ -1002,239 +1125,6 @@ def rebuild_postgres_db(db_name: str):
         conn.autocommit = True
         with conn.cursor() as c:
             c.execute("CREATE EXTENSION vector;")
-
-
-def parse_args(
-    arguments: list[str] = sys.argv[1:], config_path: Path | None = None
-) -> Args:
-    parser = argparse.ArgumentParser()
-
-    _ = parser.add_argument(
-        "--config", "-c", type=str, help="Yaml config file, to set argument defaults"
-    )
-    _ = parser.add_argument("--verbose", action="store_true", help="Verbose?")
-    _ = parser.add_argument(
-        "--db_conn",
-        type=str,
-        help="Postgres connection string (in-memory if unspecified)",
-    )
-    _ = parser.add_argument(
-        "--hnsw_m",
-        type=int,
-        default=16,
-        help="Bi-dir links for each node (default: %(default)s)",
-    )
-    _ = parser.add_argument(
-        "--hnsw_ef_construction",
-        type=int,
-        default=64,
-        help="Dynamic candidate list size (default: %(default)s)",
-    )
-    _ = parser.add_argument(
-        "--hnsw_ef_search",
-        type=int,
-        default=40,
-        help="Candidate list size during search (default: %(default)s)",
-    )
-    _ = parser.add_argument(
-        "--hnsw_dist_method",
-        type=str,
-        default="vector_cosine_ops",
-        help="Distance method for similarity (default: %(default)s)",
-    )
-    _ = parser.add_argument("--embed_model", type=str, help="Embedding model")
-    _ = parser.add_argument(
-        "--embed_base_url",
-        type=str,
-        help="URL to use for talking with embedding model",
-    )
-    _ = parser.add_argument(
-        "--embed_dim",
-        type=int,
-        default=512,
-        help="Embedding dimensions (default: %(default)s)",
-    )
-    _ = parser.add_argument(
-        "--chunk_size", type=int, default=512, help="Chunk size (default: %(default)s)"
-    )
-    _ = parser.add_argument(
-        "--chunk_overlap",
-        type=int,
-        default=20,
-        help="Chunk overlap (default: %(default)s)",
-    )
-    _ = parser.add_argument(
-        "--splitter",
-        type=str,
-        default="Sentence",
-        help="Document splitting strategy (default: %(default)s)",
-    )
-    _ = parser.add_argument(
-        "--buffer_size",
-        type=int,
-        default=256,
-        help="Buffer size for semantic splitting (default: %(default)s)",
-    )
-    _ = parser.add_argument(
-        "--breakpoint_percentile_threshold",
-        type=int,
-        default=95,
-        help="Breakpoint percentile threshold (default: %(default)s)",
-    )
-    _ = parser.add_argument(
-        "--window_size",
-        type=int,
-        default=3,
-        help="Window size of sentence window splitter (default: %(default)s)",
-    )
-    _ = parser.add_argument(
-        "--questions_answered",
-        type=int,
-        help="If provided, generate N questions related to each chunk",
-    )
-    _ = parser.add_argument(
-        "--top_k",
-        type=int,
-        default=3,
-        help="Top K document nodes (default: %(default)s)",
-    )
-    _ = parser.add_argument(
-        "--llm",
-        type=str,
-        help="LLM to use for text generation and chat",
-    )
-    _ = parser.add_argument(
-        "--llm_api_key",
-        type=str,
-        default="fake",
-        help="API key to use with LLM",
-    )
-    _ = parser.add_argument(
-        "--llm_api_version",
-        type=str,
-        help="API version to use with LLM (if required)",
-    )
-    _ = parser.add_argument(
-        "--llm_base_url",
-        type=str,
-        help="URL to use for talking with LLM (default depends on LLM)",
-    )
-    _ = parser.add_argument(
-        "--streaming",
-        action="store_true",
-        help="Stream output as it arrives from LLM",
-    )
-    _ = parser.add_argument(
-        "--timeout",
-        type=int,
-        default=60,
-        help="Max time to wait in seconds (default: %(default)s)",
-    )
-    _ = parser.add_argument(
-        "--temperature",
-        type=float,
-        default=1.0,
-        help="LLM temperature value (default: %(default)s)",
-    )
-    _ = parser.add_argument(
-        "--max_tokens",
-        type=int,
-        default=200,
-        help="LLM maximum answer size in tokens (default: %(default)s)",
-    )
-    _ = parser.add_argument(
-        "--context_window",
-        type=int,
-        default=8192,
-        help="LLM context window size (default: %(default)s)",
-    )
-    _ = parser.add_argument(
-        "--reasoning_effort",
-        choices=["low", "medium", "high"],
-        default="medium",
-        help="LLM reasoning effort (default: %(default)s)",
-    )
-    _ = parser.add_argument(
-        "--gpu_layers",
-        type=int,
-        default=-1,
-        help="Number of GPU layers to use (default: %(default)s)",
-    )
-    _ = parser.add_argument(
-        "--chat_user",
-        type=str,
-        help="Chat user name for history saves (no history if unset)",
-    )
-    _ = parser.add_argument(
-        "--token_limit",
-        type=int,
-        default=1500,
-        help="Token limit used for chat history (default: %(default)s)",
-    )
-    _ = parser.add_argument(
-        "--from", dest="from_", type=str, help="Where to read files from (optional)"
-    )
-    _ = parser.add_argument(
-        "--recursive",
-        action="store_true",
-        help="Read directories recursively (default: no)",
-    )
-    _ = parser.add_argument(
-        "--collect_keywords",
-        action="store_true",
-        help="Generate keywords for document retrieval",
-    )
-    _ = parser.add_argument(
-        "--retries",
-        action="store_true",
-        help="Retry queries based on relevancy",
-    )
-    _ = parser.add_argument(
-        "--source_retries",
-        action="store_true",
-        help="Retry queries (using source modification) based on relevancy",
-    )
-    _ = parser.add_argument(
-        "--summarize_chat",
-        action="store_true",
-        help="Summarize chat history when it grows too long",
-    )
-    _ = parser.add_argument(
-        "--num_workers",
-        type=int,
-        default=4,
-        help="Number of works to use for various tasks (default: %(default)s)",
-    )
-    _ = parser.add_argument(
-        "--host",
-        type=str,
-        default="localhost",
-        help='Host to serve from with "serve" command (default: %(default)s)',
-    )
-    _ = parser.add_argument(
-        "--port",
-        type=int,
-        default=8000,
-        help='Port to serve from with "serve" command (default: %(default)s)',
-    )
-    _ = parser.add_argument(
-        "--reload-server",
-        action="store_true",
-        help='Auto-reload source when using "serve" command (for devel)',
-    )
-    _ = parser.add_argument("command")
-    _ = parser.add_argument("args", nargs=argparse.REMAINDER)
-
-    args: argparse.Namespace
-    args, _remaining = parser.parse_known_args(arguments)
-    if args.config or config_path is not None:  # pyright: ignore[reportAny]
-        with open(
-            args.config or str(config_path), "r"  # pyright: ignore[reportAny]
-        ) as f:
-            config = yaml.safe_load(f)  # pyright: ignore[reportAny]
-        parser.set_defaults(**config)
-
-    return Args.from_argparse(parser.parse_args())
 
 
 # store
