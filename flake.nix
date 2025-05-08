@@ -303,7 +303,7 @@
           llama-index-llms-perplexity
           llama-index-readers-file
           llama-index-vector-stores-postgres
-          llama-index-indices-managed-bge-m3
+          # llama-index-indices-managed-bge-m3
           llama-parse
           nltk
           numpy_2
