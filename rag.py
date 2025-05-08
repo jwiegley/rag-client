@@ -7,7 +7,9 @@ import hashlib
 import logging
 import os
 import sys
+from llama_index.core.retrievers.fusion_retriever import FUSION_MODES
 import psycopg2
+import numpy as np
 
 from llama_index.core.base.response.schema import RESPONSE_TYPE
 from llama_index.core.response_synthesizers import ResponseMode
@@ -19,8 +21,19 @@ from functools import cache
 from orgparse.node import OrgNode
 from pathlib import Path
 from typed_argparse import TypedArgs
-from typing import Any, Literal, NoReturn, cast, final, no_type_check, override
+from typing import (
+    Any,
+    Literal,
+    NoReturn,
+    cast,
+    final,
+    no_type_check,
+    override,
+    TypeVar,
+    Generic,
+)
 from xdg_base_dirs import xdg_cache_home
+from urllib.parse import urlparse
 
 from llama_index.core import (
     KeywordTableIndex,
@@ -70,7 +83,7 @@ from llama_index.core.query_engine import (
 )
 from llama_index.core.evaluation import GuidelineEvaluator, RelevancyEvaluator
 from llama_index.core.readers.base import BaseReader
-from llama_index.core.retrievers import BaseRetriever
+from llama_index.core.retrievers import BaseRetriever, QueryFusionRetriever
 from llama_index.core.schema import (
     BaseNode,
     Document,
@@ -94,6 +107,7 @@ from llama_index.llms.openai_like import OpenAILike
 from llama_index.llms.perplexity import Perplexity
 from llama_index.llms.lmstudio import LMStudio
 from llama_index.llms.openrouter import OpenRouter
+from llama_index.indices.managed.bge_m3 import BGEM3Index
 from llama_index.vector_stores.postgres import PGVectorStore
 from llama_index.storage.docstore.postgres import PostgresDocumentStore
 from llama_index.storage.index_store.postgres import PostgresIndexStore
@@ -217,6 +231,12 @@ class Args(TypedArgs):
     chunk_size: int
     chunk_overlap: int
     splitter: str
+    semantic_splitter_embed_provider: str | None
+    semantic_splitter_embed_model: str | None
+    semantic_splitter_embed_api_key: str | None
+    semantic_splitter_embed_api_version: str | None
+    semantic_splitter_embed_base_url: str | None
+    semantic_splitter_query_instruction: str | None
     buffer_size: int
     breakpoint_percentile_threshold: int
     window_size: int
@@ -226,6 +246,7 @@ class Args(TypedArgs):
     questions_answered_api_key: str | None
     questions_answered_api_version: str | None
     questions_answered_base_url: str | None
+    hybrid_search: bool
     top_k: int
     llm_provider: str | None
     llm_model: str | None
@@ -424,12 +445,145 @@ class CustomRetriever(BaseRetriever):
 # Workflows
 
 
+T = TypeVar("T")
+
+
+class PostgresDetails(Generic[T]):
+    connection_string: str
+    database: str
+    host: str
+    password: str
+    port: int
+    user: str
+
+    def __init__(self, connection_string: str):
+        self.connection_string = connection_string
+
+        parsed = urlparse(self.connection_string)
+        self.database = parsed.path.lstrip("/")
+        self.host = parsed.hostname or "localhost"
+        self.password = parsed.password or ""
+        self.port = parsed.port or 5432
+        self.user = parsed.username or "postgres"
+
+    def unpickle_from_table(self, tablename: str, row_id: int) -> T | NoReturn:
+        import pickle
+        import psycopg2
+
+        # Connect to PostgreSQL
+        with psycopg2.connect(
+            database=self.database,
+            user=self.user,
+            password=self.password,
+            host=self.host,
+            port=self.port,
+        ) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT data FROM {tablename} WHERE id = %s",
+                    (row_id,),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    error(f"Data not available in table {tablename} row {row_id}")
+
+                binary_data = row[0]  # pyright: ignore[reportAny]
+                if isinstance(binary_data, memoryview):
+                    binary_data = binary_data.tobytes()
+                return cast(T, pickle.loads(binary_data))
+
+    def pickle_to_table(self, tablename: str, row_id: int, data: T):
+        import pickle
+        import psycopg2
+
+        # Connect to PostgreSQL
+        with psycopg2.connect(
+            database=self.database,
+            user=self.user,
+            password=self.password,
+            host=self.host,
+            port=self.port,
+        ) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {tablename} (
+                        id SERIAL PRIMARY KEY,
+                        data BYTEA
+                    )
+                """
+                )
+
+                pickled = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
+
+                cur.execute(
+                    f"""
+                    INSERT INTO {tablename} (id, data)
+                    VALUES (%s, %s)
+                    ON CONFLICT (id)
+                    DO UPDATE SET data = EXCLUDED.data
+                """,
+                    (row_id, psycopg2.Binary(pickled)),
+                )
+
+
+MultiEmbedStore = dict[
+    Literal["dense_vecs", "lexical_weights", "colbert_vecs"],
+    np.ndarray[Any, Any] | list[dict[str, float]] | list[np.ndarray[Any, Any]],
+]
+
+
+class BGEM3Embedding:
+    @classmethod
+    def load_from_postgres(
+        cls,
+        uri: str,
+        storage_context: StorageContext,
+        weights_for_different_modes: list[float],
+        model_name: str = "BAAI/bge-m3",
+        index_name: str = "",
+    ) -> BGEM3Index:
+        index = BGEM3Index(
+            model_name=model_name,
+            index_name=index_name,
+            index_struct=storage_context.index_store.index_structs()[
+                0
+            ],  # pyright: ignore[reportArgumentType]
+            storage_context=storage_context,
+            weights_for_different_modes=weights_for_different_modes,
+        )
+        details: PostgresDetails[MultiEmbedStore] = PostgresDetails(uri)
+        docs_pos_to_node_id = {
+            int(k): v for k, v in index.index_struct.nodes_dict.items()
+        }
+        index._docs_pos_to_node_id = (  # pyright: ignore[reportPrivateUsage]
+            docs_pos_to_node_id
+        )
+        index._multi_embed_store = (  # pyright: ignore[reportPrivateUsage]
+            details.unpickle_from_table(
+                "multi_embed_store",
+                1,
+            )
+        )
+        return index
+
+    @classmethod
+    def persist_to_postgres(cls, uri: str, index: BGEM3Index):
+        details: PostgresDetails[MultiEmbedStore] = PostgresDetails(uri)
+        details.pickle_to_table(
+            "multi_embed_store",
+            1,
+            index._multi_embed_store,  # pyright: ignore[reportArgumentType, reportUnknownMemberType, reportPrivateUsage]
+        )
+
+
 @dataclass
 class RAGWorkflow:
     verbose: bool = False
     fingerprint: str | None = None
 
-    embed_llm: BaseEmbedding | None = None
+    embed_llm: BaseEmbedding | BGEM3Embedding | None = None
+    semantic_splitter_embed_llm: BaseEmbedding | BGEM3Embedding | None = None
     llm: LLM | None = None
     questions_answered_llm: LLM | None = None
     metadata_extractor_llm: LLM | None = None
@@ -441,7 +595,7 @@ class RAGWorkflow:
     keyword_retriever: BaseRetriever | None = None
     retriever: BaseRetriever | None = None
 
-    vector_index: BaseIndex[IndexDict] | None = None
+    vector_index: VectorStoreIndex | BGEM3Index | None = None
     keyword_index: BaseKeywordTableIndex | None = None
 
     chat_memory: ChatMemoryBuffer | ChatSummaryMemoryBuffer | None = None
@@ -460,6 +614,20 @@ class RAGWorkflow:
                 args.query_instruction,
             )
             if args.embed_provider and args.embed_model
+            else awaitable_none()
+        )
+        semantic_splitter_embed_llm = (
+            self.load_embedding(
+                args.semantic_splitter_embed_provider,
+                args.semantic_splitter_embed_model,
+                args.timeout,
+                args.semantic_splitter_embed_api_key,
+                args.semantic_splitter_embed_api_version,
+                args.semantic_splitter_embed_base_url,
+                args.semantic_splitter_query_instruction,
+            )
+            if args.semantic_splitter_embed_provider
+            and args.semantic_splitter_embed_model
             else awaitable_none()
         )
         llm = (
@@ -529,6 +697,7 @@ class RAGWorkflow:
         )
 
         self.embed_llm = await embed_llm
+        self.semantic_splitter_embed_llm = await semantic_splitter_embed_llm
         self.llm = await llm
         self.questions_answered_llm = await questions_answered_llm
         self.metadata_extractor_llm = await metadata_extractor_llm
@@ -547,15 +716,19 @@ class RAGWorkflow:
             uri=uri,
             table_name="indexstore",
         )
+
+        details: PostgresDetails[MultiEmbedStore] = PostgresDetails(uri)
+
         vector_store: PGVectorStore = PGVectorStore.from_params(
             connection_string=uri,
-            database="vector_db",
-            host="localhost",
-            password="",
-            port=str(5432),
-            user="postgres",
+            database=details.database,
+            host=details.host,
+            password=details.password,
+            port=str(details.port),
+            user=details.user,
             table_name="vectorstore",
             embed_dim=args.embed_dim,
+            hybrid_search=args.hybrid_search,
             hnsw_kwargs={
                 "hnsw_m": args.hnsw_m,
                 "hnsw_ef_construction": args.hnsw_ef_construction,
@@ -574,7 +747,7 @@ class RAGWorkflow:
         api_version: str | None,
         base_url: str | None,
         query_instruction: str | None,
-    ) -> BaseEmbedding:
+    ) -> BaseEmbedding | BGEM3Embedding:
         logger.info(f"Load embedding {provider}:{model}")
         if provider == "HuggingFace":
             return HuggingFaceEmbedding(
@@ -605,6 +778,8 @@ class RAGWorkflow:
                 api_base=base_url,
                 timeout=timeout,
             )
+        elif provider == "BGEM3":
+            return BGEM3Embedding()
         else:
             error(f"Embedding model not recognized: {model}")
 
@@ -716,7 +891,9 @@ class RAGWorkflow:
             file_extractor=file_extractor,
         ).load_data(num_workers=num_workers)
 
-    async def load_splitter(self, model: str, args: Args) -> TransformComponent:
+    async def load_splitter(
+        self, model: str, args: Args
+    ) -> TransformComponent | NoReturn:
         # Sentence
         # SentenceWindow
         # Semantic
@@ -741,14 +918,24 @@ class RAGWorkflow:
                 original_text_metadata_key="original_text",
             )
         elif model == "Semantic":
-            if self.embed_llm is not None:
-                return SemanticSplitterNodeParser(
-                    buffer_size=args.buffer_size,
-                    breakpoint_percentile_threshold=args.breakpoint_percentile_threshold,
-                    embed_model=self.embed_llm,
-                )
-            else:
+            embed_llm = None
+            if self.semantic_splitter_embed_llm is not None:
+                embed_llm = self.semantic_splitter_embed_llm
+            elif self.embed_llm is not None:
+                embed_llm = self.embed_llm
+
+            if embed_llm is None:
                 error("Semantic splitter needs an embedding model")
+
+            if isinstance(embed_llm, BGEM3Embedding):
+                error("Semantic splitter not yet working with BGE-M3")
+
+            return SemanticSplitterNodeParser(
+                buffer_size=args.buffer_size,
+                breakpoint_percentile_threshold=args.breakpoint_percentile_threshold,
+                embed_model=embed_llm,
+                include_metadata=True,
+            )
         else:
             error(f"Splitting model not recognized: {model}")
 
@@ -793,19 +980,27 @@ class RAGWorkflow:
         nodes: Sequence[BaseNode],
         collect_keywords: bool,
         storage_context: StorageContext,
-    ) -> tuple[VectorStoreIndex, BaseKeywordTableIndex | None]:
+    ) -> tuple[VectorStoreIndex | BGEM3Index, BaseKeywordTableIndex | None]:
         logger.info("Populate vector store")
 
         index_structs = storage_context.index_store.index_structs()
         for struct in index_structs:
             storage_context.index_store.delete_index_struct(key=struct.index_id)
 
-        vector_index = VectorStoreIndex(
-            nodes,
-            storage_context=storage_context,
-            embed_model=self.embed_llm,
-            show_progress=self.verbose,
-        )
+        if isinstance(self.embed_llm, BGEM3Embedding):
+            vector_index = BGEM3Index(
+                nodes,
+                storage_context=storage_context,
+                weights_for_different_modes=[0.4, 0.2, 0.4],
+                show_progress=self.verbose,
+            )
+        else:
+            vector_index = VectorStoreIndex(
+                nodes,
+                storage_context=storage_context,
+                embed_model=self.embed_llm,
+                show_progress=self.verbose,
+            )
 
         if collect_keywords:
             if self.llm is None:
@@ -873,27 +1068,55 @@ class RAGWorkflow:
         persisted = persist_dir is not None and os.path.isdir(persist_dir)
 
         if args.db_conn is not None or persisted:
-            if args.db_conn is not None:
-                logger.info("Read stores from database")
-            else:
-                logger.info("Read stores from cache")
+            try:
+                if args.db_conn is not None:
+                    logger.info("Read indices from database")
+                else:
+                    logger.info("Read indices from cache")
 
-            indices: IndexList = (  # pyright: ignore[reportUnknownVariableType]
-                load_indices_from_storage(
-                    storage_context=self.storage_context,
-                    embed_model=self.embed_llm,
-                    llm=self.llm,
-                )
-            )
-            if len(indices) == 1:
-                [vector_index] = indices
-                self.vector_index = vector_index
-                self.keyword_index = None
-            elif len(indices) == 2:
-                [vector_index, keyword_index] = indices
-                self.vector_index = vector_index
-                self.keyword_index = cast(BaseKeywordTableIndex, keyword_index)
-            else:
+                if isinstance(self.embed_llm, BGEM3Embedding):
+                    if args.db_conn is not None:
+                        error("BGE-M3 not current compatible with databases")
+                        logger.info("Read BGE-M3 index from database")
+                        self.vector_index = BGEM3Embedding.load_from_postgres(
+                            uri=args.db_conn,
+                            storage_context=self.storage_context,
+                            weights_for_different_modes=[0.4, 0.2, 0.4],
+                        )
+                    else:
+                        logger.info("Read BGE-M3 index from cache")
+                        self.vector_index = BGEM3Index.load_from_disk(
+                            persist_dir=str(persist_dir),
+                            weights_for_different_modes=[0.4, 0.2, 0.4],
+                        )
+                else:
+                    indices: IndexList = (  # pyright: ignore[reportUnknownVariableType]
+                        load_indices_from_storage(
+                            storage_context=self.storage_context,
+                            embed_model=(
+                                self.embed_llm
+                                if not isinstance(self.embed_llm, BGEM3Embedding)
+                                else None
+                            ),
+                            llm=self.llm,
+                            index_ids=(
+                                ["vector_index", "keyword_index"]
+                                if collect_keywords
+                                else ["vector_index"]
+                            ),
+                        )
+                    )
+                    if collect_keywords:
+                        [vector_index, keyword_index] = indices
+                        self.vector_index = cast(VectorStoreIndex, vector_index)
+                        self.keyword_index = cast(BaseKeywordTableIndex, keyword_index)
+                    else:
+                        [vector_index] = indices
+                        self.vector_index = cast(VectorStoreIndex, vector_index)
+                        self.keyword_index = None
+
+            except ValueError:
+                logger.info("Failed to read indices")
                 self.vector_index = None
                 self.keyword_index = None
 
@@ -916,24 +1139,66 @@ class RAGWorkflow:
                 storage_context=self.storage_context,
             )
 
-            if args.db_conn is None and persist_dir is not None:
-                logger.info("Persist storage context to disk")
-                self.storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
-                    persist_dir=persist_dir
-                )
+            await self.save_indices(persist_dir, args)
 
-    async def load_retriever(self, similarity_top_k: int):
+    async def save_indices(
+        self,
+        persist_dir: Path | None,
+        args: Args,  # jww (2025-05-04): Should not be here
+    ):
+        if args.db_conn is not None:
+            if self.vector_index is not None:
+                if isinstance(self.vector_index, BGEM3Index):
+                    logger.info("Persist BGE-M3 index to database")
+                    BGEM3Embedding.persist_to_postgres(args.db_conn, self.vector_index)
+        elif persist_dir is not None:
+            if self.vector_index is not None:
+                self.vector_index.set_index_id("vector_index")
+                if self.keyword_index is not None:
+                    self.keyword_index.set_index_id("keyword_index")
+
+                if isinstance(self.vector_index, BGEM3Index):
+                    logger.info("Persist storage context and BGE-M3 index")
+                    self.vector_index.persist(persist_dir=str(persist_dir))
+                elif self.storage_context is not None:
+                    logger.info("Persist storage context to disk")
+                    self.storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
+                        persist_dir=str(persist_dir)
+                    )
+
+    async def load_retriever(self, args: Args):
         if self.vector_index is not None:
-            logger.info("Create vector retriever")
-            self.vector_retriever = self.vector_index.as_retriever(
-                similarity_top_k=similarity_top_k
-            )
+            if args.db_conn is not None and args.hybrid_search:
+                logger.info("Create fusion vector retriever")
+                vector_retriever = self.vector_index.as_retriever(
+                    vector_store_query_mode="default",
+                    similarity_top_k=5,
+                )
+                text_retriever = self.vector_index.as_retriever(
+                    vector_store_query_mode="sparse",
+                    similarity_top_k=5,  # interchangeable with sparse_top_k in this context
+                )
+                # jww (2025-05-08): Make more of these configurable
+                self.vector_retriever = QueryFusionRetriever(
+                    [vector_retriever, text_retriever],
+                    similarity_top_k=args.top_k,
+                    num_queries=1,  # set this to 1 to disable query generation
+                    mode=FUSION_MODES.RELATIVE_SCORE,
+                    llm=self.llm,
+                    use_async=True,
+                )
+            else:
+                logger.info("Create vector retriever")
+                self.vector_retriever = self.vector_index.as_retriever(
+                    similarity_top_k=args.top_k
+                )
         if self.keyword_index is not None:
             logger.info("Create keyword retriever")
             self.keyword_retriever = self.keyword_index.as_retriever()
 
         if self.vector_retriever is not None:
             if self.keyword_retriever is not None:
+                logger.info("Create aggregate custom retriever")
                 self.retriever = CustomRetriever(
                     vector_retriever=self.vector_retriever,
                     keyword_retriever=self.keyword_retriever,
@@ -1116,7 +1381,7 @@ async def rag_initialize(args: Args) -> RAGWorkflow:
         num_workers=args.num_workers,
         args=args,
     )
-    await rag.load_retriever(similarity_top_k=args.top_k)
+    await rag.load_retriever(args=args)
 
     return rag
 

@@ -208,6 +208,30 @@ def parse_args(
         help="Document splitting strategy (default: %(default)s)",
     )
     _ = parser.add_argument(
+        "--semantic-splitter-embed-provider", type=str, help="Embedding model provider"
+    )
+    _ = parser.add_argument(
+        "--semantic-splitter-embed-model", type=str, help="Embedding model"
+    )
+    _ = parser.add_argument(
+        "--semantic-splitter-embed-api-key", type=str, help="Embedding model API key"
+    )
+    _ = parser.add_argument(
+        "--semantic-splitter-embed-api-version",
+        type=str,
+        help="Embedding model API version",
+    )
+    _ = parser.add_argument(
+        "--semantic-splitter-embed-base-url",
+        type=str,
+        help="Embedding model base URL",
+    )
+    _ = parser.add_argument(
+        "--semantic-splitter-query-instruction",
+        type=str,
+        help="Query instruction for embedding model",
+    )
+    _ = parser.add_argument(
         "--buffer-size",
         type=int,
         default=256,
@@ -252,6 +276,11 @@ def parse_args(
         "--questions-answered-base-url",
         type=str,
         help="Questions answered model base URL",
+    )
+    _ = parser.add_argument(
+        "--hybrid-search",
+        action="store_true",
+        help="Use hybrid search for Postgres database queries",
     )
     _ = parser.add_argument(
         "--top-k",
@@ -465,7 +494,12 @@ def parse_args(
             config = yaml.safe_load(f)  # pyright: ignore[reportAny]
         parser.set_defaults(**config)
 
-    return Args.from_argparse(parser.parse_args())
+    parsed = Args.from_argparse(parser.parse_args())
+
+    if parsed.embed_provider == "BGEM3":
+        parsed.embed_model = "BAAI/bge-m3"
+
+    return parsed
 
 
 def main(args: Args):

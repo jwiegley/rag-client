@@ -1,8 +1,8 @@
-embed_provider: "HuggingFace"
-embed_model: "BAAI/bge-large-en-v1.5"
-query_instruction: "Represent this sentence for searching relevant passages:"
-# embed_provider: "BGEM3"
-# embed_model: "BAAI/bge-m3"
+# embed_provider: "HuggingFace"
+# embed_model: "BAAI/bge-large-en-v1.5"
+# query_instruction: "Represent this sentence for searching relevant passages:"
+embed_provider: "BGEM3"
+embed_model: "BAAI/bge-m3"
 embed_base_url: "http://localhost:8080/v1"
 embed_dim: 1024
 chunk_size: 1024
