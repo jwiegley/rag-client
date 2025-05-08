@@ -232,6 +232,30 @@ def parse_args(
         help="Query instruction for embedding model",
     )
     _ = parser.add_argument(
+        "--code-language",
+        type=str,
+        default="python",
+        help="Code language to use in Code splitter (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--code-chunk-lines",
+        type=str,
+        default=40,
+        help="Lines per chunk to use in Code splitter (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--code-chunk-lines-overlap",
+        type=int,
+        default=15,
+        help="Chunk lines overlap in Code splitter (default: %(default)s)",
+    )
+    _ = parser.add_argument(
+        "--code-max-chars",
+        type=int,
+        default=1500,
+        help="Maximum characters per chunk in Code splitter (default: %(default)s)",
+    )
+    _ = parser.add_argument(
         "--buffer-size",
         type=int,
         default=256,

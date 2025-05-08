@@ -74,6 +74,7 @@ from llama_index.core.llms import ChatMessage
 from llama_index.core.llms.llm import LLM
 from llama_index.core.memory import ChatMemoryBuffer, ChatSummaryMemoryBuffer
 from llama_index.core.node_parser import (
+    CodeSplitter,
     SemanticSplitterNodeParser,
     SentenceSplitter,
     SentenceWindowNodeParser,
@@ -242,6 +243,10 @@ class Args(TypedArgs):
     semantic_splitter_embed_api_version: str | None
     semantic_splitter_embed_base_url: str | None
     semantic_splitter_query_instruction: str | None
+    code_language: str
+    code_chunk_lines: int
+    code_chunk_lines_overlap: int
+    code_max_chars: int
     buffer_size: int
     breakpoint_percentile_threshold: int
     window_size: int
@@ -944,6 +949,13 @@ class RAGWorkflow:
                 breakpoint_percentile_threshold=args.breakpoint_percentile_threshold,
                 embed_model=embed_llm,
                 include_metadata=True,
+            )
+        elif model == "Code":
+            return CodeSplitter(
+                language=args.code_language,
+                chunk_lines=args.code_chunk_lines,
+                chunk_lines_overlap=args.code_chunk_lines_overlap,
+                max_chars=args.code_max_chars,
             )
         else:
             error(f"Splitting model not recognized: {model}")
