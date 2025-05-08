@@ -305,6 +305,7 @@
           llama-index-vector-stores-postgres
           # llama-index-indices-managed-bge-m3
           llama-parse
+          # tree-sitter-language-pack
           nltk
           numpy_2
           orgparse
