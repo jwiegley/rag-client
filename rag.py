@@ -151,10 +151,10 @@ async def read_files(read_from: str, recursive: bool = False) -> list[Path] | No
         if not input_files:
             error("No filenames provided on standard input")
         return input_files
-    elif await asyncio.to_thread(os.path.isfile, read_from):
-        return [Path(read_from)]
     elif await asyncio.to_thread(os.path.isdir, read_from):
         return await list_files(Path(read_from), recursive)
+    elif await asyncio.to_thread(os.path.isfile, read_from):
+        return [Path(read_from)]
     else:
         error(f"Input path is unrecognized or non-existent: {read_from}")
 
@@ -213,6 +213,7 @@ class Args(TypedArgs):
     embed_api_version: str | None
     embed_base_url: str | None
     embed_dim: int
+    query_instruction: str | None
     chunk_size: int
     chunk_overlap: int
     splitter: str
@@ -456,6 +457,7 @@ class RAGWorkflow:
                 args.embed_api_key,
                 args.embed_api_version,
                 args.embed_base_url,
+                args.query_instruction,
             )
             if args.embed_provider and args.embed_model
             else awaitable_none()
@@ -571,11 +573,13 @@ class RAGWorkflow:
         api_key: str | None,
         api_version: str | None,
         base_url: str | None,
+        query_instruction: str | None,
     ) -> BaseEmbedding:
         logger.info(f"Load embedding {provider}:{model}")
         if provider == "HuggingFace":
             return HuggingFaceEmbedding(
                 model_name=model,
+                query_instruction=query_instruction,
                 show_progress_bar=self.verbose,
             )
         elif provider == "Ollama":
@@ -874,19 +878,24 @@ class RAGWorkflow:
             else:
                 logger.info("Read stores from cache")
 
-            indices: IndexList = load_indices_from_storage(
-                storage_context=self.storage_context,
-                embed_model=self.embed_llm,
-                llm=self.llm,
+            indices: IndexList = (  # pyright: ignore[reportUnknownVariableType]
+                load_indices_from_storage(
+                    storage_context=self.storage_context,
+                    embed_model=self.embed_llm,
+                    llm=self.llm,
+                )
             )
             if len(indices) == 1:
                 [vector_index] = indices
                 self.vector_index = vector_index
                 self.keyword_index = None
-            else:
+            elif len(indices) == 2:
                 [vector_index, keyword_index] = indices
                 self.vector_index = vector_index
                 self.keyword_index = cast(BaseKeywordTableIndex, keyword_index)
+            else:
+                self.vector_index = None
+                self.keyword_index = None
 
         if input_files is not None and not persisted:
             documents = await self.read_documents(

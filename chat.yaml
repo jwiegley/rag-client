@@ -5,10 +5,11 @@ verbose: true
 chunk_size: 512
 chunk_overlap: 20
 top_k: 20
-timeout: 3600
+timeout: 7200
 max-tokens: 1000
 db_conn: "postgresql+psycopg2://postgres@localhost:5432/vector_db"
-collect_keywords: true
+# collect_keywords: true
+# questions_answered: 3
 source_retries: false
 streaming: true
 llm_provider: "OpenAILike"

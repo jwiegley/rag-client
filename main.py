@@ -190,6 +190,9 @@ def parse_args(
         help="Embedding dimensions (default: %(default)s)",
     )
     _ = parser.add_argument(
+        "--query-instruction", type=str, help="Query instruction for embedding model"
+    )
+    _ = parser.add_argument(
         "--chunk-size", type=int, default=512, help="Chunk size (default: %(default)s)"
     )
     _ = parser.add_argument(

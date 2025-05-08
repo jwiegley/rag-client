@@ -72,23 +72,7 @@ case $1 in
         ;;
 
     search)
-        ./main.py                                       \
-            --embed-provider $embedding_provider        \
-            --embed-model $embedding                    \
-            --embed-dim 1024                            \
-            --verbose                                   \
-            --chunk-size 512                            \
-            --chunk-overlap 20                          \
-            --top-k 20                                  \
-            --timeout 3600                              \
-            --from $input                               \
-            --db-conn $db_conn                          \
-            --collect-keywords                          \
-            --streaming                                 \
-            --llm-provider $llm_provider                \
-            --llm-model $llm                            \
-            --llm-base-url "http://localhost:8080/v1"   \
-            "$@"
+        ./main.py --config chat.yaml "$@"
         ;;
 
     *)
