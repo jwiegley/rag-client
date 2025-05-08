@@ -484,7 +484,7 @@ def main(args: Args):
     match args.command:
         case "serve":
             api.workflow = rag
-            api.llm_model = args.llm
+            api.llm_model = args.llm_model
             api.embed_model = args.embed_model
             api.token_limit = args.token_limit
             # This cannot run inside asyncio.run, since it creates its own
