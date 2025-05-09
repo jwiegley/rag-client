@@ -1,6 +1,5 @@
 # pyright: reportMissingTypeStubs=false
 # pyright: reportExplicitAny=false
-# pyright: reportUnnecessaryTypeIgnoreComment=false
 
 import asyncio
 import base64
@@ -10,8 +9,7 @@ import os
 import sys
 from llama_index.core.retrievers.fusion_retriever import FUSION_MODES
 import psycopg2
-
-# import numpy as np
+import numpy as np
 
 from llama_index.core.base.response.schema import RESPONSE_TYPE
 from llama_index.core.response_synthesizers import ResponseMode
@@ -110,8 +108,7 @@ from llama_index.llms.openai_like import OpenAILike
 from llama_index.llms.perplexity import Perplexity
 from llama_index.llms.lmstudio import LMStudio
 from llama_index.llms.openrouter import OpenRouter
-
-# from llama_index.indices.managed.bge_m3 import BGEM3Index
+from llama_index.indices.managed.bge_m3 import BGEM3Index
 from llama_index.vector_stores.postgres import PGVectorStore
 
 # from llama_index.vector_stores.milvus import MilvusVectorStore
@@ -537,54 +534,54 @@ class PostgresDetails(Generic[T]):
                 )
 
 
-# MultiEmbedStore = dict[
-#     Literal["dense_vecs", "lexical_weights", "colbert_vecs"],
-#     np.ndarray[Any, Any] | list[dict[str, float]] | list[np.ndarray[Any, Any]],
-# ]
+MultiEmbedStore = dict[
+    Literal["dense_vecs", "lexical_weights", "colbert_vecs"],
+    np.ndarray[Any, Any] | list[dict[str, float]] | list[np.ndarray[Any, Any]],
+]
 
 
-# class BGEM3Embedding:
-#     @classmethod
-#     def load_from_postgres(
-#         cls,
-#         uri: str,
-#         storage_context: StorageContext,
-#         weights_for_different_modes: list[float],
-#         model_name: str = "BAAI/bge-m3",
-#         index_name: str = "",
-#     ) -> BGEM3Index:
-#         index = BGEM3Index(
-#             model_name=model_name,
-#             index_name=index_name,
-#             index_struct=storage_context.index_store.index_structs()[
-#                 0
-#             ],  # pyright: ignore[reportArgumentType]
-#             storage_context=storage_context,
-#             weights_for_different_modes=weights_for_different_modes,
-#         )
-#         details: PostgresDetails[MultiEmbedStore] = PostgresDetails(uri)
-#         docs_pos_to_node_id = {
-#             int(k): v for k, v in index.index_struct.nodes_dict.items()
-#         }
-#         index._docs_pos_to_node_id = (  # pyright: ignore[reportPrivateUsage]
-#             docs_pos_to_node_id
-#         )
-#         index._multi_embed_store = (  # pyright: ignore[reportPrivateUsage]
-#             details.unpickle_from_table(
-#                 "multi_embed_store",
-#                 1,
-#             )
-#         )
-#         return index
+class BGEM3Embedding:
+    @classmethod
+    def load_from_postgres(
+        cls,
+        uri: str,
+        storage_context: StorageContext,
+        weights_for_different_modes: list[float],
+        model_name: str = "BAAI/bge-m3",
+        index_name: str = "",
+    ) -> BGEM3Index:
+        index = BGEM3Index(
+            model_name=model_name,
+            index_name=index_name,
+            index_struct=storage_context.index_store.index_structs()[
+                0
+            ],  # pyright: ignore[reportArgumentType]
+            storage_context=storage_context,
+            weights_for_different_modes=weights_for_different_modes,
+        )
+        details: PostgresDetails[MultiEmbedStore] = PostgresDetails(uri)
+        docs_pos_to_node_id = {
+            int(k): v for k, v in index.index_struct.nodes_dict.items()
+        }
+        index._docs_pos_to_node_id = (  # pyright: ignore[reportPrivateUsage]
+            docs_pos_to_node_id
+        )
+        index._multi_embed_store = (  # pyright: ignore[reportPrivateUsage]
+            details.unpickle_from_table(
+                "multi_embed_store",
+                1,
+            )
+        )
+        return index
 
-#     @classmethod
-#     def persist_to_postgres(cls, uri: str, index: BGEM3Index):
-#         details: PostgresDetails[MultiEmbedStore] = PostgresDetails(uri)
-#         details.pickle_to_table(
-#             "multi_embed_store",
-#             1,
-#             index._multi_embed_store,  # pyright: ignore[reportArgumentType, reportUnknownMemberType, reportPrivateUsage]
-#         )
+    @classmethod
+    def persist_to_postgres(cls, uri: str, index: BGEM3Index):
+        details: PostgresDetails[MultiEmbedStore] = PostgresDetails(uri)
+        details.pickle_to_table(
+            "multi_embed_store",
+            1,
+            index._multi_embed_store,  # pyright: ignore[reportArgumentType, reportUnknownMemberType, reportPrivateUsage]
+        )
 
 
 @dataclass
@@ -592,10 +589,8 @@ class RAGWorkflow:
     verbose: bool = False
     fingerprint: str | None = None
 
-    # embed_llm: BaseEmbedding | BGEM3Embedding | None = None
-    embed_llm: BaseEmbedding | None = None
-    # semantic_splitter_embed_llm: BaseEmbedding | BGEM3Embedding | None = None
-    semantic_splitter_embed_llm: BaseEmbedding | None = None
+    embed_llm: BaseEmbedding | BGEM3Embedding | None = None
+    semantic_splitter_embed_llm: BaseEmbedding | BGEM3Embedding | None = None
     llm: LLM | None = None
     questions_answered_llm: LLM | None = None
     metadata_extractor_llm: LLM | None = None
@@ -607,8 +602,7 @@ class RAGWorkflow:
     keyword_retriever: BaseRetriever | None = None
     retriever: BaseRetriever | None = None
 
-    # vector_index: VectorStoreIndex | BGEM3Index | None = None
-    vector_index: VectorStoreIndex | None = None
+    vector_index: VectorStoreIndex | BGEM3Index | None = None
     keyword_index: BaseKeywordTableIndex | None = None
 
     chat_memory: ChatMemoryBuffer | ChatSummaryMemoryBuffer | None = None
@@ -730,8 +724,7 @@ class RAGWorkflow:
             table_name="indexstore",
         )
 
-        # details: PostgresDetails[MultiEmbedStore] = PostgresDetails(uri)
-        details: PostgresDetails[None] = PostgresDetails(uri)
+        details: PostgresDetails[MultiEmbedStore] = PostgresDetails(uri)
 
         vector_store: PGVectorStore = PGVectorStore.from_params(
             connection_string=uri,
@@ -761,7 +754,7 @@ class RAGWorkflow:
         api_version: str | None,
         base_url: str | None,
         query_instruction: str | None,
-    ) -> BaseEmbedding:
+    ) -> BaseEmbedding | BGEM3Embedding:
         logger.info(f"Load embedding {provider}:{model}")
         if provider == "HuggingFace":
             return HuggingFaceEmbedding(
@@ -792,8 +785,8 @@ class RAGWorkflow:
                 api_base=base_url,
                 timeout=timeout,
             )
-        # elif provider == "BGEM3":
-        #     return BGEM3Embedding()
+        elif provider == "BGEM3":
+            return BGEM3Embedding()
         else:
             error(f"Embedding model not recognized: {model}")
 
@@ -941,8 +934,8 @@ class RAGWorkflow:
             if embed_llm is None:
                 error("Semantic splitter needs an embedding model")
 
-            # if isinstance(embed_llm, BGEM3Embedding):
-            #     error("Semantic splitter not yet working with BGE-M3")
+            if isinstance(embed_llm, BGEM3Embedding):
+                error("Semantic splitter not yet working with BGE-M3")
 
             return SemanticSplitterNodeParser(
                 buffer_size=args.buffer_size,
@@ -1001,27 +994,27 @@ class RAGWorkflow:
         nodes: Sequence[BaseNode],
         collect_keywords: bool,
         storage_context: StorageContext,
-    ) -> tuple[VectorStoreIndex, BaseKeywordTableIndex | None]:
+    ) -> tuple[VectorStoreIndex | BGEM3Index, BaseKeywordTableIndex | None]:
         logger.info("Populate vector store")
 
         index_structs = storage_context.index_store.index_structs()
         for struct in index_structs:
             storage_context.index_store.delete_index_struct(key=struct.index_id)
 
-        # if isinstance(self.embed_llm, BGEM3Embedding):
-        #     vector_index = BGEM3Index(
-        #         nodes,
-        #         storage_context=storage_context,
-        #         weights_for_different_modes=[0.4, 0.2, 0.4],
-        #         show_progress=self.verbose,
-        #     )
-        # else:
-        vector_index = VectorStoreIndex(
-            nodes,
-            storage_context=storage_context,
-            embed_model=self.embed_llm,
-            show_progress=self.verbose,
-        )
+        if isinstance(self.embed_llm, BGEM3Embedding):
+            vector_index = BGEM3Index(
+                nodes,
+                storage_context=storage_context,
+                weights_for_different_modes=[0.4, 0.2, 0.4],
+                show_progress=self.verbose,
+            )
+        else:
+            vector_index = VectorStoreIndex(
+                nodes,
+                storage_context=storage_context,
+                embed_model=self.embed_llm,
+                show_progress=self.verbose,
+            )
 
         if collect_keywords:
             if self.llm is None:
@@ -1095,46 +1088,46 @@ class RAGWorkflow:
                 else:
                     logger.info("Read indices from cache")
 
-                # if isinstance(self.embed_llm, BGEM3Embedding):
-                #     if args.db_conn is not None:
-                #         error("BGE-M3 not current compatible with databases")
-                #         # logger.info("Read BGE-M3 index from database")
-                #         # self.vector_index = BGEM3Embedding.load_from_postgres(
-                #         #     uri=args.db_conn,
-                #         #     storage_context=self.storage_context,
-                #         #     weights_for_different_modes=[0.4, 0.2, 0.4],
-                #         # )
-                #     else:
-                #         logger.info("Read BGE-M3 index from cache")
-                #         self.vector_index = BGEM3Index.load_from_disk(
-                #             persist_dir=str(persist_dir),
-                #             weights_for_different_modes=[0.4, 0.2, 0.4],
-                #         )
-                # else:
-                indices: IndexList = (  # pyright: ignore[reportUnknownVariableType]
-                    load_indices_from_storage(
-                        storage_context=self.storage_context,
-                        embed_model=(
-                            self.embed_llm
-                            # if not isinstance(self.embed_llm, BGEM3Embedding)
-                            # else None
-                        ),
-                        llm=self.llm,
-                        index_ids=(
-                            ["vector_index", "keyword_index"]
-                            if collect_keywords
-                            else ["vector_index"]
-                        ),
-                    )
-                )
-                if collect_keywords:
-                    [vector_index, keyword_index] = indices
-                    self.vector_index = cast(VectorStoreIndex, vector_index)
-                    self.keyword_index = cast(BaseKeywordTableIndex, keyword_index)
+                if isinstance(self.embed_llm, BGEM3Embedding):
+                    if args.db_conn is not None:
+                        error("BGE-M3 not current compatible with databases")
+                        logger.info("Read BGE-M3 index from database")
+                        self.vector_index = BGEM3Embedding.load_from_postgres(
+                            uri=args.db_conn,
+                            storage_context=self.storage_context,
+                            weights_for_different_modes=[0.4, 0.2, 0.4],
+                        )
+                    else:
+                        logger.info("Read BGE-M3 index from cache")
+                        self.vector_index = BGEM3Index.load_from_disk(
+                            persist_dir=str(persist_dir),
+                            weights_for_different_modes=[0.4, 0.2, 0.4],
+                        )
                 else:
-                    [vector_index] = indices
-                    self.vector_index = cast(VectorStoreIndex, vector_index)
-                    self.keyword_index = None
+                    indices: IndexList = (  # pyright: ignore[reportUnknownVariableType]
+                        load_indices_from_storage(
+                            storage_context=self.storage_context,
+                            embed_model=(
+                                self.embed_llm
+                                if not isinstance(self.embed_llm, BGEM3Embedding)
+                                else None
+                            ),
+                            llm=self.llm,
+                            index_ids=(
+                                ["vector_index", "keyword_index"]
+                                if collect_keywords
+                                else ["vector_index"]
+                            ),
+                        )
+                    )
+                    if collect_keywords:
+                        [vector_index, keyword_index] = indices
+                        self.vector_index = cast(VectorStoreIndex, vector_index)
+                        self.keyword_index = cast(BaseKeywordTableIndex, keyword_index)
+                    else:
+                        [vector_index] = indices
+                        self.vector_index = cast(VectorStoreIndex, vector_index)
+                        self.keyword_index = None
 
             except ValueError:
                 logger.info("Failed to read indices")
@@ -1169,20 +1162,19 @@ class RAGWorkflow:
     ):
         if args.db_conn is not None:
             if self.vector_index is not None:
-                pass
-                # if isinstance(self.vector_index, BGEM3Index):
-                #     logger.info("Persist BGE-M3 index to database")
-                #     BGEM3Embedding.persist_to_postgres(args.db_conn, self.vector_index)
+                if isinstance(self.vector_index, BGEM3Index):
+                    logger.info("Persist BGE-M3 index to database")
+                    BGEM3Embedding.persist_to_postgres(args.db_conn, self.vector_index)
         elif persist_dir is not None:
             if self.vector_index is not None:
                 self.vector_index.set_index_id("vector_index")
                 if self.keyword_index is not None:
                     self.keyword_index.set_index_id("keyword_index")
 
-                # if isinstance(self.vector_index, BGEM3Index):
-                #     logger.info("Persist storage context and BGE-M3 index")
-                #     self.vector_index.persist(persist_dir=str(persist_dir))
-                if self.storage_context is not None:
+                if isinstance(self.vector_index, BGEM3Index):
+                    logger.info("Persist storage context and BGE-M3 index")
+                    self.vector_index.persist(persist_dir=str(persist_dir))
+                elif self.storage_context is not None:
                     logger.info("Persist storage context to disk")
                     self.storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
                         persist_dir=str(persist_dir)
