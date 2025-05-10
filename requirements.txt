@@ -24,7 +24,6 @@ numpy>=2.2.4
 ollama>=0.4.8
 openai>=1.76.2
 orgparse>=0.4.20231004
-psycopg2>=2.9.10
 psycopg2-binary>=2.9.10
 pypdf>=5.4.0
 xdg-base-dirs>=6.0.2

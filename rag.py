@@ -878,11 +878,17 @@ class RAGWorkflow:
         else:
             error(f"LLM model not recognized: {model}")
 
-    async def determine_fingerprint(self, input_files: list[Path]) -> str:
+    async def determine_fingerprint(
+        self,
+        input_files: list[Path],
+        embed_model: str,
+        embed_dim: int,
+    ) -> str:
         logger.info("Determine input files fingerprint")
         fingerprint = [
             collection_hash(input_files),
-            # hashlib.sha512(repr(args).encode("utf-8")).hexdigest(),
+            hashlib.sha512(embed_model.encode("utf-8")).hexdigest(),
+            hashlib.sha512(str(embed_dim).encode("utf-8")).hexdigest(),
         ]
         final_hash = "\n".join(fingerprint).encode("utf-8")
         final_base64 = base64.b64encode(final_hash).decode("utf-8")
@@ -1052,7 +1058,9 @@ class RAGWorkflow:
             persist_dir = None
         else:
             logger.info(f"{len(input_files)} input file(s)")
-            fp: str = await self.determine_fingerprint(input_files)
+            fp: str = await self.determine_fingerprint(
+                input_files, args.embed_model or "", args.embed_dim
+            )
             logger.info(f"Fingerprint = {fp}")
             persist_dir = cache_dir(fp)
             self.fingerprint = fp
@@ -1091,12 +1099,12 @@ class RAGWorkflow:
                 if isinstance(self.embed_llm, BGEM3Embedding):
                     if args.db_conn is not None:
                         error("BGE-M3 not current compatible with databases")
-                        logger.info("Read BGE-M3 index from database")
-                        self.vector_index = BGEM3Embedding.load_from_postgres(
-                            uri=args.db_conn,
-                            storage_context=self.storage_context,
-                            weights_for_different_modes=[0.4, 0.2, 0.4],
-                        )
+                        # logger.info("Read BGE-M3 index from database")
+                        # self.vector_index = BGEM3Embedding.load_from_postgres(
+                        #     uri=args.db_conn,
+                        #     storage_context=self.storage_context,
+                        #     weights_for_different_modes=[0.4, 0.2, 0.4],
+                        # )
                     else:
                         logger.info("Read BGE-M3 index from cache")
                         self.vector_index = BGEM3Index.load_from_disk(
@@ -1104,21 +1112,19 @@ class RAGWorkflow:
                             weights_for_different_modes=[0.4, 0.2, 0.4],
                         )
                 else:
-                    indices: IndexList = (  # pyright: ignore[reportUnknownVariableType]
-                        load_indices_from_storage(
-                            storage_context=self.storage_context,
-                            embed_model=(
-                                self.embed_llm
-                                if not isinstance(self.embed_llm, BGEM3Embedding)
-                                else None
-                            ),
-                            llm=self.llm,
-                            index_ids=(
-                                ["vector_index", "keyword_index"]
-                                if collect_keywords
-                                else ["vector_index"]
-                            ),
-                        )
+                    indices: IndexList = load_indices_from_storage(
+                        storage_context=self.storage_context,
+                        embed_model=(
+                            self.embed_llm
+                            if not isinstance(self.embed_llm, BGEM3Embedding)
+                            else None
+                        ),
+                        llm=self.llm,
+                        index_ids=(
+                            ["vector_index", "keyword_index"]
+                            if collect_keywords
+                            else ["vector_index"]
+                        ),
                     )
                     if collect_keywords:
                         [vector_index, keyword_index] = indices

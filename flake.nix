@@ -10,311 +10,13 @@
     flake-utils.lib.eachDefaultSystem (system:
     let
       version = builtins.substring 0 8 self.lastModifiedDate;
-      pkgs = import nixpkgs {
-        inherit system;
-        overlays = [
-          (final: prev: {
-            pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
-              (pyFinal: pyPrev: {
-                # spacy = pyPrev.spacy.overridePythonAttrs (o: rec {
-                #   meta = o.meta // { broken = false; };
-                # });
+      pkgs = import nixpkgs { inherit system; };
 
-                # banks = with pkgs; with pyPrev; buildPythonPackage rec {
-                #   pname = "banks";
-                #   version = "2.1.2";
-                #   pyproject = true;
-
-                #   src = fetchFromGitHub {
-                #     owner = "masci";
-                #     repo = "banks";
-                #     tag = "v${version}";
-                #     hash = "sha256-lOlNYIBMa3G06t5KfRWNd/d8aXjxnWp11n8Kw7Ydy+Y=";
-                #   };
-
-                #   SSL_CERT_FILE = "${cacert}/etc/ssl/certs/ca-bundle.crt";
-
-                #   build-system = [ hatchling ];
-
-                #   dependencies = [
-                #     deprecated
-                #     eval-type-backport
-                #     griffe
-                #     jinja2
-                #     platformdirs
-                #     pydantic
-                #   ];
-
-                #   optional-dependencies = {
-                #     all = [
-                #       litellm
-                #       redis
-                #     ];
-                #   };
-
-                #   nativeCheckInputs = [
-                #     pytest-asyncio
-                #     pytestCheckHook
-                #   ] ++ lib.flatten (builtins.attrValues optional-dependencies);
-
-                #   pythonImportsCheck = [ "banks" ];
-
-                #   meta = {
-                #     description = "Module that provides tools and functions to build prompts text and chat messages from generic blueprints";
-                #     homepage = "https://github.com/masci/banks";
-                #     changelog = "https://github.com/masci/banks/releases/tag/${src.tag}";
-                #     license = lib.licenses.mit;
-                #     maintainers = with lib.maintainers; [ fab ];
-                #   };
-                # };
-              })
-            ];
-          })
-        ];
-      };
-
-      llama-index-llms-llama-cpp =
-        with pkgs.python3Packages; buildPythonPackage rec {
-          pname = "llama-index-llms-llama-cpp";
-          version = "0.4.0";
-          pyproject = true;
-
-          disabled = pythonOlder "3.8";
-
-          src = fetchPypi {
-            pname = "llama_index_llms_llama_cpp";
-            inherit version;
-            hash = "sha256-thW8QaoHksFNN56WUIE7hpQ1qrrzhHlP72uOijZ+np0=";
-          };
-
-          pythonRemoveDeps = [];
-
-          build-system = [ poetry-core ];
-
-          dependencies = [
-            llama-index-core
-            llama-cpp-python
-          ];
-
-          # Tests are only available in the mono repo
-          doCheck = false;
-
-          pythonImportsCheck = [ "llama_index.llms.llama_cpp" ];
-
-          meta = with lib; {
-            description = "LlamaIndex LLMS Integration for LlamaCpp";
-            homepage = "https://github.com/run-llama/llama_index/tree/main/llama-index-integrations/llms/llama-index-llms-llama-cpp";
-            license = licenses.mit;
-            maintainers = with maintainers; [ jwiegley ];
-          };
-        };
-
-      llama-index-embeddings-openai-like =
-        with pkgs.python3Packages; buildPythonPackage rec {
-          pname = "llama-index-embeddings-openai-like";
-          version = "0.1.0";
-          pyproject = true;
-
-          disabled = pythonOlder "3.8";
-
-          src = fetchPypi {
-            pname = "llama_index_embeddings_openai_like";
-            inherit version;
-            hash = "sha256-4LjKt0lgwu29PZ2/+T/Vh/4Fi1OPZQH0YDQF0Pd7l14=";
-          };
-
-          pythonRemoveDeps = [];
-
-          build-system = [ poetry-core ];
-
-          dependencies = [
-            llama-index-core
-            llama-index-embeddings-openai
-          ];
-
-          # Tests are only available in the mono repo
-          doCheck = false;
-
-          pythonImportsCheck = [ "llama_index.embeddings.openai_like" ];
-
-          meta = with lib; {
-            description = "LlamaIndex Embeddings Integration for OpenAI-Like";
-            homepage = "https://github.com/run-llama/llama_index/tree/main/llama-index-integrations/llms/llama-index-embeddings-openai-like";
-            license = licenses.mit;
-            maintainers = with maintainers; [ jwiegley ];
-          };
-        };
-
-      llama-index-llms-perplexity =
-        with pkgs.python3Packages; buildPythonPackage rec {
-          pname = "llama-index-llms-perplexity";
-          version = "0.3.3";
-          pyproject = true;
-
-          disabled = pythonOlder "3.8";
-
-          src = fetchPypi {
-            pname = "llama_index_llms_perplexity";
-            inherit version;
-            hash = "sha256-UomDqXexuFGLEUR7OOo0GRtlD6pqbaSFs+19ufbCS7Q=";
-          };
-
-          pythonRemoveDeps = [];
-
-          build-system = [ poetry-core ];
-
-          dependencies = [
-            llama-index-core
-            llama-index-llms-openai
-          ];
-
-          # Tests are only available in the mono repo
-          doCheck = false;
-
-          pythonImportsCheck = [ "llama_index.llms.perplexity" ];
-
-          meta = with lib; {
-            description = "LlamaIndex LLMS Integration for Perplexity";
-            homepage = "https://github.com/run-llama/llama_index/tree/main/llama-index-integrations/llms/llama-index-llms-perplexity";
-            license = licenses.mit;
-            maintainers = with maintainers; [ jwiegley ];
-          };
-        };
-
-      typed-argparse =
-        with pkgs.python3Packages; buildPythonPackage rec {
-          pname = "typed-argparse";
-          version = "0.3.1";
-          pyproject = true;
-
-          disabled = pythonOlder "3.8";
-
-          src = fetchPypi {
-            pname = "typed-argparse";
-            inherit version;
-            hash = "sha256-OqxhyqUCBuCA0JoAw/5VK8TmQnOb6u+J9fjBExtdWv4=";
-          };
-
-          pythonRemoveDeps = [];
-
-          build-system = [ setuptools ];
-
-          dependencies = [
-            typing-extensions
-          ];
-
-          # Tests are only available in the mono repo
-          doCheck = false;
-
-          pythonImportsCheck = [ "typed_argparse" ];
-
-          meta = with lib; {
-            description = "Fully typed argument parsing";
-            homepage = "https://pypi.org/project/typed-argparse/";
-            license = licenses.mit;
-            maintainers = with maintainers; [ jwiegley ];
-          };
-        };
-
-      deepeval =
-        with pkgs.python3Packages; buildPythonPackage rec {
-          pname = "deepeval";
-          version = "2.8.2";
-          pyproject = true;
-
-          disabled = pythonOlder "3.8";
-
-          src = fetchPypi {
-            pname = "deepeval";
-            inherit version;
-            hash = "sha256-jkJGOr/0U1vgveFMENNwRooQrRhyf04lbBO0ChxcXTI=";
-          };
-
-          pythonRemoveDeps = [];
-
-          nativeBuildInputs = [ pythonRelaxDepsHook ];
-
-          build-system = [ poetry-core ];
-
-          dependencies = [
-            coverage
-            google-genai
-            grpcio
-            nest-asyncio
-            ollama
-            openai
-            opentelemetry-api
-            opentelemetry-exporter-otlp-proto-grpc
-            opentelemetry-sdk
-            portalocker
-            posthog
-            pytest
-            pytest-asyncio
-            pytest-repeat
-            pytest-rerunfailures
-            pytest-xdist
-            requests
-            rich
-            sentry-sdk
-            setuptools
-            tabulate
-            tenacity
-            tqdm
-            twine
-            typer
-            aiohttp
-            anthropic
-            black
-          ];
-
-          pythonRelaxDeps = [
-            "google-genai"
-            "anthropic"
-            "posthog"
-            "pytest-rerunfailures"
-            "twine"
-          ];
-
-          # Tests are only available in the mono repo
-          doCheck = false;
-
-          pythonImportsCheck = [ "deepeval" ];
-
-          meta = with lib; {
-            description = "LLM evaluation framework";
-            homepage = "https://pypi.org/project/deepeval/";
-            license = licenses.mit;
-            maintainers = with maintainers; [ jwiegley ];
-          };
-        };
-
-      pythonEnv = pkgs.python3.withPackages (
+      pythonPackage = pkgs.python3.withPackages (
         python-pkgs: with python-pkgs; [
-          stdenv
-          llama-index-core
-          llama-index-embeddings-huggingface
-          llama-index-embeddings-ollama
-          llama-index-embeddings-openai
-          llama-index-embeddings-openai-like
-          llama-index-llms-llama-cpp
-          llama-index-llms-ollama
-          llama-index-llms-openai
-          llama-index-llms-openai-like
-          llama-index-llms-perplexity
-          llama-index-readers-file
-          llama-index-vector-stores-postgres
-          llama-index-indices-managed-bge-m3
-          llama-parse
-          # tree-sitter-language-pack
-          nltk
-          numpy_2
-          orgparse
-          pypdf
-          psycopg2
-          typed-argparse
-          xdg-base-dirs
-          pytest
-          # deepeval
+          pip
+          setuptools
+          wheel
         ]
       );
 
@@ -331,30 +33,85 @@
     in {
       inherit pkgs;
 
-      packages.default = with pkgs; python311Packages.buildPythonApplication {
+      packages.default = with pkgs; python3Packages.buildPythonApplication {
         pname = "rag-client";
         version = "1.0.0";
+        format = "setuptools";
+
         src = ./.;
 
-        propagatedBuildInputs = [ pythonEnv ];
-
         entryPoints = "main:main";
+
+        # Skip Nix dependency checks
+        doCheck = false;
+        # pythonImportsCheck = [ "rag" ];
+        pythonImportsCheck = [ ];
+
+        nativeBuildInputs = [
+          makeWrapper
+        ];
+
+        buildInputs = [
+          pythonPackage
+          zlib
+        ];
+
+        preBuild = ''
+          # Create temporary build environment
+          export BUILD_VENV=$TMPDIR/build_venv
+          ${pythonPackage}/bin/python -m venv $BUILD_VENV
+          source $BUILD_VENV/bin/activate
+
+          # Install dependencies using pip
+          pip install --upgrade pip
+          pip install -r requirements.txt
+        '';
+
+        installPhase = ''
+          # Create output directories
+          mkdir -p $out/lib $out/bin $out/venv
+
+          # Install application without dependencies
+          ${pythonPackage}/bin/python setup.py install --prefix=$out
+
+          # Clone build venv to output directory
+          cp -r $BUILD_VENV $out/venv
+
+          cat > compileall <<EOF
+          import compileall
+          import sys
+          import pathlib
+          # Path to your venv's site-packages
+          site_packages = pathlib.Path("$out") \
+              / "venv" \
+              / "build_venv" \
+              / "lib" \
+              / "python${pythonPackage.pythonVersion}" \
+              / "site-packages"
+          compileall.compile_dir(site_packages, force=True)
+          EOF
+
+          source $out/venv/build_venv/bin/activate
+          ${pythonPackage}/bin/python compileall
+
+          # Wrap executables to use local virtual environment
+          cat > $out/bin/rag-client <<EOF
+          #!${pkgs.bash}/bin/bash
+          source $out/venv/build_venv/bin/activate
+          export LD_LIBRARY_PATH=${pythonPackage}/lib:${libPath}:$LD_LIBRARY_PATH
+          export DYLD_LIBRARY_PATH=${pythonPackage}/lib:${libPath}:$DYLD_LIBRARY_PATH
+          export PYTHONPATH="$out/venv/build_venv/lib/python${pythonPackage.pythonVersion}/site-packages:$out/lib/python${pythonPackage.pythonVersion}/site-packages"
+          export LD_LIBRARY_PATH=$out/venv/build_venv/lib/python${pythonPackage.pythonVersion}/site-packages/lib:$LD_LIBRARY_PATH
+          export DYLD_LIBRARY_PATH=$out/venv/build_venv/lib/python${pythonPackage.pythonVersion}/site-packages/lib:$DYLD_LIBRARY_PATH
+          egg=$out/lib/python${pythonPackage.pythonVersion}/site-packages/*.egg
+          $out/venv/build_venv/bin/python -c "import sys; \
+            sys.path.insert(0, '$egg'); \
+            from main import main, parse_args; \
+            main(parse_args())" "\$@"
+          EOF
+        '';
       };
 
-      # packages.default = pkgs.stdenv.mkDerivation {
-      #   name = "rag-client";
-      #   src = ./.;
-      #   buildInputs = [ pythonEnv ];
-      #   installPhase = ''
-      #     mkdir -p $out/bin
-      #     # Create a wrapper to launch the script with the correct Python
-      #     echo '#!${pythonEnv}/bin/python' > $out/bin/rag-client
-      #     cat rag_client.py >> $out/bin/rag-client
-      #     chmod +x $out/bin/rag-client
-      #   '';
-      # };
-
-      # App definition allows running without installation
       apps.default = {
         type = "app";
         program = "${self.packages.${system}.default}/bin/rag-client";
@@ -384,16 +141,5 @@
           pylint
         ];
       };
-
-      # devShell = with pkgs; mkShell {
-      #   nativeBuildInputs = [
-      #     pythonEnv
-      #     black                 # Python code formatter
-      #     basedpyright          # LSP server for Python
-      #     isort                 # Sorts imports
-      #     autoflake             # Removes unused imports
-      #     pylint
-      #   ];
-      # };
     });
 }
