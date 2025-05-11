@@ -3,13 +3,14 @@ import json
 import os
 import time
 import uvicorn
+from rag import *
 
 from collections.abc import AsyncGenerator, Sequence
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import Any
+from typing import Any, NoReturn
 
 from llama_index.core.llms import ChatMessage
 from llama_index.core.storage.chat_store import SimpleChatStore
@@ -17,8 +18,6 @@ from llama_index.core.chat_engine.types import (
     AgentChatResponse,
     StreamingAgentChatResponse,
 )
-
-from rag import *
 
 # Initialize FastAPI api
 api = FastAPI(title="OpenAI API Compatible Interface")
@@ -35,8 +34,10 @@ api.add_middleware(
 
 token_limit = 200
 llm_model: str | None = None
-embed_model: str | None = None
+embedding: LLMConfig | None = None
 workflow: RAGWorkflow | None = None
+models: Models | None = None
+retriever: BaseRetriever | None = None
 
 
 # Models for request validation
@@ -253,7 +254,9 @@ async def list_models(
         "object": "list",
         "data": [
             {
-                "id": (llm_model or embed_model or "invalid") + "-RAG",
+                "id": (llm_model or
+                       (embedding.model if embedding else None) or
+                       "invalid") + "-RAG",
                 "object": "model",
                 "created": int(time.time()),
                 "owned_by": "your-organization",
@@ -267,16 +270,16 @@ async def process_chat_messages(
     messages: Sequence[ChatMessage],
     _request: ChatCompletionRequest,
     streaming: bool,
-) -> StreamingAgentChatResponse | AgentChatResponse:
+) -> StreamingAgentChatResponse | AgentChatResponse | NoReturn:
     """Process chat messages with your custom logic."""
     user_message = next((msg for msg in messages if msg.role == "user"), None)
     if not user_message:
         error("No user message found")
 
-    # global workflow
     if workflow is None:
         error("RAGWorkflow not initialized")
-        # workflow = await rag_initialize(args)
+    if models is None:
+        error("RAGWorkflow not initialized")
 
     await workflow.reset_chat()
 
@@ -284,6 +287,8 @@ async def process_chat_messages(
     chat_store.set_messages("user1", list(messages))
 
     return await workflow.chat(
+        models,
+        retriever,
         user="user1",
         query=user_message.content or "",
         token_limit=token_limit,
@@ -295,7 +300,7 @@ async def process_chat_messages(
 # Helper functions for processing requests
 async def chat_response(
     messages: Sequence[ChatMessage], request: ChatCompletionRequest
-) -> str:
+) -> str | NoReturn:
     """Process chat messages with your custom logic."""
     response = await process_chat_messages(messages, request, streaming=False)
     return response.response
@@ -304,7 +309,7 @@ async def chat_response(
 # Streaming support functions
 async def stream_chat_response(
     messages: Sequence[ChatMessage], request: ChatCompletionRequest
-) -> AsyncGenerator[str, None]:
+) -> AsyncGenerator[str, None] | NoReturn:
     """Stream chat responses in the SSE format expected by OpenAI clients."""
     try:
         response = await process_chat_messages(messages, request, streaming=True)

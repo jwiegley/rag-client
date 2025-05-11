@@ -7,34 +7,30 @@ import hashlib
 import logging
 import os
 import sys
-from llama_index.core.retrievers.fusion_retriever import FUSION_MODES
-import psycopg2
-import numpy as np
-
-from llama_index.core.base.response.schema import RESPONSE_TYPE
-from llama_index.core.response_synthesizers import ResponseMode
-
 from collections.abc import Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
+from dataclass_wizard import YAMLWizard
 from functools import cache
-from orgparse.node import OrgNode
 from pathlib import Path
-from typed_argparse import TypedArgs
 from typing import (
     Any,
+    Generic,
     Literal,
     NoReturn,
+    TypeVar,
     cast,
     final,
     no_type_check,
     override,
-    TypeVar,
-    Generic,
 )
-from xdg_base_dirs import xdg_cache_home
 from urllib.parse import urlparse
 
+import numpy as np
+import psycopg2
+from llama_index.core import (
+    load_indices_from_storage,  # pyright: ignore[reportUnknownVariableType]
+)
 from llama_index.core import (
     KeywordTableIndex,
     QueryBundle,
@@ -42,13 +38,10 @@ from llama_index.core import (
     SimpleKeywordTableIndex,
     StorageContext,
     VectorStoreIndex,
-    load_indices_from_storage,  # pyright: ignore[reportUnknownVariableType]
 )
-from llama_index.core.evaluation.guideline import DEFAULT_GUIDELINES
-from llama_index.core.storage.storage_context import DEFAULT_PERSIST_DIR
-from llama_index.core.storage.docstore import SimpleDocumentStore
-from llama_index.core.storage.index_store import SimpleIndexStore
+from llama_index.core.async_utils import DEFAULT_NUM_WORKERS
 from llama_index.core.base.embeddings.base import Embedding
+from llama_index.core.base.response.schema import RESPONSE_TYPE
 from llama_index.core.chat_engine import SimpleChatEngine
 from llama_index.core.chat_engine.context import ContextChatEngine
 from llama_index.core.chat_engine.types import (
@@ -58,6 +51,8 @@ from llama_index.core.chat_engine.types import (
 )
 from llama_index.core.data_structs.data_structs import IndexDict
 from llama_index.core.embeddings import BaseEmbedding
+from llama_index.core.evaluation import GuidelineEvaluator, RelevancyEvaluator
+from llama_index.core.evaluation.guideline import DEFAULT_GUIDELINES
 from llama_index.core.extractors import (
     KeywordExtractor,
     QuestionsAnsweredExtractor,
@@ -67,7 +62,6 @@ from llama_index.core.extractors import (
 from llama_index.core.indices.base import BaseIndex
 from llama_index.core.indices.keyword_table.base import BaseKeywordTableIndex
 from llama_index.core.ingestion import IngestionPipeline
-from llama_index.core.tools import FunctionTool
 from llama_index.core.llms import ChatMessage
 from llama_index.core.llms.llm import LLM
 from llama_index.core.memory import ChatMemoryBuffer, ChatSummaryMemoryBuffer
@@ -82,9 +76,10 @@ from llama_index.core.query_engine import (
     RetryQueryEngine,
     RetrySourceQueryEngine,
 )
-from llama_index.core.evaluation import GuidelineEvaluator, RelevancyEvaluator
 from llama_index.core.readers.base import BaseReader
+from llama_index.core.response_synthesizers import ResponseMode
 from llama_index.core.retrievers import BaseRetriever, QueryFusionRetriever
+from llama_index.core.retrievers.fusion_retriever import FUSION_MODES
 from llama_index.core.schema import (
     BaseNode,
     Document,
@@ -93,27 +88,31 @@ from llama_index.core.schema import (
     TransformComponent,
 )
 from llama_index.core.storage.chat_store import SimpleChatStore
+from llama_index.core.storage.docstore import SimpleDocumentStore
+from llama_index.core.storage.index_store import SimpleIndexStore
+from llama_index.core.storage.storage_context import DEFAULT_PERSIST_DIR
+from llama_index.core.tools import FunctionTool
 from llama_index.core.vector_stores.simple import SimpleVectorStore
-
-from llama_index.embeddings.huggingface import (
-    HuggingFaceEmbedding,
-)
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.embeddings.openai_like import OpenAILikeEmbedding
+from llama_index.indices.managed.bge_m3 import BGEM3Index
 from llama_index.llms.llama_cpp import LlamaCPP
+from llama_index.llms.lmstudio import LMStudio
 from llama_index.llms.ollama import Ollama
 from llama_index.llms.openai import OpenAI
 from llama_index.llms.openai_like import OpenAILike
-from llama_index.llms.perplexity import Perplexity
-from llama_index.llms.lmstudio import LMStudio
 from llama_index.llms.openrouter import OpenRouter
-from llama_index.indices.managed.bge_m3 import BGEM3Index
-from llama_index.vector_stores.postgres import PGVectorStore
+from llama_index.llms.perplexity import Perplexity
 
 # from llama_index.vector_stores.milvus import MilvusVectorStore
 from llama_index.storage.docstore.postgres import PostgresDocumentStore
 from llama_index.storage.index_store.postgres import PostgresIndexStore
+from llama_index.vector_stores.postgres import PGVectorStore
+from orgparse.node import OrgNode
+from typed_argparse import TypedArgs
+from xdg_base_dirs import xdg_cache_home
 
 IndexList = list[BaseIndex[IndexDict]]
 
@@ -223,84 +222,93 @@ def clean_special_tokens(text: str) -> str:
 # Args
 
 
+@dataclass
+class LLMConfig(YAMLWizard):
+    provider: str
+    model: str
+    base_url: str | None = None
+    api_key: str = "fake_key"
+    api_version: str = ""
+
+
+@dataclass
+class Config(YAMLWizard):
+    embedding: LLMConfig | None
+    db_conn: str | None = None
+    query_instruction: str | None = None
+    semantic_splitter_embed_provider: str | None = None
+    semantic_splitter_embed_model: str | None = None
+    semantic_splitter_embed_api_key: str | None = None
+    semantic_splitter_embed_api_version: str | None = None
+    semantic_splitter_embed_base_url: str | None = None
+    semantic_splitter_query_instruction: str | None = None
+    questions_answered: int | None = None
+    questions_answered_provider: str | None = None
+    questions_answered_model: str | None = None
+    questions_answered_api_key: str | None = None
+    questions_answered_api_version: str | None = None
+    questions_answered_base_url: str | None = None
+    hybrid_search: bool = False
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    llm_api_key: str = "fake_key"
+    llm_api_version: str | None = None
+    llm_base_url: str | None = None
+    chat_user: str | None = None
+    metadata_extractor_provider: str | None = None
+    metadata_extractor_model: str | None = None
+    metadata_extractor_api_key: str | None = None
+    metadata_extractor_api_version: str | None = None
+    metadata_extractor_base_url: str | None = None
+    collect_keywords: bool = False
+    keywords_provider: str | None = None
+    keywords_model: str | None = None
+    keywords_api_key: str | None = None
+    keywords_api_version: str | None = None
+    keywords_base_url: str | None = None
+    retries: bool = False
+    source_retries: bool = False
+    evaluator_provider: str | None = None
+    evaluator_model: str | None = None
+    evaluator_api_key: str | None = None
+    evaluator_api_version: str | None = None
+    evaluator_base_url: str | None = None
+    summarize_chat: bool = False
+    num_workers: int = DEFAULT_NUM_WORKERS
+    streaming: bool = False
+    hnsw_m: int = 16
+    hnsw_ef_construction: int = 64
+    hnsw_ef_search: int = 40
+    hnsw_dist_method: str = "vector_cosine_ops"
+    embed_dim: int = 512
+    chunk_size: int = 512
+    chunk_overlap: int = 20
+    splitter: str = "Sentence"
+    code_language: str = "python"
+    code_chunk_lines: int = 40
+    code_chunk_lines_overlap: int = 15
+    code_max_chars: int = 1500
+    buffer_size: int = 256
+    breakpoint_percentile_threshold: int = 95
+    window_size: int = 3
+    top_k: int = 3
+    timeout: int = 60
+    temperature: float = 1.0
+    max_tokens: int = 200
+    context_window: int = 2048
+    reasoning_effort: Literal["low", "medium", "high"] = "medium"
+    gpu_layers: int = -1
+    token_limit: int = 1500
+    recursive: bool = False
+    host: str = "localhost"
+    port: int = 8000
+    reload_server: bool = False
+
+
 class Args(TypedArgs):
-    config: str | None
-    verbose: bool
-    db_conn: str | None
-    hnsw_m: int
-    hnsw_ef_construction: int
-    hnsw_ef_search: int
-    hnsw_dist_method: str
-    embed_provider: str | None
-    embed_model: str | None
-    embed_api_key: str | None
-    embed_api_version: str | None
-    embed_base_url: str | None
-    embed_dim: int
-    query_instruction: str | None
-    chunk_size: int
-    chunk_overlap: int
-    splitter: str
-    semantic_splitter_embed_provider: str | None
-    semantic_splitter_embed_model: str | None
-    semantic_splitter_embed_api_key: str | None
-    semantic_splitter_embed_api_version: str | None
-    semantic_splitter_embed_base_url: str | None
-    semantic_splitter_query_instruction: str | None
-    code_language: str
-    code_chunk_lines: int
-    code_chunk_lines_overlap: int
-    code_max_chars: int
-    buffer_size: int
-    breakpoint_percentile_threshold: int
-    window_size: int
-    questions_answered: int | None
-    questions_answered_provider: str | None
-    questions_answered_model: str | None
-    questions_answered_api_key: str | None
-    questions_answered_api_version: str | None
-    questions_answered_base_url: str | None
-    hybrid_search: bool
-    top_k: int
-    llm_provider: str | None
-    llm_model: str | None
-    llm_api_key: str
-    llm_api_version: str | None
-    llm_base_url: str | None
-    streaming: bool
-    timeout: int
-    temperature: float
-    max_tokens: int
-    context_window: int
-    reasoning_effort: Literal["low", "medium", "high"]
-    gpu_layers: int
-    chat_user: str | None
-    token_limit: int
     from_: str | None
-    recursive: bool
-    metadata_extractor_provider: str | None
-    metadata_extractor_model: str | None
-    metadata_extractor_api_key: str | None
-    metadata_extractor_api_version: str | None
-    metadata_extractor_base_url: str | None
-    collect_keywords: bool
-    keywords_provider: str | None
-    keywords_model: str | None
-    keywords_api_key: str | None
-    keywords_api_version: str | None
-    keywords_base_url: str | None
-    retries: bool
-    source_retries: bool
-    evaluator_provider: str | None
-    evaluator_model: str | None
-    evaluator_api_key: str | None
-    evaluator_api_version: str | None
-    evaluator_base_url: str | None
-    summarize_chat: bool
-    num_workers: int
-    host: str
-    port: int
-    reload_server: bool
+    verbose: bool
+    config: str
     command: str
     args: list[str]
 
@@ -487,6 +495,7 @@ class PostgresDetails(Generic[T]):
 
     def unpickle_from_table(self, tablename: str, row_id: int) -> T | NoReturn:
         import pickle
+
         import psycopg2
 
         # Connect to PostgreSQL
@@ -513,6 +522,7 @@ class PostgresDetails(Generic[T]):
 
     def pickle_to_table(self, tablename: str, row_id: int, data: T):
         import pickle
+
         import psycopg2
 
         # Connect to PostgreSQL
@@ -597,10 +607,7 @@ class BGEM3Embedding:
 
 
 @dataclass
-class RAGWorkflow:
-    verbose: bool = False
-    fingerprint: str | None = None
-
+class Models:
     embed_llm: BaseEmbedding | BGEM3Embedding | None = None
     semantic_splitter_embed_llm: BaseEmbedding | BGEM3Embedding | None = None
     llm: LLM | None = None
@@ -609,124 +616,143 @@ class RAGWorkflow:
     keywords_llm: LLM | None = None
     evaluator_llm: LLM | None = None
 
-    storage_context: StorageContext | None = None
-    vector_retriever: BaseRetriever | None = None
-    keyword_retriever: BaseRetriever | None = None
-    retriever: BaseRetriever | None = None
 
-    vector_index: VectorStoreIndex | BGEM3Index | None = None
-    keyword_index: BaseKeywordTableIndex | None = None
-
+@dataclass
+class RAGWorkflow:
+    config: Config
+    fingerprint: str | None = None
     chat_memory: ChatMemoryBuffer | ChatSummaryMemoryBuffer | None = None
     chat_history: list[ChatMessage] | None = None
     chat_engine: BaseChatEngine | None = None
 
-    async def initialize(self, args: Args):
+    async def initialize(self, verbose: bool = False) -> Models:
         embed_llm = (
             self.load_embedding(
-                args.embed_provider,
-                args.embed_model,
-                args.timeout,
-                args.embed_api_key,
-                args.embed_api_version,
-                args.embed_base_url,
-                args.query_instruction,
-                args.num_workers,
+                self.config.embedding.provider,
+                self.config.embedding.model,
+                self.config.timeout,
+                self.config.embedding.api_key,
+                self.config.embedding.api_version,
+                self.config.embedding.base_url,
+                self.config.query_instruction,
+                self.config.num_workers,
+                verbose=verbose,
             )
-            if args.embed_provider and args.embed_model
+            if self.config.embedding
             else awaitable_none()
         )
         semantic_splitter_embed_llm = (
             self.load_embedding(
-                args.semantic_splitter_embed_provider,
-                args.semantic_splitter_embed_model,
-                args.timeout,
-                args.semantic_splitter_embed_api_key,
-                args.semantic_splitter_embed_api_version,
-                args.semantic_splitter_embed_base_url,
-                args.semantic_splitter_query_instruction,
-                args.num_workers,
+                self.config.semantic_splitter_embed_provider,
+                self.config.semantic_splitter_embed_model,
+                self.config.timeout,
+                self.config.semantic_splitter_embed_api_key,
+                self.config.semantic_splitter_embed_api_version,
+                self.config.semantic_splitter_embed_base_url,
+                self.config.semantic_splitter_query_instruction,
+                self.config.num_workers,
+                verbose=verbose,
             )
-            if args.semantic_splitter_embed_provider
-            and args.semantic_splitter_embed_model
+            if self.config.semantic_splitter_embed_provider
+            and self.config.semantic_splitter_embed_model
             else awaitable_none()
         )
         llm = (
             self.load_llm(
-                args.llm_provider,
-                args.llm_model,
-                args.timeout,
-                args.llm_api_key,
-                args.llm_api_version,
-                args.llm_base_url,
-                args,
+                self.config.llm_provider,
+                self.config.llm_model,
+                self.config.timeout,
+                self.config.llm_api_key,
+                self.config.llm_api_version,
+                self.config.llm_base_url,
+                verbose=verbose,
             )
-            if args.llm_provider and args.llm_model
+            if self.config.llm_provider and self.config.llm_model
             else awaitable_none()
         )
         questions_answered_llm = (
             self.load_llm(
-                args.questions_answered_provider,
-                args.questions_answered_model,
-                args.timeout,
-                args.questions_answered_api_key,
-                args.questions_answered_api_version,
-                args.questions_answered_base_url,
-                args,
+                self.config.questions_answered_provider,
+                self.config.questions_answered_model,
+                self.config.timeout,
+                self.config.questions_answered_api_key,
+                self.config.questions_answered_api_version,
+                self.config.questions_answered_base_url,
+                verbose=verbose,
             )
-            if args.questions_answered_provider and args.questions_answered_model
+            if self.config.questions_answered_provider
+            and self.config.questions_answered_model
             else awaitable_none()
         )
         metadata_extractor_llm = (
             self.load_llm(
-                args.metadata_extractor_provider,
-                args.metadata_extractor_model,
-                args.timeout,
-                args.metadata_extractor_api_key,
-                args.metadata_extractor_api_version,
-                args.metadata_extractor_base_url,
-                args,
+                self.config.metadata_extractor_provider,
+                self.config.metadata_extractor_model,
+                self.config.timeout,
+                self.config.metadata_extractor_api_key,
+                self.config.metadata_extractor_api_version,
+                self.config.metadata_extractor_base_url,
+                verbose=verbose,
             )
-            if args.metadata_extractor_provider and args.metadata_extractor_model
+            if self.config.metadata_extractor_provider
+            and self.config.metadata_extractor_model
             else awaitable_none()
         )
         keywords_llm = (
             self.load_llm(
-                args.keywords_provider,
-                args.keywords_model,
-                args.timeout,
-                args.keywords_api_key,
-                args.keywords_api_version,
-                args.keywords_base_url,
-                args,
+                self.config.keywords_provider,
+                self.config.keywords_model,
+                self.config.timeout,
+                self.config.keywords_api_key,
+                self.config.keywords_api_version,
+                self.config.keywords_base_url,
+                verbose=verbose,
             )
-            if args.keywords_provider and args.keywords_model
+            if self.config.keywords_provider and self.config.keywords_model
             else awaitable_none()
         )
         evaluator_llm = (
             self.load_llm(
-                args.evaluator_provider,
-                args.evaluator_model,
-                args.timeout,
-                args.evaluator_api_key,
-                args.evaluator_api_version,
-                args.evaluator_base_url,
-                args,
+                self.config.evaluator_provider,
+                self.config.evaluator_model,
+                self.config.timeout,
+                self.config.evaluator_api_key,
+                self.config.evaluator_api_version,
+                self.config.evaluator_base_url,
+                verbose=verbose,
             )
-            if args.evaluator_provider and args.evaluator_model
+            if self.config.evaluator_provider and self.config.evaluator_model
             else awaitable_none()
         )
 
-        self.embed_llm = await embed_llm
-        self.semantic_splitter_embed_llm = await semantic_splitter_embed_llm
-        self.llm = await llm
-        self.questions_answered_llm = await questions_answered_llm
-        self.metadata_extractor_llm = await metadata_extractor_llm
-        self.keywords_llm = await keywords_llm
-        self.evaluator_llm = await evaluator_llm
+        return Models(
+            embed_llm=await embed_llm,
+            semantic_splitter_embed_llm=await semantic_splitter_embed_llm,
+            llm=await llm,
+            questions_answered_llm=await questions_answered_llm,
+            metadata_extractor_llm=await metadata_extractor_llm,
+            keywords_llm=await keywords_llm,
+            evaluator_llm=await evaluator_llm,
+        )
+
+    @classmethod
+    async def load_config(cls, config: Path) -> Config:
+        if os.path.isfile(config):
+            cfg = Config.from_yaml_file(  # pyright: ignore[reportUnknownMemberType]
+                str(config)
+            )
+            if isinstance(cfg, Config):
+                if cfg.embedding is not None:
+                    if cfg.embedding.provider == "BGEM3":
+                        cfg.embedding.model = "BAAI/bge-m3"
+                return cfg
+            else:
+                error("Config file should define a single Config object")
+        else:
+            error(f"Cannot read config file {config}")
 
     async def postgres_stores(
-        self, uri: str, args: Args
+        self, uri: str
     ) -> tuple[PostgresDocumentStore, PostgresIndexStore, PGVectorStore]:
         logger.info("Create Postgres store objects")
         docstore: PostgresDocumentStore = PostgresDocumentStore.from_uri(
@@ -748,13 +774,13 @@ class RAGWorkflow:
             port=str(details.port),
             user=details.user,
             table_name="vectorstore",
-            embed_dim=args.embed_dim,
-            hybrid_search=args.hybrid_search,
+            embed_dim=self.config.embed_dim,
+            hybrid_search=self.config.hybrid_search,
             hnsw_kwargs={
-                "hnsw_m": args.hnsw_m,
-                "hnsw_ef_construction": args.hnsw_ef_construction,
-                "hnsw_ef_search": args.hnsw_ef_search,
-                "hnsw_dist_method": args.hnsw_dist_method,
+                "hnsw_m": self.config.hnsw_m,
+                "hnsw_ef_construction": self.config.hnsw_ef_construction,
+                "hnsw_ef_search": self.config.hnsw_ef_search,
+                "hnsw_dist_method": self.config.hnsw_dist_method,
             },
         )
         return docstore, index_store, vector_store
@@ -769,13 +795,14 @@ class RAGWorkflow:
         base_url: str | None,
         query_instruction: str | None,
         num_workers: int | None,
+        verbose: bool = False,
     ) -> BaseEmbedding | BGEM3Embedding:
         logger.info(f"Load embedding {provider}:{model}")
         if provider == "HuggingFace":
             return HuggingFaceEmbedding(
                 model_name=model,
                 query_instruction=query_instruction,
-                show_progress_bar=self.verbose,
+                show_progress_bar=verbose,
             )
         elif provider == "Ollama":
             return OllamaEmbedding(
@@ -814,16 +841,16 @@ class RAGWorkflow:
         api_key: str | None,
         api_version: str | None,
         base_url: str | None,
-        args: Args,
+        verbose: bool = False,
     ) -> LLM:
         logger.info(f"Load LLM {provider}:{model}")
         if provider == "Ollama":
             return Ollama(
                 model=model,
                 base_url=base_url or "http://localhost:11434",
-                temperature=args.temperature,
-                max_tokens=args.max_tokens,
-                context_window=args.context_window,
+                temperature=self.config.temperature,
+                max_tokens=self.config.max_tokens,
+                context_window=self.config.context_window,
             )
         elif provider == "OpenAILike":
             return OpenAILike(
@@ -831,10 +858,10 @@ class RAGWorkflow:
                 api_base=base_url or "http://localhost:1234/v1",
                 api_key=api_key or "fake_key",
                 api_version=api_version or "",
-                temperature=args.temperature,
-                max_tokens=args.max_tokens,
-                context_window=args.context_window,
-                reasoning_effort=args.reasoning_effort,
+                temperature=self.config.temperature,
+                max_tokens=self.config.max_tokens,
+                context_window=self.config.context_window,
+                reasoning_effort=self.config.reasoning_effort,
                 timeout=timeout,
             )
         elif provider == "OpenAI":
@@ -843,31 +870,31 @@ class RAGWorkflow:
                 api_key=api_key,
                 api_base=base_url,
                 api_version=api_version,
-                temperature=args.temperature,
-                max_tokens=args.max_tokens,
-                context_window=args.context_window,
-                reasoning_effort=args.reasoning_effort,
+                temperature=self.config.temperature,
+                max_tokens=self.config.max_tokens,
+                context_window=self.config.context_window,
+                reasoning_effort=self.config.reasoning_effort,
                 timeout=timeout,
             )
         elif provider == "LlamaCpp":
             return LlamaCPP(
                 # model_url=model_url,
                 model_path=model,
-                temperature=args.temperature,
-                max_new_tokens=args.max_tokens,
-                context_window=args.context_window,
+                temperature=self.config.temperature,
+                max_new_tokens=self.config.max_tokens,
+                context_window=self.config.context_window,
                 generate_kwargs={},
-                model_kwargs={"n_gpu_layers": args.gpu_layers},
-                verbose=self.verbose,
+                model_kwargs={"n_gpu_layers": self.config.gpu_layers},
+                verbose=verbose,
             )
         elif provider == "Perplexity":
             return Perplexity(
                 model_name=model,
                 api_key=api_key,
-                temperature=args.temperature,
-                max_tokens=args.max_tokens,
-                context_window=args.context_window,
-                reasoning_effort=args.reasoning_effort,
+                temperature=self.config.temperature,
+                max_tokens=self.config.max_tokens,
+                context_window=self.config.context_window,
+                reasoning_effort=self.config.reasoning_effort,
                 # This will determine if the search component is necessary
                 # in this particular context
                 enable_search_classifier=True,
@@ -877,18 +904,18 @@ class RAGWorkflow:
             return OpenRouter(
                 model_name=model,
                 api_key=api_key,
-                temperature=args.temperature,
-                max_tokens=args.max_tokens,
-                context_window=args.context_window,
-                reasoning_effort=args.reasoning_effort,
+                temperature=self.config.temperature,
+                max_tokens=self.config.max_tokens,
+                context_window=self.config.context_window,
+                reasoning_effort=self.config.reasoning_effort,
                 timeout=timeout,
             )
         elif provider == "LMStudio":
             return LMStudio(
                 model_name=model,
                 base_url=base_url or "http://localhost:1234/v1",
-                temperature=args.temperature,
-                context_window=args.context_window,
+                temperature=self.config.temperature,
+                context_window=self.config.context_window,
                 timeout=timeout,
             )
         else:
@@ -921,7 +948,9 @@ class RAGWorkflow:
         ).load_data(num_workers=num_workers)
 
     async def load_splitter(
-        self, model: str, args: Args
+        self,
+        models: Models,
+        splitter_model: str,
     ) -> TransformComponent | NoReturn:
         # Sentence
         # SentenceWindow
@@ -933,25 +962,25 @@ class RAGWorkflow:
         # Html
         # Hierarchical
         # Topic
-        logger.info(f"Load splitter {model}")
-        if model == "Sentence":
+        logger.info(f"Load splitter {splitter_model}")
+        if splitter_model == "Sentence":
             return SentenceSplitter(
-                chunk_size=args.chunk_size,
-                chunk_overlap=args.chunk_overlap,
+                chunk_size=self.config.chunk_size,
+                chunk_overlap=self.config.chunk_overlap,
                 include_metadata=True,
             )
-        elif model == "SentenceWindow":
+        elif splitter_model == "SentenceWindow":
             return SentenceWindowNodeParser.from_defaults(
-                window_size=args.window_size,
+                window_size=self.config.window_size,
                 window_metadata_key="window",
                 original_text_metadata_key="original_text",
             )
-        elif model == "Semantic":
+        elif splitter_model == "Semantic":
             embed_llm = None
-            if self.semantic_splitter_embed_llm is not None:
-                embed_llm = self.semantic_splitter_embed_llm
-            elif self.embed_llm is not None:
-                embed_llm = self.embed_llm
+            if models.semantic_splitter_embed_llm is not None:
+                embed_llm = models.semantic_splitter_embed_llm
+            elif models.embed_llm is not None:
+                embed_llm = models.embed_llm
 
             if embed_llm is None:
                 error("Semantic splitter needs an embedding model")
@@ -960,50 +989,52 @@ class RAGWorkflow:
                 error("Semantic splitter not yet working with BGE-M3")
 
             return SemanticSplitterNodeParser(
-                buffer_size=args.buffer_size,
-                breakpoint_percentile_threshold=args.breakpoint_percentile_threshold,
+                buffer_size=self.config.buffer_size,
+                breakpoint_percentile_threshold=self.config.breakpoint_percentile_threshold,
                 embed_model=embed_llm,
                 include_metadata=True,
             )
-        elif model == "Code":
+        elif splitter_model == "Code":
             return CodeSplitter(
-                language=args.code_language,
-                chunk_lines=args.code_chunk_lines,
-                chunk_lines_overlap=args.code_chunk_lines_overlap,
-                max_chars=args.code_max_chars,
+                language=self.config.code_language,
+                chunk_lines=self.config.code_chunk_lines,
+                chunk_lines_overlap=self.config.code_chunk_lines_overlap,
+                max_chars=self.config.code_max_chars,
             )
         else:
-            error(f"Splitting model not recognized: {model}")
+            error(f"Splitting model not recognized: {splitter_model}")
 
     async def split_documents(
         self,
-        split_model: str,
+        models: Models,
+        splitter_model: str,
         documents: Iterable[Document],
         questions_answered: int | None,
         num_workers: int | None,
-        args: Args,  # jww (2025-05-04): this should not be here
     ) -> Sequence[BaseNode]:
         logger.info("Split documents")
 
-        transformations = [await self.load_splitter(split_model, args)]
+        transformations = [
+            await self.load_splitter(models, splitter_model=splitter_model)
+        ]
 
-        if self.llm is not None:
+        if models.llm is not None:
             transformations.extend(
                 [
                     KeywordExtractor(
                         keywords=5,
-                        llm=self.keywords_llm or self.llm,
-                        num_workers=args.num_workers,
+                        llm=models.keywords_llm or models.llm,
+                        num_workers=self.config.num_workers,
                     ),
                     SummaryExtractor(
                         summaries=["self"],
-                        llm=self.metadata_extractor_llm or self.llm,
-                        num_workers=args.num_workers,
+                        llm=models.metadata_extractor_llm or models.llm,
+                        num_workers=self.config.num_workers,
                     ),
                     TitleExtractor(
                         nodes=5,
-                        llm=self.metadata_extractor_llm or self.llm,
-                        num_workers=args.num_workers,
+                        llm=models.metadata_extractor_llm or models.llm,
+                        num_workers=self.config.num_workers,
                     ),
                 ]
             )
@@ -1012,8 +1043,8 @@ class RAGWorkflow:
                 transformations.append(
                     QuestionsAnsweredExtractor(
                         questions=questions_answered,
-                        llm=self.questions_answered_llm or self.llm,
-                        num_workers=args.num_workers,
+                        llm=models.questions_answered_llm or models.llm,
+                        num_workers=self.config.num_workers,
                     )
                 )
 
@@ -1022,9 +1053,11 @@ class RAGWorkflow:
 
     async def populate_vector_store(
         self,
+        models: Models,
         nodes: Sequence[BaseNode],
         collect_keywords: bool,
         storage_context: StorageContext,
+        verbose: bool = False,
     ) -> tuple[VectorStoreIndex | BGEM3Index, BaseKeywordTableIndex | None]:
         logger.info("Populate vector store")
 
@@ -1032,24 +1065,24 @@ class RAGWorkflow:
         for struct in index_structs:
             storage_context.index_store.delete_index_struct(key=struct.index_id)
 
-        if isinstance(self.embed_llm, BGEM3Embedding):
+        if isinstance(models.embed_llm, BGEM3Embedding):
             vector_index = BGEM3Index(
                 nodes,
                 storage_context=storage_context,
                 weights_for_different_modes=[0.4, 0.2, 0.4],
-                show_progress=self.verbose,
+                show_progress=verbose,
             )
         else:
             vector_index = VectorStoreIndex(
                 nodes,
                 storage_context=storage_context,
-                embed_model=self.embed_llm,
-                show_progress=self.verbose,
+                embed_model=models.embed_llm,
+                show_progress=verbose,
                 use_async=True,
             )
 
         if collect_keywords:
-            if self.llm is None:
+            if models.llm is None:
                 keyword_index = SimpleKeywordTableIndex(
                     nodes, storage_context=storage_context
                 )
@@ -1057,7 +1090,7 @@ class RAGWorkflow:
                 keyword_index = KeywordTableIndex(
                     nodes,
                     storage_context=storage_context,
-                    llm=self.keywords_llm or self.llm,
+                    llm=models.keywords_llm or models.llm,
                 )
         else:
             keyword_index = None
@@ -1065,35 +1098,44 @@ class RAGWorkflow:
         return vector_index, keyword_index
 
     # global Settings
-    # Settings.llm = self.llm
-    # Settings.embed_model = self.embed_llm
-    # Settings.chunk_size = args.chunk_size
-    # Settings.chunk_overlap = args.chunk_overlap
+    # Settings.llm = models.llm
+    # Settings.embed_model = models.embed_llm
+    # Settings.chunk_size = self.config.chunk_size
+    # Settings.chunk_overlap = self.config.chunk_overlap
 
     async def index_files(
         self,
+        models: Models,
         input_files: list[Path] | None,
-        splitter: str,
+        splitter_model: str,
         collect_keywords: bool,
         questions_answered: int | None,
         num_workers: int | None,
-        args: Args,  # jww (2025-05-04): Should not be here
-    ):
+        verbose: bool = False,
+    ) -> tuple[
+        VectorStoreIndex | BGEM3Index | None,
+        BaseKeywordTableIndex | None,
+    ]:
+        persist_dir: Path | None = None
+        vector_index: VectorStoreIndex | BGEM3Index | None = None
+        keyword_index: BaseKeywordTableIndex | None = None
+
         if input_files is None:
             logger.info("No input files")
-            persist_dir = None
+        elif self.config.embedding is None:
+            logger.info("No embedding model")
         else:
             logger.info(f"{len(input_files)} input file(s)")
             fp: str = await self.determine_fingerprint(
-                input_files, args.embed_model or "", args.embed_dim
+                input_files, self.config.embedding.model, self.config.embed_dim
             )
             logger.info(f"Fingerprint = {fp}")
             persist_dir = cache_dir(fp)
             self.fingerprint = fp
 
-        if args.db_conn is not None:
+        if self.config.db_conn is not None:
             docstore, index_store, vector_store = await self.postgres_stores(
-                uri=args.db_conn, args=args
+                uri=self.config.db_conn
             )
         elif persist_dir is not None and os.path.isdir(persist_dir):
             docstore = SimpleDocumentStore.from_persist_dir(str(persist_dir))
@@ -1104,7 +1146,7 @@ class RAGWorkflow:
             index_store = SimpleIndexStore()
             vector_store = SimpleVectorStore()
 
-        self.storage_context = StorageContext.from_defaults(
+        storage_context = StorageContext.from_defaults(
             docstore=docstore,
             index_store=index_store,
             vector_store=vector_store,
@@ -1115,37 +1157,37 @@ class RAGWorkflow:
 
         persisted = persist_dir is not None and os.path.isdir(persist_dir)
 
-        if args.db_conn is not None or persisted:
+        if self.config.db_conn is not None or persisted:
             try:
-                if args.db_conn is not None:
+                if self.config.db_conn is not None:
                     logger.info("Read indices from database")
                 else:
                     logger.info("Read indices from cache")
 
-                if isinstance(self.embed_llm, BGEM3Embedding):
-                    if args.db_conn is not None:
+                if isinstance(models.embed_llm, BGEM3Embedding):
+                    if self.config.db_conn is not None:
                         error("BGE-M3 not current compatible with databases")
                         # logger.info("Read BGE-M3 index from database")
                         # self.vector_index = BGEM3Embedding.load_from_postgres(
-                        #     uri=args.db_conn,
+                        #     uri=self.config.db_conn,
                         #     storage_context=self.storage_context,
                         #     weights_for_different_modes=[0.4, 0.2, 0.4],
                         # )
                     else:
                         logger.info("Read BGE-M3 index from cache")
-                        self.vector_index = BGEM3Index.load_from_disk(
+                        vector_index = BGEM3Index.load_from_disk(
                             persist_dir=str(persist_dir),
                             weights_for_different_modes=[0.4, 0.2, 0.4],
                         )
                 else:
                     indices: IndexList = load_indices_from_storage(
-                        storage_context=self.storage_context,
+                        storage_context=storage_context,
                         embed_model=(
-                            self.embed_llm
-                            if not isinstance(self.embed_llm, BGEM3Embedding)
+                            models.embed_llm
+                            if not isinstance(models.embed_llm, BGEM3Embedding)
                             else None
                         ),
-                        llm=self.llm,
+                        llm=models.llm,
                         index_ids=(
                             ["vector_index", "keyword_index"]
                             if collect_keywords
@@ -1153,144 +1195,160 @@ class RAGWorkflow:
                         ),
                     )
                     if collect_keywords:
-                        [vector_index, keyword_index] = indices
-                        self.vector_index = cast(VectorStoreIndex, vector_index)
-                        self.keyword_index = cast(BaseKeywordTableIndex, keyword_index)
+                        [vi, ki] = indices
+                        vector_index = cast(VectorStoreIndex, vi)
+                        keyword_index = cast(BaseKeywordTableIndex, ki)
                     else:
-                        [vector_index] = indices
-                        self.vector_index = cast(VectorStoreIndex, vector_index)
-                        self.keyword_index = None
+                        [vi] = indices
+                        vector_index = cast(VectorStoreIndex, vi)
+                        keyword_index = None
 
             except ValueError:
                 logger.info("Failed to read indices")
-                self.vector_index = None
-                self.keyword_index = None
 
         if input_files is not None and not persisted:
             documents = await self.read_documents(
-                input_files, num_workers=args.num_workers
+                input_files, num_workers=self.config.num_workers
             )
 
             nodes = await self.split_documents(
-                splitter,
+                models,
+                splitter_model,
                 documents,
                 questions_answered=questions_answered,
                 num_workers=num_workers,
-                args=args,
             )
 
-            self.vector_index, self.keyword_index = await self.populate_vector_store(
+            vector_index, keyword_index = await self.populate_vector_store(
+                models,
                 nodes,
                 collect_keywords=collect_keywords,
-                storage_context=self.storage_context,
+                storage_context=storage_context,
+                verbose=verbose,
             )
 
-            self.vector_index.set_index_id("vector_index")
-            if self.keyword_index is not None:
-                self.keyword_index.set_index_id("keyword_index")
+            vector_index.set_index_id("vector_index")
+            if keyword_index is not None:
+                keyword_index.set_index_id("keyword_index")
 
-            await self.save_indices(persist_dir, args)
+            await self.save_indices(
+                storage_context, vector_index, persist_dir=persist_dir
+            )
+
+        return (vector_index, keyword_index)
 
     async def save_indices(
         self,
+        storage_context: StorageContext,
+        vector_index: VectorStoreIndex | BGEM3Index,
         persist_dir: Path | None,
-        args: Args,  # jww (2025-05-04): Should not be here
     ):
-        if args.db_conn is not None:
-            if self.vector_index is not None:
-                if isinstance(self.vector_index, BGEM3Index):
-                    logger.info("Persist BGE-M3 index to database")
-                    BGEM3Embedding.persist_to_postgres(
-                        args.db_conn,
-                        self.vector_index,
-                    )
+        if self.config.db_conn is not None:
+            if isinstance(vector_index, BGEM3Index):
+                logger.info("Persist BGE-M3 index to database")
+                BGEM3Embedding.persist_to_postgres(
+                    self.config.db_conn,
+                    vector_index,
+                )
         elif persist_dir is not None:
-            if self.vector_index is not None:
-                if isinstance(self.vector_index, BGEM3Index):
-                    logger.info("Persist storage context and BGE-M3 index")
-                    self.vector_index.persist(persist_dir=str(persist_dir))
-                elif self.storage_context is not None:
-                    logger.info("Persist storage context to disk")
-                    self.storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
-                        persist_dir=str(persist_dir)
-                    )
+            if isinstance(vector_index, BGEM3Index):
+                logger.info("Persist storage context and BGE-M3 index")
+                vector_index.persist(persist_dir=str(persist_dir))
+            logger.info("Persist storage context to disk")
+            storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
+                persist_dir=str(persist_dir)
+            )
 
-    async def load_retriever(self, args: Args):
-        if self.vector_index is not None:
-            if args.db_conn is not None and args.hybrid_search:
+    async def load_retriever(
+        self,
+        models: Models,
+        indices: tuple[
+            VectorStoreIndex | BGEM3Index | None,
+            BaseKeywordTableIndex | None,
+        ],
+    ) -> BaseRetriever | None:
+        vector_index, keyword_index = indices
+        vector_retriever, keyword_retriever = None, None
+
+        if vector_index is not None:
+            if self.config.db_conn is not None and self.config.hybrid_search:
                 logger.info("Create fusion vector retriever")
-                vector_retriever = self.vector_index.as_retriever(
+                vector_retriever = vector_index.as_retriever(
                     vector_store_query_mode="default",
                     similarity_top_k=5,
                 )
-                text_retriever = self.vector_index.as_retriever(
+                text_retriever = vector_index.as_retriever(
                     vector_store_query_mode="sparse",
                     similarity_top_k=5,  # interchangeable with sparse_top_k
                 )
                 # jww (2025-05-08): Make more of these configurable
-                self.vector_retriever = QueryFusionRetriever(
+                vector_retriever = QueryFusionRetriever(
                     [vector_retriever, text_retriever],
-                    similarity_top_k=args.top_k,
+                    similarity_top_k=self.config.top_k,
                     num_queries=1,  # set this to 1 to disable query generation
                     mode=FUSION_MODES.RELATIVE_SCORE,
-                    llm=self.llm,
+                    llm=models.llm,
                     use_async=True,
                 )
             else:
                 logger.info("Create vector retriever")
-                self.vector_retriever = self.vector_index.as_retriever(
-                    similarity_top_k=args.top_k
+                vector_retriever = vector_index.as_retriever(
+                    similarity_top_k=self.config.top_k
                 )
-        if self.keyword_index is not None:
+        if keyword_index is not None:
             logger.info("Create keyword retriever")
-            self.keyword_retriever = self.keyword_index.as_retriever()
+            keyword_retriever = keyword_index.as_retriever()
 
-        if self.vector_retriever is not None:
-            if self.keyword_retriever is not None:
+        if vector_retriever is not None:
+            if keyword_retriever is not None:
                 logger.info("Create aggregate custom retriever")
-                self.retriever = CustomRetriever(
-                    vector_retriever=self.vector_retriever,
-                    keyword_retriever=self.keyword_retriever,
+                retriever = CustomRetriever(
+                    vector_retriever=vector_retriever,
+                    keyword_retriever=keyword_retriever,
                 )
             else:
-                self.retriever = self.vector_retriever
+                retriever = vector_retriever
         else:
-            if self.keyword_retriever is not None:
-                self.retriever = self.keyword_retriever
+            if keyword_retriever is not None:
+                retriever = keyword_retriever
+            else:
+                retriever = None
 
-    async def retrieve_nodes(self, text: str) -> list[dict[str, Any]]:
-        if self.retriever is None:
-            logger.info("No retriever")
-            return []
-        else:
-            logger.info("Retrieve nodes from vector index")
-            nodes = await self.retriever.aretrieve(text)
-            logger.info(f"{len(nodes)} nodes found in vector index")
-            return [
-                {
-                    "text": node.text,
-                    "metadata": node.metadata,
-                }
-                for node in nodes
-            ]
+        return retriever
+
+    async def retrieve_nodes(
+        self, retriever: BaseRetriever, text: str
+    ) -> list[dict[str, Any]]:
+        logger.info("Retrieve nodes from vector index")
+        nodes = await retriever.aretrieve(text)
+        logger.info(f"{len(nodes)} nodes found in vector index")
+        return [
+            {
+                "text": node.text,
+                "metadata": node.metadata,
+            }
+            for node in nodes
+        ]
 
     # Query a document collection
     async def query(
         self,
+        models: Models,
+        retriever: BaseRetriever | None,
         query: str,
         streaming: bool = False,
         retries: bool = False,
         source_retries: bool = False,
     ) -> RESPONSE_TYPE | NoReturn:
-        if self.retriever is None:
+        if retriever is None:
             error("There is no retriever configured to query")
-        if self.llm is None:
+        if models.llm is None:
             error("There is no LLM configured to chat with")
 
         logger.info("Query with retriever query engine")
         query_engine = RetrieverQueryEngine.from_args(
-            retriever=self.retriever,
-            llm=self.llm,
+            retriever=retriever,
+            llm=models.llm,
             use_async=True,
             streaming=streaming,
             # response_mode=ResponseMode.REFINE,
@@ -1306,11 +1364,11 @@ class RAGWorkflow:
 
         if retries or source_retries:
             relevancy_evaluator = RelevancyEvaluator(
-                llm=self.evaluator_llm or self.llm,
+                llm=models.evaluator_llm or models.llm,
             )
             # jww (2025-05-04): Allow using different evaluators
             _guideline_evaluator = GuidelineEvaluator(
-                llm=self.evaluator_llm or self.llm,
+                llm=models.evaluator_llm or models.llm,
                 guidelines=DEFAULT_GUIDELINES
                 + "\nThe response should not be overly long.\n"
                 + "The response should try to summarize where possible.\n",
@@ -1320,7 +1378,7 @@ class RAGWorkflow:
                 query_engine = RetrySourceQueryEngine(
                     query_engine,
                     evaluator=relevancy_evaluator,
-                    llm=self.llm,
+                    llm=models.llm,
                 )
             else:
                 logger.info("Add retry query engine")
@@ -1338,6 +1396,8 @@ class RAGWorkflow:
     # Chat with the LLM, possibly in the context of a document collection
     async def chat(
         self,
+        models: Models,
+        retriever: BaseRetriever | None,
         user: str,
         query: str,
         token_limit: int,
@@ -1345,7 +1405,7 @@ class RAGWorkflow:
         summarize_chat: bool = False,
         streaming: bool = False,
     ) -> StreamingAgentChatResponse | AgentChatResponse | NoReturn:
-        if self.llm is None:
+        if models.llm is None:
             error("There is no LLM configured to chat with")
 
         if self.chat_memory is None and chat_store is not None:
@@ -1359,27 +1419,27 @@ class RAGWorkflow:
                     ),
                     chat_store=chat_store,
                     chat_story_key=user,
-                    llm=self.llm,
+                    llm=models.llm,
                 )
             else:
                 self.chat_memory = ChatMemoryBuffer.from_defaults(  # pyright: ignore[reportUnknownMemberType]
                     token_limit=token_limit,
                     chat_store=chat_store,
                     chat_store_key=user,
-                    llm=self.llm,
+                    llm=models.llm,
                 )
 
         if self.chat_engine is None:
-            if self.retriever is None:
+            if retriever is None:
                 self.chat_engine = SimpleChatEngine.from_defaults(
-                    llm=self.llm,
+                    llm=models.llm,
                     memory=self.chat_memory,
                     system_prompt="You are a helpful AI assistant.",
                 )
             else:
                 self.chat_engine = ContextChatEngine.from_defaults(
-                    retriever=self.retriever,
-                    llm=self.llm,
+                    retriever=retriever,
+                    llm=models.llm,
                     memory=self.chat_memory,
                     system_prompt="You are a helpful AI assistant.",
                 )
@@ -1421,26 +1481,33 @@ def query_perplexity_tool() -> FunctionTool:
     return FunctionTool.from_defaults(fn=query_perplexity)
 
 
-async def rag_initialize(args: Args) -> RAGWorkflow:
+async def rag_initialize(
+    args: Args,
+) -> tuple[RAGWorkflow, Models, BaseRetriever | None]:
+    config = await RAGWorkflow.load_config(Path(args.config))
+
     if args.from_:
-        input_files = read_files(args.from_, args.recursive)
+        input_files = read_files(args.from_, config.recursive)
     else:
         input_files = awaitable_none()
 
-    rag = RAGWorkflow(verbose=args.verbose)
+    rag = RAGWorkflow(config)
 
-    await rag.initialize(args)
-    await rag.index_files(
-        input_files=await input_files,
-        splitter=args.splitter,
-        collect_keywords=args.collect_keywords,
-        questions_answered=args.questions_answered,
-        num_workers=args.num_workers,
-        args=args,
+    models = await rag.initialize(
+        verbose=args.verbose,
     )
-    await rag.load_retriever(args=args)
+    indices = await rag.index_files(
+        models=models,
+        input_files=await input_files,
+        splitter_model=config.splitter,
+        collect_keywords=config.collect_keywords,
+        questions_answered=config.questions_answered,
+        num_workers=config.num_workers,
+        verbose=args.verbose,
+    )
+    retriever = await rag.load_retriever(models, indices)
 
-    return rag
+    return (rag, models, retriever)
 
 
 def rebuild_postgres_db(db_name: str):

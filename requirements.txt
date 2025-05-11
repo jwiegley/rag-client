@@ -30,3 +30,4 @@ xdg-base-dirs>=6.0.2
 typed-argparse>=0.3.1
 fastapi>=0.115.12
 uvicorn>=0.34.2
+dataclass-wizard>=0.35.0
