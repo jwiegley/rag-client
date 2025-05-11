@@ -51,18 +51,42 @@ FunctionsType = list[dict[str, Any | None]] | None  # pyright: ignore[reportExpl
 
 
 class ChatCompletionRequest(BaseModel):
-    model: str
+    "https://platform.openai.com/docs/api-reference/chat/create"
+    # jww (2025-05-11): Support all request fields
     messages: list[Message]
-    temperature: float | None = 0.7
-    top_p: float | None = 1.0
-    n: int | None = 1
-    stream: bool | None = False
-    max_tokens: int | None = None
-    presence_penalty: float | None = 0
+    model: str
+    # audio
     frequency_penalty: float | None = 0
-    functions: FunctionsType = None
     function_call: str | dict[str, str | None] | None = None
+    # ^ instead use tool_choice
+    functions: FunctionsType = None
+    # ^ instead use tools
+    # logit_bias
+    # logprobs
+    # max_completion_tokens
+    max_tokens: int | None = None
+    # ^ instead use max_completion_tokens
+    # metadata
+    # modalities
+    n: int | None = 1
+    # parallel_tool_calls
+    # prediction
+    presence_penalty: float | None = 0
+    # reasoning_effort: str | None = None
+    # response_format
+    # seed
+    # service_tier
+    # stop
+    # store
+    stream: bool | None = False
+    # stream_options
+    temperature: float | None = 0.7
+    # tool_choice
+    # tools
+    # top_logprobs
+    top_p: float | None = 1.0
     user: str | None = None
+    # web_search_options
 
 
 class CompletionRequest(BaseModel):
@@ -101,6 +125,10 @@ def verify_api_key(authorization: str | None = None):
 
     return api_key
 
+
+# jww (2025-05-11): Implement the rest of the OpenAI API
+# For example: @api.get("/v1/chat/completions")
+# This should list stored chat completions
 
 # Chat completions endpoint
 @api.post("/v1/chat/completions")
@@ -268,8 +296,7 @@ async def list_models(
 # Helper functions for processing requests
 async def process_chat_messages(
     messages: Sequence[ChatMessage],
-    _request: ChatCompletionRequest,
-    streaming: bool,
+    request: ChatCompletionRequest,
 ) -> StreamingAgentChatResponse | AgentChatResponse | NoReturn:
     """Process chat messages with your custom logic."""
     user_message = next((msg for msg in messages if msg.role == "user"), None)
@@ -289,11 +316,11 @@ async def process_chat_messages(
     return await workflow.chat(
         models,
         retriever,
-        user="user1",
+        user=request.user or "user1",
         query=user_message.content or "",
         token_limit=token_limit,
         chat_store=chat_store,
-        streaming=streaming,
+        streaming=request.stream or False,
     )
 
 

@@ -3,7 +3,7 @@
 embedding:
   provider: "BGEM3"
   model: "BAAI/bge-m3"
-embed_dim: 1024
+  dimensions: 1024
 # chunk_size: 2048
 # chunk_overlap: 256
 chunk_size: 2048
@@ -17,6 +17,8 @@ questions_answered: 3
 source_retries: false
 streaming: true
 # hybrid_search: true
-llm_provider: "OpenAILike"
-llm_model: "Falcon3-10B-Instruct"
-llm_base_url: "http://localhost:8080/v1"
+llm:
+  provider: "OpenAILike"
+  model: "Falcon3-10B-Instruct"
+  # base_url: "http://localhost:8080/v1"
+  base_url: "http://192.168.50.5:8080/v1"
