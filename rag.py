@@ -1100,8 +1100,15 @@ class RAGWorkflow:
                     )
                 )
 
+        # jww (2025-05-11): Use RedisCache here, if configured
+        # ingest_cache = IngestionCache(
+        #     cache=RedisCache.from_host_and_port(host="127.0.0.1", port=6379),
+        #     collection="my_test_cache",
+        # )
+
         pipeline: IngestionPipeline = IngestionPipeline(
             transformations=transformations,
+            # cache=ingest_cache,
         )
         return await pipeline.arun(
             documents=documents,
