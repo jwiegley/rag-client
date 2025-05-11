@@ -157,13 +157,20 @@ async def list_files(directory: Path, recursive: bool = False) -> list[Path]:
         return [
             directory / f
             for f in files
-            if await asyncio.to_thread(os.path.isfile, os.path.join(directory, f))
+            if await asyncio.to_thread(
+                os.path.isfile,
+                os.path.join(directory, f),
+            )
         ]
 
 
-async def read_files(read_from: str, recursive: bool = False) -> list[Path] | NoReturn:
+async def read_files(
+    read_from: str,
+    recursive: bool = False,
+) -> list[Path] | NoReturn:
     if read_from == "-":
-        # Reading from stdin is still blocking; consider using asyncio streams if needed
+        # Reading from stdin is still blocking; consider using asyncio streams
+        # if needed
         input_files = [Path(line.strip()) for line in sys.stdin if line.strip()]
         if not input_files:
             error("No filenames provided on standard input")
@@ -328,7 +335,12 @@ class OrgReader(BaseReader):
     @no_type_check
     def node_to_document(self, node: Node, extra_info):
         """Convert org node to document."""
-        text = "\n".join(get_text_from_org_node(node, format=self.text_formatting))
+        text = "\n".join(
+            get_text_from_org_node(
+                node,
+                format=self.text_formatting,
+            )
+        )
         extra_info = deepcopy(extra_info or {})
         for prop, value in node.properties.items():
             extra_info["org_property_" + prop] = value
@@ -492,7 +504,7 @@ class PostgresDetails(Generic[T]):
                 )
                 row = cur.fetchone()
                 if row is None:
-                    error(f"Data not available in table {tablename} row {row_id}")
+                    error(f"Data not in table {tablename} row {row_id}")
 
                 binary_data = row[0]  # pyright: ignore[reportAny]
                 if isinstance(binary_data, memoryview):
@@ -619,6 +631,7 @@ class RAGWorkflow:
                 args.embed_api_version,
                 args.embed_base_url,
                 args.query_instruction,
+                args.num_workers,
             )
             if args.embed_provider and args.embed_model
             else awaitable_none()
@@ -632,6 +645,7 @@ class RAGWorkflow:
                 args.semantic_splitter_embed_api_version,
                 args.semantic_splitter_embed_base_url,
                 args.semantic_splitter_query_instruction,
+                args.num_workers,
             )
             if args.semantic_splitter_embed_provider
             and args.semantic_splitter_embed_model
@@ -754,6 +768,7 @@ class RAGWorkflow:
         api_version: str | None,
         base_url: str | None,
         query_instruction: str | None,
+        num_workers: int | None,
     ) -> BaseEmbedding | BGEM3Embedding:
         logger.info(f"Load embedding {provider}:{model}")
         if provider == "HuggingFace":
@@ -784,6 +799,7 @@ class RAGWorkflow:
                 api_version=api_version,
                 api_base=base_url,
                 timeout=timeout,
+                num_workers=num_workers,
             )
         elif provider == "BGEM3":
             return BGEM3Embedding()
@@ -974,21 +990,30 @@ class RAGWorkflow:
         if self.llm is not None:
             transformations.extend(
                 [
-                    KeywordExtractor(keywords=5, llm=self.keywords_llm or self.llm),
+                    KeywordExtractor(
+                        keywords=5,
+                        llm=self.keywords_llm or self.llm,
+                        num_workers=args.num_workers,
+                    ),
                     SummaryExtractor(
-                        summaries=["self"], llm=self.metadata_extractor_llm or self.llm
+                        summaries=["self"],
+                        llm=self.metadata_extractor_llm or self.llm,
+                        num_workers=args.num_workers,
                     ),
                     TitleExtractor(
-                        nodes=5, llm=self.metadata_extractor_llm or self.llm
+                        nodes=5,
+                        llm=self.metadata_extractor_llm or self.llm,
+                        num_workers=args.num_workers,
                     ),
                 ]
             )
             if questions_answered is not None:
-                logger.info(f"Generate {questions_answered} questions for each chunk")
+                logger.info(f"Generate {questions_answered} questions/chunk")
                 transformations.append(
                     QuestionsAnsweredExtractor(
                         questions=questions_answered,
                         llm=self.questions_answered_llm or self.llm,
+                        num_workers=args.num_workers,
                     )
                 )
 
@@ -1020,6 +1045,7 @@ class RAGWorkflow:
                 storage_context=storage_context,
                 embed_model=self.embed_llm,
                 show_progress=self.verbose,
+                use_async=True,
             )
 
         if collect_keywords:
@@ -1159,6 +1185,10 @@ class RAGWorkflow:
                 storage_context=self.storage_context,
             )
 
+            self.vector_index.set_index_id("vector_index")
+            if self.keyword_index is not None:
+                self.keyword_index.set_index_id("keyword_index")
+
             await self.save_indices(persist_dir, args)
 
     async def save_indices(
@@ -1170,13 +1200,12 @@ class RAGWorkflow:
             if self.vector_index is not None:
                 if isinstance(self.vector_index, BGEM3Index):
                     logger.info("Persist BGE-M3 index to database")
-                    BGEM3Embedding.persist_to_postgres(args.db_conn, self.vector_index)
+                    BGEM3Embedding.persist_to_postgres(
+                        args.db_conn,
+                        self.vector_index,
+                    )
         elif persist_dir is not None:
             if self.vector_index is not None:
-                self.vector_index.set_index_id("vector_index")
-                if self.keyword_index is not None:
-                    self.keyword_index.set_index_id("keyword_index")
-
                 if isinstance(self.vector_index, BGEM3Index):
                     logger.info("Persist storage context and BGE-M3 index")
                     self.vector_index.persist(persist_dir=str(persist_dir))
@@ -1196,7 +1225,7 @@ class RAGWorkflow:
                 )
                 text_retriever = self.vector_index.as_retriever(
                     vector_store_query_mode="sparse",
-                    similarity_top_k=5,  # interchangeable with sparse_top_k in this context
+                    similarity_top_k=5,  # interchangeable with sparse_top_k
                 )
                 # jww (2025-05-08): Make more of these configurable
                 self.vector_retriever = QueryFusionRetriever(
@@ -1237,7 +1266,13 @@ class RAGWorkflow:
             logger.info("Retrieve nodes from vector index")
             nodes = await self.retriever.aretrieve(text)
             logger.info(f"{len(nodes)} nodes found in vector index")
-            return [{"text": node.text, "metadata": node.metadata} for node in nodes]
+            return [
+                {
+                    "text": node.text,
+                    "metadata": node.metadata,
+                }
+                for node in nodes
+            ]
 
     # Query a document collection
     async def query(
@@ -1270,7 +1305,9 @@ class RAGWorkflow:
         )
 
         if retries or source_retries:
-            relevancy_evaluator = RelevancyEvaluator(llm=self.evaluator_llm or self.llm)
+            relevancy_evaluator = RelevancyEvaluator(
+                llm=self.evaluator_llm or self.llm,
+            )
             # jww (2025-05-04): Allow using different evaluators
             _guideline_evaluator = GuidelineEvaluator(
                 llm=self.evaluator_llm or self.llm,
@@ -1363,9 +1400,9 @@ def query_perplexity(query: str) -> str:
     Queries the Perplexity API via the LlamaIndex integration.
 
     This function instantiates a Perplexity LLM with updated default settings
-    (using model "sonar-pro" and enabling search classifier so that the API can
-    intelligently decide if a search is needed), wraps the query into a ChatMessage,
-    and returns the generated response content.
+    (using model "sonar-pro" and enabling search classifier so that the API
+    can intelligently decide if a search is needed), wraps the query into a
+    ChatMessage, and returns the generated response content.
     """
     pplx_api_key = "your-perplexity-api-key"  # Replace with your actual API key
 
