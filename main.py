@@ -7,6 +7,7 @@ import logging
 import sys
 import argparse
 
+from typed_argparse import TypedArgs
 from xdg_base_dirs import xdg_config_home
 
 from llama_index.core.base.response.schema import (
@@ -22,6 +23,32 @@ from llama_index.core.storage.chat_store import SimpleChatStore
 
 from rag import *
 import api
+
+
+class Args(TypedArgs):
+    from_: str | None
+    verbose: bool
+    config: str
+    command: str
+    args: list[str]
+
+
+def parse_args(arguments: list[str] = sys.argv[1:]) -> Args:
+    parser = argparse.ArgumentParser()
+
+    _ = parser.add_argument(
+        "--from", dest="from_", type=str, help="Where to read files from (optional)"
+    )
+    _ = parser.add_argument("--verbose", action="store_true", help="Verbose?")
+    _ = parser.add_argument(
+        "--config", "-c", type=str, help="Yaml config file, to set argument defaults"
+    )
+    _ = parser.add_argument("command")
+    _ = parser.add_argument("args", nargs=argparse.REMAINDER)
+
+    _ = parser.parse_known_args(arguments)
+
+    return Args.from_argparse(parser.parse_args())
 
 
 async def search_command(rag: RAGWorkflow, retriever: BaseRetriever, query: str):
@@ -153,24 +180,6 @@ async def rag_client(
             error(f"Command unrecognized: {args.command}")
 
 
-def parse_args(arguments: list[str] = sys.argv[1:]) -> Args:
-    parser = argparse.ArgumentParser()
-
-    _ = parser.add_argument(
-        "--from", dest="from_", type=str, help="Where to read files from (optional)"
-    )
-    _ = parser.add_argument("--verbose", action="store_true", help="Verbose?")
-    _ = parser.add_argument(
-        "--config", "-c", type=str, help="Yaml config file, to set argument defaults"
-    )
-    _ = parser.add_argument("command")
-    _ = parser.add_argument("args", nargs=argparse.REMAINDER)
-
-    _ = parser.parse_known_args(arguments)
-
-    return Args.from_argparse(parser.parse_args())
-
-
 def main(args: Args):
     logging.basicConfig(
         stream=sys.stdout,
@@ -180,7 +189,13 @@ def main(args: Args):
         datefmt="%H:%M:%S",
     )
 
-    (rag, models, retriever) = asyncio.run(rag_initialize(args))
+    (rag, models, retriever) = asyncio.run(
+        rag_initialize(
+            config_path=Path(args.config),
+            input_from=args.from_,
+            verbose=args.verbose,
+        )
+    )
 
     match args.command:
         case "serve":

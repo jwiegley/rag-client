@@ -18,7 +18,6 @@ from functools import cache
 from pathlib import Path
 from urllib.parse import urlparse
 from orgparse.node import OrgNode
-from typed_argparse import TypedArgs
 from xdg_base_dirs import xdg_cache_home
 from typing import (
     Any,
@@ -221,7 +220,7 @@ def clean_special_tokens(text: str) -> str:
     return text
 
 
-# Args
+# Config
 
 
 @dataclass
@@ -305,14 +304,6 @@ class Config(YAMLWizard):
     host: str = "localhost"
     port: int = 8000
     reload_server: bool = False
-
-
-class Args(TypedArgs):
-    from_: str | None
-    verbose: bool
-    config: str
-    command: str
-    args: list[str]
 
 
 # Readers
@@ -1482,12 +1473,14 @@ def query_perplexity_tool() -> FunctionTool:
 
 
 async def rag_initialize(
-    args: Args,
+    config_path: Path,
+    input_from: str | None,
+    verbose: bool = False,
 ) -> tuple[RAGWorkflow, Models, BaseRetriever | None]:
-    config = await RAGWorkflow.load_config(Path(args.config))
+    config = await RAGWorkflow.load_config(config_path)
 
-    if args.from_:
-        input_files = read_files(args.from_, config.recursive)
+    if input_from is not None:
+        input_files = read_files(input_from, config.recursive)
     else:
         input_files = awaitable_none()
 
@@ -1495,7 +1488,7 @@ async def rag_initialize(
     rag = RAGWorkflow(config, logger)
 
     models = await rag.initialize(
-        verbose=args.verbose,
+        verbose=verbose,
     )
     indices = await rag.index_files(
         models=models,
@@ -1504,7 +1497,7 @@ async def rag_initialize(
         collect_keywords=config.collect_keywords,
         questions_answered=config.questions_answered,
         num_workers=config.num_workers,
-        verbose=args.verbose,
+        verbose=verbose,
     )
     retriever = await rag.load_retriever(models, indices)
 
