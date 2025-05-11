@@ -6,17 +6,17 @@ embedding:
 embed_dim: 1024
 # chunk_size: 2048
 # chunk_overlap: 256
-chunk_size: 512
-chunk_overlap: 32
-top_k: 20
+chunk_size: 2048
+chunk_overlap: 256
+top_k: 10
 timeout: 7200
 max_tokens: 1000
 # db_conn: "postgresql+psycopg2://postgres@localhost:5432/vector_db"
-# collect_keywords: true
-# questions_answered: 3
+collect_keywords: true
+questions_answered: 3
 source_retries: false
 streaming: true
-hybrid_search: true
+# hybrid_search: true
 llm_provider: "OpenAILike"
 llm_model: "Falcon3-10B-Instruct"
 llm_base_url: "http://localhost:8080/v1"

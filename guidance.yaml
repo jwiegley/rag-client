@@ -1,9 +1,10 @@
-embed_provider: "HuggingFace"
-embed_model: "BAAI/bge-large-en-v1.5"
+embedding:
+  provider: "HuggingFace"
+  model: "BAAI/bge-large-en-v1.5"
+  base_url: "http://localhost:8080/v1"
 query_instruction: "Represent this sentence for searching relevant passages:"
 # embed_provider: "BGEM3"
 # embed_model: "BAAI/bge-m3"
-embed_base_url: "http://localhost:8080/v1"
 embed_dim: 1024
 chunk_size: 512
 chunk_overlap: 42
@@ -15,6 +16,7 @@ collect_keywords: true
 questions_answered: 3
 source_retries: false
 streaming: true
+num_workers: 16
 llm_provider: "OpenAILike"
 llm_model: "Qwen3-32B"
 llm_base_url: "http://localhost:8080/v1"

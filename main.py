@@ -4,9 +4,7 @@
 import asyncio
 import json
 import logging
-import os
 import sys
-import yaml
 import argparse
 
 from xdg_base_dirs import xdg_config_home
@@ -155,9 +153,7 @@ async def rag_client(
             error(f"Command unrecognized: {args.command}")
 
 
-def parse_args(
-    arguments: list[str] = sys.argv[1:], config_path: Path | None = None
-) -> Args:
+def parse_args(arguments: list[str] = sys.argv[1:]) -> Args:
     parser = argparse.ArgumentParser()
 
     _ = parser.add_argument(
@@ -170,25 +166,12 @@ def parse_args(
     _ = parser.add_argument("command")
     _ = parser.add_argument("args", nargs=argparse.REMAINDER)
 
-    args: argparse.Namespace
-    args, _remaining = parser.parse_known_args(arguments)
-    if args.config or config_path is not None:  # pyright: ignore[reportAny]
-        with open(
-            args.config or str(config_path), "r"  # pyright: ignore[reportAny]
-        ) as f:
-            config = yaml.safe_load(f)  # pyright: ignore[reportAny]
-        parser.set_defaults(**config)
+    _ = parser.parse_known_args(arguments)
 
-    parsed = Args.from_argparse(parser.parse_args())
-
-    return parsed
+    return Args.from_argparse(parser.parse_args())
 
 
 def main(args: Args):
-    os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-    (rag, models, retriever) = asyncio.run(rag_initialize(args))
-
     logging.basicConfig(
         stream=sys.stdout,
         encoding="utf-8",
@@ -196,6 +179,8 @@ def main(args: Args):
         format="%(asctime)s [%(levelname)s] %(message)s",  # Log message format
         datefmt="%H:%M:%S",
     )
+
+    (rag, models, retriever) = asyncio.run(rag_initialize(args))
 
     match args.command:
         case "serve":

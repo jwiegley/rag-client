@@ -7,27 +7,32 @@ import hashlib
 import logging
 import os
 import sys
+import numpy as np
+import psycopg2
+
 from collections.abc import Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from dataclass_wizard import YAMLWizard
 from functools import cache
 from pathlib import Path
+from urllib.parse import urlparse
+from orgparse.node import OrgNode
+from typed_argparse import TypedArgs
+from xdg_base_dirs import xdg_cache_home
 from typing import (
     Any,
     Generic,
     Literal,
     NoReturn,
+    TypeAlias,
     TypeVar,
     cast,
     final,
     no_type_check,
     override,
 )
-from urllib.parse import urlparse
 
-import numpy as np
-import psycopg2
 from llama_index.core import (
     load_indices_from_storage,  # pyright: ignore[reportUnknownVariableType]
 )
@@ -93,6 +98,7 @@ from llama_index.core.storage.index_store import SimpleIndexStore
 from llama_index.core.storage.storage_context import DEFAULT_PERSIST_DIR
 from llama_index.core.tools import FunctionTool
 from llama_index.core.vector_stores.simple import SimpleVectorStore
+
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.embeddings.openai import OpenAIEmbedding
@@ -105,21 +111,17 @@ from llama_index.llms.openai import OpenAI
 from llama_index.llms.openai_like import OpenAILike
 from llama_index.llms.openrouter import OpenRouter
 from llama_index.llms.perplexity import Perplexity
-
-# from llama_index.vector_stores.milvus import MilvusVectorStore
 from llama_index.storage.docstore.postgres import PostgresDocumentStore
 from llama_index.storage.index_store.postgres import PostgresIndexStore
 from llama_index.vector_stores.postgres import PGVectorStore
-from orgparse.node import OrgNode
-from typed_argparse import TypedArgs
-from xdg_base_dirs import xdg_cache_home
 
-IndexList = list[BaseIndex[IndexDict]]
+# from llama_index.vector_stores.milvus import MilvusVectorStore
+
+IndexList: TypeAlias = list[BaseIndex[IndexDict]]
+T = TypeVar("T")
+
 
 # Utility functions
-
-
-logger = logging.getLogger("rag")
 
 
 async def awaitable_none():
@@ -472,9 +474,6 @@ class CustomRetriever(BaseRetriever):
 # Workflows
 
 
-T = TypeVar("T")
-
-
 class PostgresDetails(Generic[T]):
     connection_string: str
     database: str
@@ -556,7 +555,7 @@ class PostgresDetails(Generic[T]):
                 )
 
 
-MultiEmbedStore = dict[
+MultiEmbedStore: TypeAlias = dict[
     Literal["dense_vecs", "lexical_weights", "colbert_vecs"],
     np.ndarray[Any, Any] | list[dict[str, float]] | list[np.ndarray[Any, Any]],
 ]
@@ -620,6 +619,7 @@ class Models:
 @dataclass
 class RAGWorkflow:
     config: Config
+    logger: logging.Logger
     fingerprint: str | None = None
     chat_memory: ChatMemoryBuffer | ChatSummaryMemoryBuffer | None = None
     chat_history: list[ChatMessage] | None = None
@@ -754,7 +754,7 @@ class RAGWorkflow:
     async def postgres_stores(
         self, uri: str
     ) -> tuple[PostgresDocumentStore, PostgresIndexStore, PGVectorStore]:
-        logger.info("Create Postgres store objects")
+        self.logger.info("Create Postgres store objects")
         docstore: PostgresDocumentStore = PostgresDocumentStore.from_uri(
             uri=uri,
             table_name="docstore",
@@ -797,7 +797,7 @@ class RAGWorkflow:
         num_workers: int | None,
         verbose: bool = False,
     ) -> BaseEmbedding | BGEM3Embedding:
-        logger.info(f"Load embedding {provider}:{model}")
+        self.logger.info(f"Load embedding {provider}:{model}")
         if provider == "HuggingFace":
             return HuggingFaceEmbedding(
                 model_name=model,
@@ -843,7 +843,7 @@ class RAGWorkflow:
         base_url: str | None,
         verbose: bool = False,
     ) -> LLM:
-        logger.info(f"Load LLM {provider}:{model}")
+        self.logger.info(f"Load LLM {provider}:{model}")
         if provider == "Ollama":
             return Ollama(
                 model=model,
@@ -927,7 +927,7 @@ class RAGWorkflow:
         embed_model: str,
         embed_dim: int,
     ) -> str:
-        logger.info("Determine input files fingerprint")
+        self.logger.info("Determine input files fingerprint")
         fingerprint = [
             collection_hash(input_files),
             hashlib.sha512(embed_model.encode("utf-8")).hexdigest(),
@@ -940,7 +940,7 @@ class RAGWorkflow:
     async def read_documents(
         self, input_files: list[Path], num_workers: int | None
     ) -> Iterable[Document]:
-        logger.info("Read documents from disk")
+        self.logger.info("Read documents from disk")
         file_extractor: dict[str, BaseReader] = {".org": OrgReader()}
         return SimpleDirectoryReader(
             input_files=input_files,
@@ -962,7 +962,7 @@ class RAGWorkflow:
         # Html
         # Hierarchical
         # Topic
-        logger.info(f"Load splitter {splitter_model}")
+        self.logger.info(f"Load splitter {splitter_model}")
         if splitter_model == "Sentence":
             return SentenceSplitter(
                 chunk_size=self.config.chunk_size,
@@ -1012,7 +1012,7 @@ class RAGWorkflow:
         questions_answered: int | None,
         num_workers: int | None,
     ) -> Sequence[BaseNode]:
-        logger.info("Split documents")
+        self.logger.info("Split documents")
 
         transformations = [
             await self.load_splitter(models, splitter_model=splitter_model)
@@ -1039,7 +1039,7 @@ class RAGWorkflow:
                 ]
             )
             if questions_answered is not None:
-                logger.info(f"Generate {questions_answered} questions/chunk")
+                self.logger.info(f"Generate {questions_answered} questions/chunk")
                 transformations.append(
                     QuestionsAnsweredExtractor(
                         questions=questions_answered,
@@ -1059,7 +1059,7 @@ class RAGWorkflow:
         storage_context: StorageContext,
         verbose: bool = False,
     ) -> tuple[VectorStoreIndex | BGEM3Index, BaseKeywordTableIndex | None]:
-        logger.info("Populate vector store")
+        self.logger.info("Populate vector store")
 
         index_structs = storage_context.index_store.index_structs()
         for struct in index_structs:
@@ -1121,15 +1121,15 @@ class RAGWorkflow:
         keyword_index: BaseKeywordTableIndex | None = None
 
         if input_files is None:
-            logger.info("No input files")
+            self.logger.info("No input files")
         elif self.config.embedding is None:
-            logger.info("No embedding model")
+            self.logger.info("No embedding model")
         else:
-            logger.info(f"{len(input_files)} input file(s)")
+            self.logger.info(f"{len(input_files)} input file(s)")
             fp: str = await self.determine_fingerprint(
                 input_files, self.config.embedding.model, self.config.embed_dim
             )
-            logger.info(f"Fingerprint = {fp}")
+            self.logger.info(f"Fingerprint = {fp}")
             persist_dir = cache_dir(fp)
             self.fingerprint = fp
 
@@ -1160,9 +1160,9 @@ class RAGWorkflow:
         if self.config.db_conn is not None or persisted:
             try:
                 if self.config.db_conn is not None:
-                    logger.info("Read indices from database")
+                    self.logger.info("Read indices from database")
                 else:
-                    logger.info("Read indices from cache")
+                    self.logger.info("Read indices from cache")
 
                 if isinstance(models.embed_llm, BGEM3Embedding):
                     if self.config.db_conn is not None:
@@ -1174,7 +1174,7 @@ class RAGWorkflow:
                         #     weights_for_different_modes=[0.4, 0.2, 0.4],
                         # )
                     else:
-                        logger.info("Read BGE-M3 index from cache")
+                        self.logger.info("Read BGE-M3 index from cache")
                         vector_index = BGEM3Index.load_from_disk(
                             persist_dir=str(persist_dir),
                             weights_for_different_modes=[0.4, 0.2, 0.4],
@@ -1204,7 +1204,7 @@ class RAGWorkflow:
                         keyword_index = None
 
             except ValueError:
-                logger.info("Failed to read indices")
+                self.logger.info("Failed to read indices")
 
         if input_files is not None and not persisted:
             documents = await self.read_documents(
@@ -1245,16 +1245,16 @@ class RAGWorkflow:
     ):
         if self.config.db_conn is not None:
             if isinstance(vector_index, BGEM3Index):
-                logger.info("Persist BGE-M3 index to database")
+                self.logger.info("Persist BGE-M3 index to database")
                 BGEM3Embedding.persist_to_postgres(
                     self.config.db_conn,
                     vector_index,
                 )
         elif persist_dir is not None:
             if isinstance(vector_index, BGEM3Index):
-                logger.info("Persist storage context and BGE-M3 index")
+                self.logger.info("Persist storage context and BGE-M3 index")
                 vector_index.persist(persist_dir=str(persist_dir))
-            logger.info("Persist storage context to disk")
+            self.logger.info("Persist storage context to disk")
             storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
                 persist_dir=str(persist_dir)
             )
@@ -1272,7 +1272,7 @@ class RAGWorkflow:
 
         if vector_index is not None:
             if self.config.db_conn is not None and self.config.hybrid_search:
-                logger.info("Create fusion vector retriever")
+                self.logger.info("Create fusion vector retriever")
                 vector_retriever = vector_index.as_retriever(
                     vector_store_query_mode="default",
                     similarity_top_k=5,
@@ -1291,17 +1291,17 @@ class RAGWorkflow:
                     use_async=True,
                 )
             else:
-                logger.info("Create vector retriever")
+                self.logger.info("Create vector retriever")
                 vector_retriever = vector_index.as_retriever(
                     similarity_top_k=self.config.top_k
                 )
         if keyword_index is not None:
-            logger.info("Create keyword retriever")
+            self.logger.info("Create keyword retriever")
             keyword_retriever = keyword_index.as_retriever()
 
         if vector_retriever is not None:
             if keyword_retriever is not None:
-                logger.info("Create aggregate custom retriever")
+                self.logger.info("Create aggregate custom retriever")
                 retriever = CustomRetriever(
                     vector_retriever=vector_retriever,
                     keyword_retriever=keyword_retriever,
@@ -1319,9 +1319,9 @@ class RAGWorkflow:
     async def retrieve_nodes(
         self, retriever: BaseRetriever, text: str
     ) -> list[dict[str, Any]]:
-        logger.info("Retrieve nodes from vector index")
+        self.logger.info("Retrieve nodes from vector index")
         nodes = await retriever.aretrieve(text)
-        logger.info(f"{len(nodes)} nodes found in vector index")
+        self.logger.info(f"{len(nodes)} nodes found in vector index")
         return [
             {
                 "text": node.text,
@@ -1345,7 +1345,7 @@ class RAGWorkflow:
         if models.llm is None:
             error("There is no LLM configured to chat with")
 
-        logger.info("Query with retriever query engine")
+        self.logger.info("Query with retriever query engine")
         query_engine = RetrieverQueryEngine.from_args(
             retriever=retriever,
             llm=models.llm,
@@ -1374,19 +1374,19 @@ class RAGWorkflow:
                 + "The response should try to summarize where possible.\n",
             )
             if source_retries:
-                logger.info("Add retry source query engine")
+                self.logger.info("Add retry source query engine")
                 query_engine = RetrySourceQueryEngine(
                     query_engine,
                     evaluator=relevancy_evaluator,
                     llm=models.llm,
                 )
             else:
-                logger.info("Add retry query engine")
+                self.logger.info("Add retry query engine")
                 query_engine = RetryQueryEngine(
                     query_engine, evaluator=relevancy_evaluator
                 )
 
-        logger.info("Submit query to LLM")
+        self.logger.info("Submit query to LLM")
         return await query_engine.aquery(query)
 
     async def reset_chat(self):
@@ -1444,7 +1444,7 @@ class RAGWorkflow:
                     system_prompt="You are a helpful AI assistant.",
                 )
 
-        logger.info("Submit chat to LLM")
+        self.logger.info("Submit chat to LLM")
         if streaming:
             return await self.chat_engine.astream_chat(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
                 message=query
@@ -1491,7 +1491,8 @@ async def rag_initialize(
     else:
         input_files = awaitable_none()
 
-    rag = RAGWorkflow(config)
+    logger = logging.getLogger("rag")
+    rag = RAGWorkflow(config, logger)
 
     models = await rag.initialize(
         verbose=args.verbose,
