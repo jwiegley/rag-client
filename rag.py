@@ -183,6 +183,21 @@ async def read_files(
         error(f"Input path is unrecognized or non-existent: {read_from}")
 
 
+async def convert_str(read_from: str | None) -> str | None:
+    if read_from is None:
+        return read_from
+    elif read_from == "-":
+        s = sys.stdin.read()
+        if not s:
+            error("No input provided on standard input")
+        return s
+    elif await asyncio.to_thread(os.path.isfile, read_from):
+        with open(read_from, "r") as f:
+            return f.read()
+    else:
+        return read_from
+
+
 def collection_hash(file_list: list[Path]) -> str:
     # List to hold the hash of each file
     file_hashes: list[str] = []
@@ -224,8 +239,8 @@ def clean_special_tokens(text: str) -> str:
 
 
 class GlobalJSONMeta(JSONWizard.Meta):
-    tag_key = "type"
-    auto_assign_tags = True
+    tag_key = "type"  # pyright: ignore[reportUnannotatedClassAttribute]
+    auto_assign_tags = True  # pyright: ignore[reportUnannotatedClassAttribute]
 
 
 @dataclass
@@ -841,7 +856,7 @@ class RAGWorkflow:
                 temperature=llm_config.temperature,
                 context_window=llm_config.context_window,
                 max_tokens=llm_config.max_tokens,
-                system_prompt=llm_config.system_prompt,
+                system_prompt=await convert_str(llm_config.system_prompt),
                 # request_timeout,
                 # prompt_key,
                 # json_mode,
@@ -861,7 +876,7 @@ class RAGWorkflow:
                 timeout=llm_config.timeout,
                 is_chat_model=True,
                 is_function_calling_model=False,
-                system_prompt=llm_config.system_prompt,
+                system_prompt=await convert_str(llm_config.system_prompt),
                 # max_retries,
                 # reuse_client,
             )
@@ -876,7 +891,7 @@ class RAGWorkflow:
                 context_window=llm_config.context_window,
                 reasoning_effort=llm_config.reasoning_effort,
                 timeout=llm_config.timeout,
-                system_prompt=llm_config.system_prompt,
+                system_prompt=await convert_str(llm_config.system_prompt),
                 # max_retries,
                 # reuse_client,
                 # strict,
@@ -891,7 +906,7 @@ class RAGWorkflow:
                 generate_kwargs={},
                 model_kwargs={"n_gpu_layers": llm_config.gpu_layers},
                 verbose=verbose,
-                system_prompt=llm_config.system_prompt,
+                system_prompt=await convert_str(llm_config.system_prompt),
             )
         elif llm_config.provider == "Perplexity":
             return Perplexity(
@@ -905,7 +920,7 @@ class RAGWorkflow:
                 # in this particular context
                 enable_search_classifier=True,
                 timeout=llm_config.timeout,
-                system_prompt=llm_config.system_prompt,
+                system_prompt=await convert_str(llm_config.system_prompt),
                 # max_retries,
             )
         elif llm_config.provider == "OpenRouter":
@@ -917,7 +932,7 @@ class RAGWorkflow:
                 context_window=llm_config.context_window,
                 reasoning_effort=llm_config.reasoning_effort,
                 timeout=llm_config.timeout,
-                system_prompt=llm_config.system_prompt,
+                system_prompt=await convert_str(llm_config.system_prompt),
                 is_chat_model=True,
             )
         elif llm_config.provider == "LMStudio":
@@ -927,7 +942,7 @@ class RAGWorkflow:
                 temperature=llm_config.temperature,
                 context_window=llm_config.context_window,
                 timeout=llm_config.timeout,
-                system_prompt=llm_config.system_prompt,
+                system_prompt=await convert_str(llm_config.system_prompt),
                 is_chat_model=True,
                 # request_timeout,
                 # num_output,
@@ -1526,12 +1541,18 @@ class RAGWorkflow:
         query: str,
         token_limit: int,
         chat_store: SimpleChatStore | None = None,
+        chat_history: list[ChatMessage] | None = None,
         system_prompt: str | None = None,
         summarize_chat: bool = False,
         streaming: bool = False,
     ) -> StreamingAgentChatResponse | AgentChatResponse | NoReturn:
         if models.llm is None:
             error("There is no LLM configured to chat with")
+
+        if chat_store is None and chat_history is not None:
+            await self.reset_chat()
+            chat_store = SimpleChatStore()
+            chat_store.set_messages(key=user, messages=chat_history)
 
         if self.chat_memory is None and chat_store is not None:
             if summarize_chat:

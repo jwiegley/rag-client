@@ -13,16 +13,9 @@ from pydantic import BaseModel
 from typing import Any, NoReturn
 
 from llama_index.core.llms import ChatMessage
-from llama_index.core.storage.chat_store import SimpleChatStore
-from llama_index.core.chat_engine.types import (
-    AgentChatResponse,
-    StreamingAgentChatResponse,
-)
 
-# Initialize FastAPI api
 api = FastAPI(title="OpenAI API Compatible Interface")
 
-# Add CORS middleware
 api.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -37,7 +30,6 @@ models: Models | None = None
 retriever: BaseRetriever | None = None
 
 
-# Models for request validation
 class Message(BaseModel):
     role: str
     content: str
@@ -105,7 +97,6 @@ class EmbeddingRequest(BaseModel):
     user: str | None = None
 
 
-# Optional API key validation
 def verify_api_key(authorization: str | None = None):
     if not authorization:
         return None
@@ -127,7 +118,6 @@ def verify_api_key(authorization: str | None = None):
 # For example: @api.get("/v1/chat/completions")
 # This should list stored chat completions
 
-# Chat completions endpoint
 @api.post("/v1/chat/completions")
 async def create_chat_completion(
     request: ChatCompletionRequest,
@@ -178,7 +168,6 @@ async def create_chat_completion(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Text completions endpoint
 @api.post("/v1/completions")
 async def create_completion(
     request: CompletionRequest,
@@ -229,7 +218,6 @@ async def create_completion(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Embeddings endpoint
 @api.post("/v1/embeddings")
 async def create_embeddings(
     request: EmbeddingRequest,
@@ -266,7 +254,6 @@ async def create_embeddings(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Models endpoint
 @api.get("/v1/models")
 async def list_models(
     api_key: (  # pyright: ignore[reportUnusedParameter]
@@ -296,11 +283,10 @@ async def list_models(
     }
 
 
-# Helper functions for processing requests
 async def process_chat_messages(
     messages: Sequence[ChatMessage],
     request: ChatCompletionRequest,
-) -> StreamingAgentChatResponse | AgentChatResponse | NoReturn:
+):
     """Process chat messages with your custom logic."""
     user_message = next((msg for msg in messages if msg.role == "user"), None)
     if not user_message:
@@ -311,23 +297,17 @@ async def process_chat_messages(
     if models is None:
         error("RAGWorkflow not initialized")
 
-    await workflow.reset_chat()
-
-    chat_store = SimpleChatStore()
-    chat_store.set_messages("user1", list(messages))
-
     return await workflow.chat(
-        models,
-        retriever,
+        models=models,
+        retriever=retriever,
         user=request.user or "user1",
         query=user_message.content or "",
+        chat_history=list(messages),
         token_limit=workflow.config.token_limit,
-        chat_store=chat_store,
         streaming=request.stream or False,
     )
 
 
-# Helper functions for processing requests
 async def chat_response(
     messages: Sequence[ChatMessage], request: ChatCompletionRequest
 ) -> str | NoReturn:
@@ -336,7 +316,6 @@ async def chat_response(
     return response.response
 
 
-# Streaming support functions
 async def stream_chat_response(
     messages: Sequence[ChatMessage], request: ChatCompletionRequest
 ) -> AsyncGenerator[str, None] | NoReturn:
