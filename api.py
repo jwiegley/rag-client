@@ -32,9 +32,6 @@ api.add_middleware(
 )
 
 
-token_limit = 200
-llm_model: str | None = None
-embedding: LLMConfig | None = None
 workflow: RAGWorkflow | None = None
 models: Models | None = None
 retriever: BaseRetriever | None = None
@@ -282,8 +279,14 @@ async def list_models(
         "object": "list",
         "data": [
             {
-                "id": (llm_model or
-                       (embedding.model if embedding else None) or
+                "id": ((workflow.config.llm.model
+                        if workflow is not None and
+                           workflow.config.llm is not None
+                        else None) or
+                       (workflow.config.embedding.model
+                        if workflow is not None and
+                           workflow.config.embedding is not None
+                        else None) or
                        "invalid") + "-RAG",
                 "object": "model",
                 "created": int(time.time()),
@@ -318,7 +321,7 @@ async def process_chat_messages(
         retriever,
         user=request.user or "user1",
         query=user_message.content or "",
-        token_limit=token_limit,
+        token_limit=workflow.config.token_limit,
         chat_store=chat_store,
         streaming=request.stream or False,
     )

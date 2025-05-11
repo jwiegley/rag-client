@@ -12,8 +12,8 @@ import psycopg2
 
 from collections.abc import Iterable, Sequence
 from copy import deepcopy
-from dataclasses import dataclass
-from dataclass_wizard import YAMLWizard
+from dataclasses import dataclass, field
+from dataclass_wizard import JSONWizard, YAMLWizard
 from functools import cache
 from pathlib import Path
 from urllib.parse import urlparse
@@ -223,6 +223,11 @@ def clean_special_tokens(text: str) -> str:
 # Config
 
 
+class GlobalJSONMeta(JSONWizard.Meta):
+    tag_key = "type"
+    auto_assign_tags = True
+
+
 @dataclass
 class LLMConfig(YAMLWizard):
     provider: str
@@ -237,7 +242,6 @@ class LLMConfig(YAMLWizard):
     context_window: int = 2048
     reasoning_effort: Literal["low", "medium", "high"] = "medium"
     gpu_layers: int = -1
-    token_limit: int = 1500
 
 
 @dataclass
@@ -247,20 +251,42 @@ class EmbeddingConfig(LLMConfig):
 
 
 @dataclass
+class SentenceSplitterConfig(YAMLWizard):
+    chunk_size: int = 512
+    chunk_overlap: int = 20
+
+
+@dataclass
+class SentenceWindowSplitterConfig(YAMLWizard):
+    window_size: int = 3
+
+
+@dataclass
+class SemanticSplitterConfig(YAMLWizard):
+    embedding: EmbeddingConfig | None
+    buffer_size: int = 256
+    breakpoint_percentile_threshold: int = 95
+
+
+@dataclass
+class CodeSplitterConfig(YAMLWizard):
+    code_language: str = "python"
+    code_chunk_lines: int = 40
+    code_chunk_lines_overlap: int = 15
+    code_max_chars: int = 1500
+
+
+@dataclass
 class Config(YAMLWizard):
     db_conn: str | None = None
     embedding: EmbeddingConfig | None = None
     llm: LLMConfig | None = None
-    splitter: str = "Sentence"
-    # Sentence splitter
-    chunk_size: int = 512
-    chunk_overlap: int = 20
-    # Sentence window splitter
-    window_size: int = 3
-    # Semantic splitter
-    semantic_splitter_embedding: EmbeddingConfig | None = None
-    buffer_size: int = 256
-    breakpoint_percentile_threshold: int = 95
+    splitter: (
+        SentenceSplitterConfig
+        | SentenceWindowSplitterConfig
+        | SemanticSplitterConfig
+        | CodeSplitterConfig
+    ) = field(default_factory=SentenceSplitterConfig)
     # Questions answered extractor
     questions_answered: int | None = None
     questions_answered_llm: LLMConfig | None = None
@@ -279,11 +305,8 @@ class Config(YAMLWizard):
     hnsw_ef_construction: int = 64
     hnsw_ef_search: int = 40
     hnsw_dist_method: str = "vector_cosine_ops"
-    code_language: str = "python"
-    code_chunk_lines: int = 40
-    code_chunk_lines_overlap: int = 15
-    code_max_chars: int = 1500
     top_k: int = 3
+    token_limit: int = 1500
     recursive: bool = False
     host: str = "localhost"
     port: int = 8000
@@ -629,7 +652,6 @@ class BGEM3Embedding:
 @dataclass
 class Models:
     embed_llm: BaseEmbedding | BGEM3Embedding | None = None
-    semantic_splitter_embed_llm: BaseEmbedding | BGEM3Embedding | None = None
     llm: LLM | None = None
     questions_answered_llm: LLM | None = None
     metadata_extractor_llm: LLM | None = None
@@ -653,15 +675,6 @@ class RAGWorkflow:
                 verbose=verbose,
             )
             if self.config.embedding
-            else awaitable_none()
-        )
-        semantic_splitter_embed_llm = (
-            self.__load_embedding(
-                self.config.semantic_splitter_embedding,
-                self.config.num_workers,
-                verbose=verbose,
-            )
-            if self.config.semantic_splitter_embedding
             else awaitable_none()
         )
         llm = (
@@ -707,7 +720,6 @@ class RAGWorkflow:
 
         return Models(
             embed_llm=await embed_llm,
-            semantic_splitter_embed_llm=await semantic_splitter_embed_llm,
             llm=await llm,
             questions_answered_llm=await questions_answered_llm,
             metadata_extractor_llm=await metadata_extractor_llm,
@@ -956,46 +968,63 @@ class RAGWorkflow:
     async def __load_splitter(
         self,
         models: Models,
-        splitter_model: str,
+        splitter: (
+            SentenceSplitterConfig
+            | SentenceWindowSplitterConfig
+            | SemanticSplitterConfig
+            | CodeSplitterConfig
+        ),
+        verbose: bool = False,
     ) -> TransformComponent | NoReturn:
-        self.logger.info(f"Load splitter {splitter_model}")
-        if splitter_model == "Sentence":
+        self.logger.info(f"Load splitter {splitter.__class__.__name__}")
+        if isinstance(splitter, SentenceSplitterConfig):
             return SentenceSplitter(
-                chunk_size=self.config.chunk_size,
-                chunk_overlap=self.config.chunk_overlap,
+                chunk_size=splitter.chunk_size,
+                chunk_overlap=splitter.chunk_overlap,
                 include_metadata=True,
             )
-        elif splitter_model == "SentenceWindow":
+        elif isinstance(splitter, SentenceWindowSplitterConfig):
             return SentenceWindowNodeParser.from_defaults(
-                window_size=self.config.window_size,
+                window_size=splitter.window_size,
                 window_metadata_key="window",
                 original_text_metadata_key="original_text",
             )
-        elif splitter_model == "Semantic":
-            embed_llm = None
-            if models.semantic_splitter_embed_llm is not None:
-                embed_llm = models.semantic_splitter_embed_llm
+        elif isinstance(splitter, SemanticSplitterConfig):
+            if splitter.embedding is not None:
+                embed_llm = (
+                    await self.__load_embedding(
+                        splitter.embedding,
+                        self.config.num_workers,
+                        verbose=verbose,
+                    )
+                    if isinstance(self.config.splitter, SemanticSplitterConfig)
+                    else None
+                )
             elif models.embed_llm is not None:
                 embed_llm = models.embed_llm
+            else:
+                embed_llm = None
 
             if embed_llm is None:
-                error("Semantic splitter needs an embedding model")
+                error("Semantic splitter needs embedding model")
 
             if isinstance(embed_llm, BGEM3Embedding):
-                error("Semantic splitter not yet working with BGE-M3")
+                error("Semantic splitter not working yet with BGE-M3")
 
             return SemanticSplitterNodeParser(
-                buffer_size=self.config.buffer_size,
-                breakpoint_percentile_threshold=self.config.breakpoint_percentile_threshold,
+                buffer_size=splitter.buffer_size,
+                breakpoint_percentile_threshold=splitter.breakpoint_percentile_threshold,
                 embed_model=embed_llm,
                 include_metadata=True,
             )
-        elif splitter_model == "Code":
+        elif isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
+            splitter, CodeSplitterConfig
+        ):
             return CodeSplitter(
-                language=self.config.code_language,
-                chunk_lines=self.config.code_chunk_lines,
-                chunk_lines_overlap=self.config.code_chunk_lines_overlap,
-                max_chars=self.config.code_max_chars,
+                language=splitter.code_language,
+                chunk_lines=splitter.code_chunk_lines,
+                chunk_lines_overlap=splitter.code_chunk_lines_overlap,
+                max_chars=splitter.code_max_chars,
             )
         # jww (2025-05-11): Markdown
         # jww (2025-05-11): Token
@@ -1003,13 +1032,10 @@ class RAGWorkflow:
         # jww (2025-05-11): Html
         # jww (2025-05-11): Hierarchical
         # jww (2025-05-11): Topic
-        else:
-            error(f"Splitter not recognized: {splitter_model}")
 
     async def __split_documents(
         self,
         models: Models,
-        splitter_model: str,
         documents: Iterable[Document],
         questions_answered: int | None,
         num_workers: int | None,
@@ -1018,7 +1044,11 @@ class RAGWorkflow:
         self.logger.info("Split documents")
 
         transformations: list[TransformComponent] = [
-            await self.__load_splitter(models, splitter_model=splitter_model)
+            await self.__load_splitter(
+                models=models,
+                splitter=self.config.splitter,
+                verbose=verbose,
+            )
         ]
 
         if models.llm is not None:
@@ -1120,7 +1150,6 @@ class RAGWorkflow:
         storage_context: StorageContext,
         models: Models,
         input_files: list[Path],
-        splitter_model: str,
         collect_keywords: bool,
         questions_answered: int | None,
         num_workers: int | None,
@@ -1137,7 +1166,6 @@ class RAGWorkflow:
 
         nodes = await self.__split_documents(
             models,
-            splitter_model,
             documents,
             questions_answered=questions_answered,
             num_workers=num_workers,
@@ -1287,7 +1315,6 @@ class RAGWorkflow:
         self,
         models: Models,
         input_files: list[Path] | None,
-        splitter_model: str,
         collect_keywords: bool,
         questions_answered: int | None,
         num_workers: int | None,
@@ -1330,7 +1357,6 @@ class RAGWorkflow:
                 storage_context=storage_context,
                 models=models,
                 input_files=input_files,
-                splitter_model=splitter_model,
                 collect_keywords=collect_keywords,
                 questions_answered=questions_answered,
                 num_workers=num_workers,
@@ -1353,7 +1379,6 @@ class RAGWorkflow:
         vector_index, keyword_index = await self.__ingest_files(
             models=models,
             input_files=input_files,
-            splitter_model=self.config.splitter,
             collect_keywords=self.config.collect_keywords,
             questions_answered=self.config.questions_answered,
             num_workers=self.config.num_workers,
@@ -1586,6 +1611,8 @@ async def rag_initialize(
     input_from: str | None,
     verbose: bool = False,
 ) -> tuple[RAGWorkflow, Models, BaseRetriever | None]:
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
     config = await RAGWorkflow.load_config(config_path)
 
     if input_from is not None:

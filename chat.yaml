@@ -4,17 +4,17 @@ embedding:
   provider: "BGEM3"
   model: "BAAI/bge-m3"
   dimensions: 1024
-# chunk_size: 2048
-# chunk_overlap: 256
-chunk_size: 2048
-chunk_overlap: 256
-top_k: 10
+splitter:
+  type: SentenceSplitterConfig
+  chunk_size: 2048
+  chunk_overlap: 256
+top_k: 3
 timeout: 7200
-max_tokens: 1000
 # db_conn: "postgresql+psycopg2://postgres@localhost:5432/vector_db"
 collect_keywords: true
 questions_answered: 3
 source_retries: false
+num_workers: 10
 streaming: true
 # hybrid_search: true
 llm:
@@ -22,3 +22,4 @@ llm:
   model: "Falcon3-10B-Instruct"
   # base_url: "http://localhost:8080/v1"
   base_url: "http://192.168.50.5:8080/v1"
+  max_tokens: 1000
