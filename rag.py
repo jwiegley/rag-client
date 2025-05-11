@@ -232,6 +232,12 @@ class LLMConfig(YAMLWizard):
     api_version: str = ""
     timeout: int = 60
     system_prompt: str | None = None
+    temperature: float = 1.0
+    max_tokens: int = 200
+    context_window: int = 2048
+    reasoning_effort: Literal["low", "medium", "high"] = "medium"
+    gpu_layers: int = -1
+    token_limit: int = 1500
 
 
 @dataclass
@@ -278,12 +284,6 @@ class Config(YAMLWizard):
     code_chunk_lines_overlap: int = 15
     code_max_chars: int = 1500
     top_k: int = 3
-    temperature: float = 1.0
-    max_tokens: int = 200
-    context_window: int = 2048
-    reasoning_effort: Literal["low", "medium", "high"] = "medium"
-    gpu_layers: int = -1
-    token_limit: int = 1500
     recursive: bool = False
     host: str = "localhost"
     port: int = 8000
@@ -826,9 +826,9 @@ class RAGWorkflow:
             return Ollama(
                 model=llm_config.model,
                 base_url=llm_config.base_url or "http://localhost:11434",
-                temperature=self.config.temperature,
-                context_window=self.config.context_window,
-                max_tokens=self.config.max_tokens,
+                temperature=llm_config.temperature,
+                context_window=llm_config.context_window,
+                max_tokens=llm_config.max_tokens,
                 system_prompt=llm_config.system_prompt,
                 # request_timeout,
                 # prompt_key,
@@ -842,10 +842,10 @@ class RAGWorkflow:
                 api_base=llm_config.base_url or "http://localhost:1234/v1",
                 api_key=llm_config.api_key or "fake_key",
                 api_version=llm_config.api_version or "",
-                temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens,
-                context_window=self.config.context_window,
-                reasoning_effort=self.config.reasoning_effort,
+                temperature=llm_config.temperature,
+                max_tokens=llm_config.max_tokens,
+                context_window=llm_config.context_window,
+                reasoning_effort=llm_config.reasoning_effort,
                 timeout=llm_config.timeout,
                 is_chat_model=True,
                 is_function_calling_model=False,
@@ -859,10 +859,10 @@ class RAGWorkflow:
                 api_key=llm_config.api_key,
                 api_base=llm_config.base_url,
                 api_version=llm_config.api_version,
-                temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens,
-                context_window=self.config.context_window,
-                reasoning_effort=self.config.reasoning_effort,
+                temperature=llm_config.temperature,
+                max_tokens=llm_config.max_tokens,
+                context_window=llm_config.context_window,
+                reasoning_effort=llm_config.reasoning_effort,
                 timeout=llm_config.timeout,
                 system_prompt=llm_config.system_prompt,
                 # max_retries,
@@ -873,11 +873,11 @@ class RAGWorkflow:
             return LlamaCPP(
                 # model_url=model_url,
                 model_path=llm_config.model,
-                temperature=self.config.temperature,
-                max_new_tokens=self.config.max_tokens,
-                context_window=self.config.context_window,
+                temperature=llm_config.temperature,
+                max_new_tokens=llm_config.max_tokens,
+                context_window=llm_config.context_window,
                 generate_kwargs={},
-                model_kwargs={"n_gpu_layers": self.config.gpu_layers},
+                model_kwargs={"n_gpu_layers": llm_config.gpu_layers},
                 verbose=verbose,
                 system_prompt=llm_config.system_prompt,
             )
@@ -885,10 +885,10 @@ class RAGWorkflow:
             return Perplexity(
                 model_name=llm_config.model,
                 api_key=llm_config.api_key,
-                temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens,
-                context_window=self.config.context_window,
-                reasoning_effort=self.config.reasoning_effort,
+                temperature=llm_config.temperature,
+                max_tokens=llm_config.max_tokens,
+                context_window=llm_config.context_window,
+                reasoning_effort=llm_config.reasoning_effort,
                 # This will determine if the search component is necessary
                 # in this particular context
                 enable_search_classifier=True,
@@ -900,10 +900,10 @@ class RAGWorkflow:
             return OpenRouter(
                 model_name=llm_config.model,
                 api_key=llm_config.api_key,
-                temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens,
-                context_window=self.config.context_window,
-                reasoning_effort=self.config.reasoning_effort,
+                temperature=llm_config.temperature,
+                max_tokens=llm_config.max_tokens,
+                context_window=llm_config.context_window,
+                reasoning_effort=llm_config.reasoning_effort,
                 timeout=llm_config.timeout,
                 system_prompt=llm_config.system_prompt,
                 is_chat_model=True,
@@ -912,8 +912,8 @@ class RAGWorkflow:
             return LMStudio(
                 model_name=llm_config.model,
                 base_url=llm_config.base_url or "http://localhost:1234/v1",
-                temperature=self.config.temperature,
-                context_window=self.config.context_window,
+                temperature=llm_config.temperature,
+                context_window=llm_config.context_window,
                 timeout=llm_config.timeout,
                 system_prompt=llm_config.system_prompt,
                 is_chat_model=True,

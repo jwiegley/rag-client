@@ -329,7 +329,7 @@ async def chat_response(
     messages: Sequence[ChatMessage], request: ChatCompletionRequest
 ) -> str | NoReturn:
     """Process chat messages with your custom logic."""
-    response = await process_chat_messages(messages, request, streaming=False)
+    response = await process_chat_messages(messages, request)
     return response.response
 
 
@@ -339,7 +339,7 @@ async def stream_chat_response(
 ) -> AsyncGenerator[str, None] | NoReturn:
     """Stream chat responses in the SSE format expected by OpenAI clients."""
     try:
-        response = await process_chat_messages(messages, request, streaming=True)
+        response = await process_chat_messages(messages, request)
 
         async for chunk in response.async_response_gen():
             response_json = {
