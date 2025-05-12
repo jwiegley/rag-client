@@ -420,7 +420,6 @@ class LlamaCppEmbedding(BaseEmbedding):
         self._model = llama_cpp.Llama(
             model_path=model_path,
             embedding=True,
-            # jww (2025-05-11): Make these configurable
             n_gpu_layers=-1,
             split_mode=llama_cpp.LLAMA_SPLIT_MODE_LAYER,
             main_gpu=0,
@@ -840,7 +839,6 @@ class RAGWorkflow:
         llm_config: LLMConfig,
         verbose: bool = False,
     ) -> LLM:
-        # jww (2025-05-11): Make several of these arguments configurable
         self.logger.info(f"Load LLM {llm_config.provider}:{llm_config.model}")
         if llm_config.provider == "Ollama":
             return Ollama(
@@ -1034,12 +1032,6 @@ class RAGWorkflow:
                 chunk_lines_overlap=splitter.chunk_lines_overlap,
                 max_chars=splitter.max_chars,
             )
-        # jww (2025-05-11): Markdown
-        # jww (2025-05-11): Token
-        # jww (2025-05-11): Json
-        # jww (2025-05-11): Html
-        # jww (2025-05-11): Hierarchical
-        # jww (2025-05-11): Topic
 
     async def __split_documents(
         self,
@@ -1095,7 +1087,6 @@ class RAGWorkflow:
                     )
                 )
 
-        # jww (2025-05-11): Use RedisCache here, if configured
         # ingest_cache = IngestionCache(
         #     cache=RedisCache.from_host_and_port(host="127.0.0.1", port=6379),
         #     collection="my_test_cache",
@@ -1424,7 +1415,6 @@ class RAGWorkflow:
                     similarity_top_k=5,  # interchangeable with sparse_top_k
                     verbose=verbose,
                 )
-                # jww (2025-05-08): Make more of these configurable
                 vector_retriever = QueryFusionRetriever(
                     [vector_retriever, text_retriever],
                     similarity_top_k=self.config.top_k,
@@ -1516,7 +1506,6 @@ class RAGWorkflow:
             relevancy_evaluator = RelevancyEvaluator(
                 llm=models.evaluator_llm or models.llm,
             )
-            # jww (2025-05-04): Allow using different evaluators
             _guideline_evaluator = GuidelineEvaluator(
                 llm=models.evaluator_llm or models.llm,
                 guidelines=DEFAULT_GUIDELINES
@@ -1569,7 +1558,6 @@ class RAGWorkflow:
             if summarize_chat:
                 self.chat_memory = ChatSummaryMemoryBuffer.from_defaults(  # pyright: ignore[reportUnknownMemberType]
                     token_limit=token_limit,
-                    # jww (2025-05-04): Make this configurable
                     summarize_prompt=(
                         "The following is a conversation between the user and assistant. "
                         "Write a concise summary about the contents of this conversation."

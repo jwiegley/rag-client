@@ -41,7 +41,6 @@ FunctionsType = list[dict[str, Any | None]] | None  # pyright: ignore[reportExpl
 
 class ChatCompletionRequest(BaseModel):
     "https://platform.openai.com/docs/api-reference/chat/create"
-    # jww (2025-05-11): Support all request fields
     messages: list[Message]
     model: str
     # audio
@@ -113,10 +112,6 @@ def verify_api_key(authorization: str | None = None):
 
     return api_key
 
-
-# jww (2025-05-11): Implement the rest of the OpenAI API
-# For example: @api.get("/v1/chat/completions")
-# This should list stored chat completions
 
 @api.post("/v1/chat/completions")
 async def create_chat_completion(
