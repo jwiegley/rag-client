@@ -1,5 +1,6 @@
 # pyright: reportMissingTypeStubs=false
 # pyright: reportExplicitAny=false
+# pyright: reportAny=false
 
 import asyncio
 import base64
@@ -7,8 +8,9 @@ import hashlib
 import logging
 import os
 import sys
-import numpy as np
+from llama_index.core.constants import DEFAULT_EMBED_BATCH_SIZE
 import psycopg2
+import llama_cpp
 
 from collections.abc import Iterable, Sequence
 from copy import deepcopy
@@ -21,11 +23,8 @@ from orgparse.node import OrgNode
 from xdg_base_dirs import xdg_cache_home
 from typing import (
     Any,
-    Generic,
     Literal,
     NoReturn,
-    TypeAlias,
-    TypeVar,
     cast,
     final,
     no_type_check,
@@ -33,15 +32,13 @@ from typing import (
 )
 
 from llama_index.core import (
-    load_indices_from_storage,  # pyright: ignore[reportUnknownVariableType]
-)
-from llama_index.core import (
     KeywordTableIndex,
     QueryBundle,
     SimpleDirectoryReader,
     SimpleKeywordTableIndex,
     StorageContext,
     VectorStoreIndex,
+    load_indices_from_storage,  # pyright: ignore[reportUnknownVariableType]
 )
 from llama_index.core.async_utils import DEFAULT_NUM_WORKERS
 from llama_index.core.base.embeddings.base import Embedding
@@ -71,6 +68,7 @@ from llama_index.core.llms.llm import LLM
 from llama_index.core.memory import ChatMemoryBuffer, ChatSummaryMemoryBuffer
 from llama_index.core.node_parser import (
     CodeSplitter,
+    JSONNodeParser,
     SemanticSplitterNodeParser,
     SentenceSplitter,
     SentenceWindowNodeParser,
@@ -113,11 +111,6 @@ from llama_index.llms.perplexity import Perplexity
 from llama_index.storage.docstore.postgres import PostgresDocumentStore
 from llama_index.storage.index_store.postgres import PostgresIndexStore
 from llama_index.vector_stores.postgres import PGVectorStore
-
-# from llama_index.vector_stores.milvus import MilvusVectorStore
-
-IndexList: TypeAlias = list[BaseIndex[IndexDict]]
-T = TypeVar("T")
 
 
 # Utility functions
@@ -171,7 +164,9 @@ async def read_files(
     if read_from == "-":
         # Reading from stdin is still blocking; consider using asyncio streams
         # if needed
-        input_files = [Path(line.strip()) for line in sys.stdin if line.strip()]
+        input_files = [
+            Path(line.strip()) for line in sys.stdin if line.strip()
+        ]
         if not input_files:
             error("No filenames provided on standard input")
         return input_files
@@ -269,11 +264,14 @@ class EmbeddingConfig(LLMConfig):
 class SentenceSplitterConfig(YAMLWizard):
     chunk_size: int = 512
     chunk_overlap: int = 20
+    include_metadata: bool = True
 
 
 @dataclass
 class SentenceWindowSplitterConfig(YAMLWizard):
     window_size: int = 3
+    window_metadata_key: str = "window"
+    original_text_metadata_key: str = "original_text"
 
 
 @dataclass
@@ -281,14 +279,21 @@ class SemanticSplitterConfig(YAMLWizard):
     embedding: EmbeddingConfig | None
     buffer_size: int = 256
     breakpoint_percentile_threshold: int = 95
+    include_metadata: bool = True
+
+
+@dataclass
+class JSONNodeParserConfig(YAMLWizard):
+    include_metadata: bool = True
+    include_prev_next_rel: bool = True
 
 
 @dataclass
 class CodeSplitterConfig(YAMLWizard):
-    code_language: str = "python"
-    code_chunk_lines: int = 40
-    code_chunk_lines_overlap: int = 15
-    code_max_chars: int = 1500
+    language: str = "python"
+    chunk_lines: int = 40
+    chunk_lines_overlap: int = 15
+    max_chars: int = 1500
 
 
 @dataclass
@@ -300,6 +305,7 @@ class Config(YAMLWizard):
         SentenceSplitterConfig
         | SentenceWindowSplitterConfig
         | SemanticSplitterConfig
+        | JSONNodeParserConfig
         | CodeSplitterConfig
     ) = field(default_factory=SentenceSplitterConfig)
     # Questions answered extractor
@@ -380,11 +386,11 @@ class OrgReader(BaseReader):
         extra_info = extra_info or {}
         extra_info["filename"] = org_content.env.filename
 
-        # In orgparse, list(org_content) ALL the nodes in the file
-        # So we use this to process the nodes below the split_depth as
-        # separate documents and skip the rest. This means at a split_depth
-        # of 2, we make documents from nodes at levels 0 (whole file), 1, and 2.
-        # The text will be present in multiple documents!
+        # In orgparse, list(org_content) ALL the nodes in the file So we use
+        # this to process the nodes below the split_depth as separate
+        # documents and skip the rest. This means at a split_depth of 2, we
+        # make documents from nodes at levels 0 (whole file), 1, and 2. The
+        # text will be present in multiple documents!
         for node in list(org_content):
             if node.level <= self.split_depth:
                 documents.append(self.node_to_document(node, extra_info))
@@ -410,9 +416,8 @@ class LlamaCppEmbedding(BaseEmbedding):
     @no_type_check
     def __init__(self, model_path: str, **kwargs):
         super().__init__(**kwargs)
-        from llama_cpp import Llama
 
-        self._model = Llama(
+        self._model = llama_cpp.Llama(
             model_path=model_path,
             embedding=True,
             # jww (2025-05-11): Make these configurable
@@ -488,7 +493,7 @@ class LlamaCppEmbedding(BaseEmbedding):
 
 @final
 class CustomRetriever(BaseRetriever):
-    """Custom retriever that performs both semantic search and hybrid search."""
+    """Custom retriever performing both semantic search and hybrid search."""
 
     @no_type_check
     def __init__(
@@ -533,7 +538,7 @@ class CustomRetriever(BaseRetriever):
 # Workflows
 
 
-class PostgresDetails(Generic[T]):
+class PostgresDetails:
     connection_string: str
     database: str
     host: str
@@ -543,7 +548,6 @@ class PostgresDetails(Generic[T]):
 
     def __init__(self, connection_string: str):
         self.connection_string = connection_string
-
         parsed = urlparse(self.connection_string)
         self.database = parsed.path.lstrip("/")
         self.host = parsed.hostname or "localhost"
@@ -551,12 +555,10 @@ class PostgresDetails(Generic[T]):
         self.port = parsed.port or 5432
         self.user = parsed.username or "postgres"
 
-    def unpickle_from_table(self, tablename: str, row_id: int) -> T | NoReturn:
+    def unpickle_from_table[T](self, tablename: str, row_id: int) -> Any:
         import pickle
-
         import psycopg2
 
-        # Connect to PostgreSQL
         with psycopg2.connect(
             database=self.database,
             user=self.user,
@@ -571,16 +573,15 @@ class PostgresDetails(Generic[T]):
                 )
                 row = cur.fetchone()
                 if row is None:
-                    error(f"Data not in table {tablename} row {row_id}")
+                    return None
 
-                binary_data = row[0]  # pyright: ignore[reportAny]
+                binary_data = row[0]
                 if isinstance(binary_data, memoryview):
                     binary_data = binary_data.tobytes()
-                return cast(T, pickle.loads(binary_data))
+                return pickle.loads(binary_data)
 
-    def pickle_to_table(self, tablename: str, row_id: int, data: T):
+    def pickle_to_table[U](self, tablename: str, row_id: int, data: object):
         import pickle
-
         import psycopg2
 
         # Connect to PostgreSQL
@@ -614,12 +615,6 @@ class PostgresDetails(Generic[T]):
                 )
 
 
-MultiEmbedStore: TypeAlias = dict[
-    Literal["dense_vecs", "lexical_weights", "colbert_vecs"],
-    np.ndarray[Any, Any] | list[dict[str, float]] | list[np.ndarray[Any, Any]],
-]
-
-
 class BGEM3Embedding:
     @classmethod
     def load_from_postgres(
@@ -639,7 +634,7 @@ class BGEM3Embedding:
             storage_context=storage_context,
             weights_for_different_modes=weights_for_different_modes,
         )
-        details: PostgresDetails[MultiEmbedStore] = PostgresDetails(uri)
+        details: PostgresDetails = PostgresDetails(uri)
         docs_pos_to_node_id = {
             int(k): v for k, v in index.index_struct.nodes_dict.items()
         }
@@ -656,11 +651,11 @@ class BGEM3Embedding:
 
     @classmethod
     def persist_to_postgres(cls, uri: str, index: BGEM3Index):
-        details: PostgresDetails[MultiEmbedStore] = PostgresDetails(uri)
+        details: PostgresDetails = PostgresDetails(uri)
         details.pickle_to_table(
             "multi_embed_store",
             1,
-            index._multi_embed_store,  # pyright: ignore[reportArgumentType, reportUnknownMemberType, reportPrivateUsage]
+            index._multi_embed_store,  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType, reportPrivateUsage]
         )
 
 
@@ -686,7 +681,6 @@ class RAGWorkflow:
         embed_llm = (
             self.__load_embedding(
                 self.config.embedding,
-                self.config.num_workers,
                 verbose=verbose,
             )
             if self.config.embedding
@@ -771,7 +765,7 @@ class RAGWorkflow:
             table_name="indexstore",
         )
 
-        details: PostgresDetails[MultiEmbedStore] = PostgresDetails(uri)
+        details: PostgresDetails = PostgresDetails(uri)
 
         vector_store: PGVectorStore = PGVectorStore.from_params(
             connection_string=uri,
@@ -795,10 +789,11 @@ class RAGWorkflow:
     async def __load_embedding(
         self,
         embed_config: EmbeddingConfig,
-        num_workers: int | None,
         verbose: bool = False,
     ) -> BaseEmbedding | BGEM3Embedding:
-        self.logger.info(f"Load embedding {embed_config.provider}:{embed_config.model}")
+        self.logger.info(
+            f"Load embedding {embed_config.provider}:{embed_config.model}"
+        )
         if embed_config.provider == "HuggingFace":
             return HuggingFaceEmbedding(
                 model_name=embed_config.model,
@@ -806,17 +801,16 @@ class RAGWorkflow:
                 show_progress_bar=verbose,
                 # text_instruction=None,
                 # normalize=True,
-                # embed_batch_size=DEFAULT_EMBED_BATCH_SIZE,
+                embed_batch_size=DEFAULT_EMBED_BATCH_SIZE,
                 # cache_folder=None,
                 # trust_remote_code=False,
                 parallel_process=True,
-                num_workers=self.config.num_workers,
             )
         elif embed_config.provider == "Ollama":
             return OllamaEmbedding(
                 model_name=embed_config.model,
                 base_url=embed_config.base_url or "http://localhost:11434",
-                # embed_batch_size=DEFAULT_EMBED_BATCH_SIZE,
+                embed_batch_size=DEFAULT_EMBED_BATCH_SIZE,
             )
         elif embed_config.provider == "LlamaCpp":
             return LlamaCppEmbedding(model_path=embed_config.model)
@@ -835,7 +829,6 @@ class RAGWorkflow:
                 api_version=embed_config.api_version,
                 api_base=embed_config.base_url,
                 timeout=embed_config.timeout,
-                num_workers=num_workers,
             )
         elif embed_config.provider == "BGEM3":
             return BGEM3Embedding()
@@ -973,7 +966,9 @@ class RAGWorkflow:
         verbose: bool = False,
     ) -> Iterable[Document]:
         self.logger.info("Read documents from disk")
-        file_extractor: dict[str, BaseReader] = {".org": OrgReader()}
+        file_extractor: dict[str, BaseReader] = {
+            ".org": OrgReader(),
+        }
         return SimpleDirectoryReader(
             input_files=input_files,
             file_extractor=file_extractor,
@@ -987,6 +982,7 @@ class RAGWorkflow:
             SentenceSplitterConfig
             | SentenceWindowSplitterConfig
             | SemanticSplitterConfig
+            | JSONNodeParserConfig
             | CodeSplitterConfig
         ),
         verbose: bool = False,
@@ -996,50 +992,47 @@ class RAGWorkflow:
             return SentenceSplitter(
                 chunk_size=splitter.chunk_size,
                 chunk_overlap=splitter.chunk_overlap,
-                include_metadata=True,
+                include_metadata=splitter.include_metadata,
             )
         elif isinstance(splitter, SentenceWindowSplitterConfig):
             return SentenceWindowNodeParser.from_defaults(
                 window_size=splitter.window_size,
-                window_metadata_key="window",
-                original_text_metadata_key="original_text",
+                window_metadata_key=splitter.window_metadata_key,
+                original_text_metadata_key=splitter.original_text_metadata_key,
             )
         elif isinstance(splitter, SemanticSplitterConfig):
             if splitter.embedding is not None:
-                embed_llm = (
-                    await self.__load_embedding(
-                        splitter.embedding,
-                        self.config.num_workers,
-                        verbose=verbose,
-                    )
-                    if isinstance(self.config.splitter, SemanticSplitterConfig)
-                    else None
+                embed_llm = await self.__load_embedding(
+                    splitter.embedding,
+                    verbose=verbose,
                 )
             elif models.embed_llm is not None:
                 embed_llm = models.embed_llm
             else:
-                embed_llm = None
-
-            if embed_llm is None:
                 error("Semantic splitter needs embedding model")
 
             if isinstance(embed_llm, BGEM3Embedding):
-                error("Semantic splitter not working yet with BGE-M3")
+                error("Semantic splitter not working with BGE-M3")
 
             return SemanticSplitterNodeParser(
                 buffer_size=splitter.buffer_size,
                 breakpoint_percentile_threshold=splitter.breakpoint_percentile_threshold,
                 embed_model=embed_llm,
-                include_metadata=True,
+                include_metadata=splitter.include_metadata,
+            )
+        elif isinstance(splitter, JSONNodeParserConfig):
+            return JSONNodeParser(
+                include_metadata=splitter.include_metadata,
+                include_prev_next_rel=splitter.include_prev_next_rel,
             )
         elif isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
             splitter, CodeSplitterConfig
         ):
             return CodeSplitter(
-                language=splitter.code_language,
-                chunk_lines=splitter.code_chunk_lines,
-                chunk_lines_overlap=splitter.code_chunk_lines_overlap,
-                max_chars=splitter.code_max_chars,
+                language=splitter.language,
+                chunk_lines=splitter.chunk_lines,
+                chunk_lines_overlap=splitter.chunk_lines_overlap,
+                max_chars=splitter.max_chars,
             )
         # jww (2025-05-11): Markdown
         # jww (2025-05-11): Token
@@ -1090,7 +1083,9 @@ class RAGWorkflow:
                 ]
             )
             if questions_answered is not None:
-                self.logger.info(f"Generate {questions_answered} questions/chunk")
+                self.logger.info(
+                    f"Generate {questions_answered} questions/chunk"
+                )
                 transformations.append(
                     QuestionsAnsweredExtractor(
                         questions=questions_answered,
@@ -1128,7 +1123,9 @@ class RAGWorkflow:
 
         index_structs = storage_context.index_store.index_structs()
         for struct in index_structs:
-            storage_context.index_store.delete_index_struct(key=struct.index_id)
+            storage_context.index_store.delete_index_struct(
+                key=struct.index_id
+            )
 
         if isinstance(models.embed_llm, BGEM3Embedding):
             vector_index = BGEM3Index(
@@ -1248,7 +1245,10 @@ class RAGWorkflow:
         self,
         persist_dir: Path | None,
     ) -> StorageContext:
-        if self.config.db_conn is not None and self.config.embedding is not None:
+        if (
+            self.config.db_conn is not None
+            and self.config.embedding is not None
+        ):
             docstore, index_store, vector_store = await self.__postgres_stores(
                 uri=self.config.db_conn,
                 embedding_dimensions=self.config.embedding.dimensions,
@@ -1267,7 +1267,9 @@ class RAGWorkflow:
             index_store=index_store,
             vector_store=vector_store,
             persist_dir=(
-                str(persist_dir) if persist_dir is not None else DEFAULT_PERSIST_DIR
+                str(persist_dir)
+                if persist_dir is not None
+                else DEFAULT_PERSIST_DIR
             ),
         )
 
@@ -1306,19 +1308,21 @@ class RAGWorkflow:
                         weights_for_different_modes=[0.4, 0.2, 0.4],
                     )
             else:
-                indices: IndexList = load_indices_from_storage(
-                    storage_context=storage_context,
-                    embed_model=(
-                        models.embed_llm
-                        if not isinstance(models.embed_llm, BGEM3Embedding)
-                        else None
-                    ),
-                    llm=models.llm,
-                    index_ids=(
-                        ["vector_index", "keyword_index"]
-                        if collect_keywords
-                        else ["vector_index"]
-                    ),
+                indices: list[BaseIndex[IndexDict]] = (
+                    load_indices_from_storage(
+                        storage_context=storage_context,
+                        embed_model=(
+                            models.embed_llm
+                            if not isinstance(models.embed_llm, BGEM3Embedding)
+                            else None
+                        ),
+                        llm=models.llm,
+                        index_ids=(
+                            ["vector_index", "keyword_index"]
+                            if collect_keywords
+                            else ["vector_index"]
+                        ),
+                    )
                 )
                 if collect_keywords:
                     [vi, ki] = indices
@@ -1617,7 +1621,9 @@ def query_perplexity(query: str) -> str:
     can intelligently decide if a search is needed), wraps the query into a
     ChatMessage, and returns the generated response content.
     """
-    pplx_api_key = "your-perplexity-api-key"  # Replace with your actual API key
+    pplx_api_key = (
+        "your-perplexity-api-key"  # Replace with your actual API key
+    )
 
     llm = Perplexity(
         api_key=pplx_api_key,
@@ -1674,7 +1680,9 @@ def rebuild_postgres_db(db_name: str):
             c.execute(f"DROP DATABASE IF EXISTS {db_name}")
             c.execute(f"CREATE DATABASE {db_name}")
 
-    connection_string2 = "postgresql://postgres:password@localhost:5432/{db_name}"
+    connection_string2 = (
+        "postgresql://postgres:password@localhost:5432/{db_name}"
+    )
     with psycopg2.connect(connection_string2) as conn:
         conn.autocommit = True
         with conn.cursor() as c:
