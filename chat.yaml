@@ -9,16 +9,18 @@ query:
   source_retries: false
 
 chat:
-  default_user: "user1"
-  summarize: False
-  engine:
-    type: SimpleChatEngineConfig
+  llm: *llm
+  # default_user: "user1"
+  # summarize: False
+  # engine:
+  #   type: SimpleChatEngineConfig
 
 retrieval:
   top_k: 3
 
-  # db_conn: "postgresql+psycopg2://postgres@localhost:5432/vector_db"
-  # hybrid_search: true
+  # vector_store:
+  #   connection: "postgresql+psycopg2://postgres@localhost:5432/vector_db"
+  #   hybrid_search: true
 
   # embedding:
   #   provider: "BGEM3"
@@ -35,23 +37,21 @@ retrieval:
     chunk_size: 2048
     chunk_overlap: 256
 
+  extractors:
+    - type: KeywordExtractorConfig
+      keywords: 5
+      llm: *llm
+    - type: SummaryExtractorConfig
+      summaries:
+        - "self"
+      llm: *llm
+    - type: TitleExtractorConfig
+      nodes: 5
+      llm: *llm
+    - type: QuestionsAnsweredExtractorConfig
+      questions: 3
+      llm: *llm
+
   keywords:
     collect: true
     llm: *llm
-
-extractors:
-  - type: KeywordExtractorConfig
-    keywords: 5
-    llm: *llm
-  - type: SummaryExtractorConfig
-    summaries:
-      - "self"
-    llm: *llm
-  - type: TitleExtractorConfig
-    nodes: 5
-    llm: *llm
-  - type: QuestionsAnsweredExtractorConfig
-    questions: 3
-    llm: *llm
-
-num_workers: 16

@@ -225,7 +225,7 @@ async def process_chat_messages(
     if chat_state is None:
         error("ChatState not initialized")
 
-    return await chat_state.chat(
+    return chat_state.chat(
         user=request.user or "user1",
         query=user_message.content or "",
         chat_history=list(messages),

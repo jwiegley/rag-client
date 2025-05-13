@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # pyright: reportUnknownVariableType=false
 
-import asyncio
 import json
 import logging
 import sys
@@ -12,7 +11,7 @@ from xdg_base_dirs import xdg_config_home
 
 from llama_index.core.base.response.schema import (
     RESPONSE_TYPE,
-    AsyncStreamingResponse,
+    StreamingResponse,
     Response,
 )
 from llama_index.core.chat_engine.types import (
@@ -27,6 +26,7 @@ import api
 
 class Args(TypedArgs):
     from_: str | None
+    num_workers: int | None
     recursive: bool
     verbose: bool
     streaming: bool
@@ -48,6 +48,9 @@ def parse_args(arguments: list[str] = sys.argv[1:]) -> Args:
         "--recursive",
         action="store_true",
         help="Whether to read directories recursively)",
+    )
+    _ = parser.add_argument(
+        "--num-workers", "-j", type=int, help="Number of parallel jobs to use"
     )
     _ = parser.add_argument("--verbose", action="store_true", help="Verbose?")
     _ = parser.add_argument("--streaming", action="store_true", help="Streaming?")
@@ -71,16 +74,16 @@ def parse_args(arguments: list[str] = sys.argv[1:]) -> Args:
     return Args.from_argparse(parser.parse_args())
 
 
-async def search_command(rag: RAGWorkflow, retriever: BaseRetriever, query: str):
-    nodes = await rag.retrieve_nodes(retriever, query)
+def search_command(rag: RAGWorkflow, retriever: BaseRetriever, query: str):
+    nodes = rag.retrieve_nodes(retriever, query)
     print(json.dumps(nodes, indent=2))
 
 
-async def query_command(query_state: QueryState, query: str):
-    response: RESPONSE_TYPE = await query_state.aquery(query=query)
+def query_command(query_state: QueryState, query: str):
+    response: RESPONSE_TYPE = query_state.query(query=query)
     match response:
-        case AsyncStreamingResponse():
-            async for token in response.async_response_gen():
+        case StreamingResponse():
+            for token in response.response_gen:
                 token = clean_special_tokens(token)
                 print(token, end="", flush=True)
             print()
@@ -90,13 +93,13 @@ async def query_command(query_state: QueryState, query: str):
             error(f"query_command cannot render response: {response}")
 
 
-async def chat_command(chat_state: ChatState, query: str, streaming: bool):
-    response: StreamingAgentChatResponse | AgentChatResponse = await chat_state.achat(
+def chat_command(chat_state: ChatState, query: str, streaming: bool):
+    response: StreamingAgentChatResponse | AgentChatResponse = chat_state.chat(
         query=query,
         streaming=streaming,
     )
     if streaming:
-        async for token in response.async_response_gen():
+        for token in response.response_gen:
             token = clean_special_tokens(token)
             print(token, end="", flush=True)
         print()
@@ -104,7 +107,7 @@ async def chat_command(chat_state: ChatState, query: str, streaming: bool):
         print(response.response)
 
 
-async def rag_client(
+def rag_client(
     rag: RAGWorkflow,
     retriever: BaseRetriever | None,
     args: Args,
@@ -112,18 +115,18 @@ async def rag_client(
     match args.command:
         case "search":
             if retriever is not None:
-                await search_command(rag, retriever, args.args[0])
+                search_command(rag, retriever, args.args[0])
             else:
                 error("Search command requires a retriever")
         case "query":
-            query_state = await rag.initialize_query(
+            query_state = rag.initialize_query(
                 retriever=retriever,
                 # retries=retries,
                 # source_retries=source_retries,
                 streaming=args.streaming,
                 verbose=args.verbose,
             )
-            await query_command(query_state, args.args[0])
+            query_command(query_state, args.args[0])
         case "chat":
             user = rag.config.chat.default_user or "user"
 
@@ -144,24 +147,24 @@ async def rag_client(
                     break
                 elif query.startswith("search "):
                     if retriever is not None:
-                        await search_command(rag, retriever, query[7:])
+                        search_command(rag, retriever, query[7:])
                 elif query.startswith("query "):
                     if query_state is None:
-                        query_state = await rag.initialize_query(
+                        query_state = rag.initialize_query(
                             retriever=retriever,
                             # retries=retries,
                             # source_retries=source_retries,
                             streaming=args.streaming,
                             verbose=args.verbose,
                         )
-                    await query_command(query_state, query[6:])
+                    query_command(query_state, query[6:])
                 else:
                     if chat_state is None:
-                        chat_state = await rag.initialize_chat(
+                        chat_state = rag.initialize_chat(
                             retriever=retriever,
                             verbose=args.verbose,
                         )
-                    await chat_command(
+                    chat_command(
                         chat_state,
                         query=query,
                         streaming=args.streaming,
@@ -179,20 +182,20 @@ def main(args: Args):
         datefmt="%H:%M:%S",
     )
 
-    (rag, retriever) = asyncio.run(
-        rag_initialize(
-            config_path=Path(args.config),
-            input_from=args.from_,
-            recursive=args.recursive,
-            verbose=args.verbose,
-        )
+    logger = logging.getLogger("rag")
+
+    (rag, retriever) = rag_initialize(
+        logger=logger,
+        config_path=Path(args.config),
+        input_from=args.from_,
+        num_workers=args.num_workers,
+        recursive=args.recursive,
+        verbose=args.verbose,
     )
 
     match args.command:
         case "serve":
             api.workflow = rag
-            # This cannot run inside asyncio.run, since it creates its own
-            # async event loop.
             api.start_api_server(
                 host=args.host,
                 port=args.port,
@@ -201,8 +204,9 @@ def main(args: Args):
         case "index":
             pass
         case _:
-            asyncio.run(rag_client(rag, retriever, args))
+            rag_client(rag, retriever, args)
 
 
 if __name__ == "__main__":
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
     main(parse_args())

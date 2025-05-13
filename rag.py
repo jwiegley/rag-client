@@ -2,10 +2,10 @@
 # pyright: reportExplicitAny=false
 # pyright: reportAny=false
 
-import asyncio
 import base64
 import hashlib
 import logging
+import pprint
 import os
 import sys
 from llama_index.core.constants import DEFAULT_EMBED_BATCH_SIZE
@@ -45,7 +45,6 @@ from llama_index.core import (
     get_response_synthesizer,  # pyright: ignore[reportUnknownVariableType]
     load_indices_from_storage,  # pyright: ignore[reportUnknownVariableType]
 )
-from llama_index.core.async_utils import DEFAULT_NUM_WORKERS
 from llama_index.core.base.embeddings.base import Embedding
 from llama_index.core.base.response.schema import RESPONSE_TYPE
 from llama_index.core.chat_engine import (
@@ -132,10 +131,6 @@ from llama_index.vector_stores.postgres import PGVectorStore
 # Utility functions
 
 
-async def awaitable_none():
-    return None
-
-
 def error(msg: str) -> NoReturn:
     print(msg, sys.stderr)
     sys.exit(1)
@@ -148,47 +143,34 @@ def parse_prefixes(prefixes: list[str], s: str) -> tuple[str | None, str]:
     return None, s  # No matching prefix found
 
 
-async def list_files(directory: Path, recursive: bool = False) -> list[Path]:
+def list_files(directory: Path, recursive: bool = False) -> list[Path]:
     if recursive:
-        # Run the blocking os.walk in a thread
-        def walk_files() -> list[Path]:
-            file_list: list[Path] = []
-            for root, _, files in os.walk(directory):
-                for file in files:
-                    if file not in [".", ".."]:
-                        file_list.append(Path(root) / Path(file))
-            return file_list
-
-        return await asyncio.to_thread(walk_files)
+        file_list: list[Path] = []
+        for root, _, files in os.walk(directory):
+            for file in files:
+                if file not in [".", ".."]:
+                    file_list.append(Path(root) / Path(file))
+        return file_list
     else:
-        # Run blocking I/O in threads
-        files = await asyncio.to_thread(os.listdir, directory)
         return [
             directory / f
-            for f in files
-            if await asyncio.to_thread(
-                os.path.isfile,
-                os.path.join(directory, f),
-            )
+            for f in os.listdir(directory)
+            if os.path.isfile(os.path.join(directory, f))
         ]
 
 
-async def read_files(
+def read_files(
     read_from: str,
     recursive: bool = False,
 ) -> list[Path] | NoReturn:
     if read_from == "-":
-        # Reading from stdin is still blocking; consider using asyncio streams
-        # if needed
-        input_files = [
-            Path(line.strip()) for line in sys.stdin if line.strip()
-        ]
+        input_files = [Path(line.strip()) for line in sys.stdin if line.strip()]
         if not input_files:
             error("No filenames provided on standard input")
         return input_files
-    elif await asyncio.to_thread(os.path.isdir, read_from):
-        return await list_files(Path(read_from), recursive)
-    elif await asyncio.to_thread(os.path.isfile, read_from):
+    elif os.path.isdir(read_from):
+        return list_files(Path(read_from), recursive)
+    elif os.path.isfile(read_from):
         return [Path(read_from)]
     else:
         error(f"Input path is unrecognized or non-existent: {read_from}")
@@ -249,9 +231,11 @@ def clean_special_tokens(text: str) -> str:
 # Config
 
 
+@final
 class GlobalJSONMeta(JSONWizard.Meta):
-    tag_key = "type"  # pyright: ignore[reportUnannotatedClassAttribute]
-    auto_assign_tags = True  # pyright: ignore[reportUnannotatedClassAttribute]
+    tag_key = "type"
+    auto_assign_tags = True
+    v1_debug = logging.INFO
 
 
 @dataclass
@@ -283,26 +267,21 @@ class KeywordsConfig(YAMLWizard):
 
 
 @dataclass
-class SplitterConfig(YAMLWizard):
-    pass
-
-
-@dataclass
-class SentenceSplitterConfig(SplitterConfig):
+class SentenceSplitterConfig(YAMLWizard):
     chunk_size: int = 512
     chunk_overlap: int = 20
     include_metadata: bool = True
 
 
 @dataclass
-class SentenceWindowSplitterConfig(SplitterConfig):
+class SentenceWindowSplitterConfig(YAMLWizard):
     window_size: int = 3
     window_metadata_key: str = "window"
     original_text_metadata_key: str = "original_text"
 
 
 @dataclass
-class SemanticSplitterConfig(SplitterConfig):
+class SemanticSplitterConfig(YAMLWizard):
     embedding: EmbeddingConfig | None
     buffer_size: int = 256
     breakpoint_percentile_threshold: int = 95
@@ -310,43 +289,59 @@ class SemanticSplitterConfig(SplitterConfig):
 
 
 @dataclass
-class JSONNodeParserConfig(SplitterConfig):
+class JSONNodeParserConfig(YAMLWizard):
     include_metadata: bool = True
     include_prev_next_rel: bool = True
 
 
 @dataclass
-class CodeSplitterConfig(SplitterConfig):
+class CodeSplitterConfig(YAMLWizard):
     language: str = "python"
     chunk_lines: int = 40
     chunk_lines_overlap: int = 15
     max_chars: int = 1500
 
 
+SplitterConfig: TypeAlias = (
+    SentenceSplitterConfig
+    | SentenceWindowSplitterConfig
+    | SemanticSplitterConfig
+    | JSONNodeParserConfig
+    | CodeSplitterConfig
+)
+
+
 @dataclass
-class ExtractorConfig(YAMLWizard):
+class KeywordExtractorConfig(YAMLWizard):
     llm: LLMConfig = field(default_factory=LLMConfig)
-
-
-@dataclass
-class KeywordExtractorConfig(ExtractorConfig):
     keywords: int = 5
 
 
 @dataclass
-class SummaryExtractorConfig(ExtractorConfig):
+class SummaryExtractorConfig(YAMLWizard):
+    llm: LLMConfig = field(default_factory=LLMConfig)
     # ["self"]
     summaries: list[str] = field(default_factory=list)
 
 
 @dataclass
-class TitleExtractorConfig(ExtractorConfig):
+class TitleExtractorConfig(YAMLWizard):
+    llm: LLMConfig = field(default_factory=LLMConfig)
     nodes: int = 5
 
 
 @dataclass
-class QuestionsAnsweredExtractorConfig(ExtractorConfig):
+class QuestionsAnsweredExtractorConfig(YAMLWizard):
+    llm: LLMConfig = field(default_factory=LLMConfig)
     questions: int = 1
+
+
+ExtractorConfig: TypeAlias = (
+    KeywordExtractorConfig
+    | SummaryExtractorConfig
+    | TitleExtractorConfig
+    | QuestionsAnsweredExtractorConfig
+)
 
 
 @dataclass
@@ -370,16 +365,27 @@ class CondensePlusContextChatEngineConfig(ChatEngineConfig):
 
 
 @dataclass
-class RetrievalConfig(YAMLWizard):
-    db_conn: str | None = None
+class VectorStoreConfig(YAMLWizard):
+    pass
+
+
+@dataclass
+class PostgresVectorStoreConfig(YAMLWizard):
+    connection: str
     hybrid_search: bool = False
+    hnsw_m: int = 16
+    hnsw_ef_construction: int = 64
+    hnsw_ef_search: int = 40
+    hnsw_dist_method: str = "vector_cosine_ops"
 
+
+@dataclass
+class RetrievalConfig(YAMLWizard):
     embedding: EmbeddingConfig | None = None
-
     keywords: KeywordsConfig = field(default_factory=KeywordsConfig)
-
     splitter: SplitterConfig = field(default_factory=SentenceSplitterConfig)
     extractors: list[ExtractorConfig] = field(default_factory=list)
+    vector_store: VectorStoreConfig | None = None
     top_k: int = 3
 
 
@@ -402,17 +408,9 @@ class ChatConfig(YAMLWizard):
 
 @dataclass
 class Config(YAMLWizard):
-    retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     query: QueryConfig = field(default_factory=QueryConfig)
     chat: ChatConfig = field(default_factory=ChatConfig)
-
-    num_workers: int = DEFAULT_NUM_WORKERS
-
-    # jww (2025-05-12): Move into PostgresVectorStoreConfig
-    hnsw_m: int = 16
-    hnsw_ef_construction: int = 64
-    hnsw_ef_search: int = 40
-    hnsw_dist_method: str = "vector_cosine_ops"
+    retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
 
 
 # Readers
@@ -712,9 +710,7 @@ class SimpleQueryEngine(CustomQueryEngine):
 
     @override
     def custom_query(self, query_str: str):
-        response = self.llm.complete(
-            self.qa_prompt.format(query_str=query_str)
-        )
+        response = self.llm.complete(self.qa_prompt.format(query_str=query_str))
         return str(response)
 
 
@@ -832,13 +828,12 @@ class EmbeddingRequest(BaseModel):
 @dataclass
 class RAGWorkflow:
     config: Config
-    logger: logging.Logger
 
     @classmethod
-    async def load_config(cls, config: Path) -> Config:
-        if os.path.isfile(config):
+    def load_config(cls, path: Path) -> Config:
+        if os.path.isfile(path):
             cfg = Config.from_yaml_file(  # pyright: ignore[reportUnknownMemberType]
-                str(config)
+                str(path)
             )
             if isinstance(cfg, Config):
                 if cfg.retrieval.embedding is not None:
@@ -848,25 +843,26 @@ class RAGWorkflow:
             else:
                 error("Config file should define a single Config object")
         else:
-            error(f"Cannot read config file {config}")
+            error(f"Cannot read config file {path}")
 
-    async def __postgres_stores(
-        self, uri: str, embedding_dimensions: int
+    def __postgres_stores(
+        self,
+        config: PostgresVectorStoreConfig,
+        embedding_dimensions: int,
     ) -> tuple[PostgresDocumentStore, PostgresIndexStore, PGVectorStore]:
-        self.logger.info("Create Postgres store objects")
         docstore: PostgresDocumentStore = PostgresDocumentStore.from_uri(
-            uri=uri,
+            uri=config.connection,
             table_name="docstore",
         )
         index_store: PostgresIndexStore = PostgresIndexStore.from_uri(
-            uri=uri,
+            uri=config.connection,
             table_name="indexstore",
         )
 
-        details: PostgresDetails = PostgresDetails(uri)
+        details: PostgresDetails = PostgresDetails(config.connection)
 
         vector_store: PGVectorStore = PGVectorStore.from_params(
-            connection_string=uri,
+            connection_string=config.connection,
             database=details.database,
             host=details.host,
             password=details.password,
@@ -874,24 +870,21 @@ class RAGWorkflow:
             user=details.user,
             table_name="vectorstore",
             embed_dim=embedding_dimensions,
-            hybrid_search=self.config.retrieval.hybrid_search,
+            hybrid_search=config.hybrid_search,
             hnsw_kwargs={
-                "hnsw_m": self.config.hnsw_m,
-                "hnsw_ef_construction": self.config.hnsw_ef_construction,
-                "hnsw_ef_search": self.config.hnsw_ef_search,
-                "hnsw_dist_method": self.config.hnsw_dist_method,
+                "hnsw_m": config.hnsw_m,
+                "hnsw_ef_construction": config.hnsw_ef_construction,
+                "hnsw_ef_search": config.hnsw_ef_search,
+                "hnsw_dist_method": config.hnsw_dist_method,
             },
         )
         return docstore, index_store, vector_store
 
-    async def __load_embedding(
+    def __load_embedding(
         self,
         embed_config: EmbeddingConfig,
         verbose: bool = False,
     ) -> EmbeddingType:
-        self.logger.info(
-            f"Load embedding {embed_config.provider}:{embed_config.model}"
-        )
         if embed_config.provider == "HuggingFace":
             return HuggingFaceEmbedding(
                 model_name=embed_config.model,
@@ -902,7 +895,7 @@ class RAGWorkflow:
                 embed_batch_size=DEFAULT_EMBED_BATCH_SIZE,
                 # cache_folder=None,
                 # trust_remote_code=False,
-                parallel_process=True,
+                parallel_process=False,
             )
         elif embed_config.provider == "Ollama":
             return OllamaEmbedding(
@@ -919,7 +912,6 @@ class RAGWorkflow:
                 api_version=embed_config.api_version,
                 api_base=embed_config.base_url,
                 timeout=embed_config.timeout,
-                num_workers=self.config.num_workers,
             )
         elif embed_config.provider == "OpenAILike":
             return OpenAILikeEmbedding(
@@ -928,7 +920,6 @@ class RAGWorkflow:
                 api_version=embed_config.api_version,
                 api_base=embed_config.base_url,
                 timeout=embed_config.timeout,
-                num_workers=self.config.num_workers,
             )
         elif embed_config.provider == "BGEM3":
             return BGEM3Embedding()
@@ -1061,13 +1052,12 @@ class RAGWorkflow:
         else:
             return llm
 
-    async def __determine_fingerprint(
+    def __determine_fingerprint(
         self,
         input_files: list[Path],
         embed_model: str,
         embed_dim: int,
     ) -> str:
-        self.logger.info("Determine input files fingerprint")
         fingerprint = [
             collection_hash(input_files),
             hashlib.sha512(embed_model.encode("utf-8")).hexdigest(),
@@ -1077,14 +1067,13 @@ class RAGWorkflow:
         final_base64 = base64.b64encode(final_hash).decode("utf-8")
         return final_base64[0:32]
 
-    async def __read_documents(
+    def __read_documents(
         self,
         input_files: list[Path],
+        num_workers: int | None = None,
         recursive: bool = False,
-        num_workers: int = DEFAULT_NUM_WORKERS,
         verbose: bool = False,
     ) -> Iterable[Document]:
-        self.logger.info("Read documents from disk")
         file_extractor: dict[str, BaseReader] = {
             ".org": OrgReader(),
         }
@@ -1094,12 +1083,11 @@ class RAGWorkflow:
             recursive=recursive,
         ).load_data(num_workers=num_workers, show_progress=verbose)
 
-    async def __load_splitter(
+    def __load_splitter(
         self,
         splitter: SplitterConfig,
         verbose: bool = False,
     ) -> TransformComponent | NoReturn:
-        self.logger.info(f"Load splitter {splitter.__class__.__name__}")
         if isinstance(splitter, SentenceSplitterConfig):
             return SentenceSplitter(
                 chunk_size=splitter.chunk_size,
@@ -1114,7 +1102,7 @@ class RAGWorkflow:
             )
         elif isinstance(splitter, SemanticSplitterConfig):
             if splitter.embedding is not None:
-                embed_llm = await self.__load_embedding(
+                embed_llm = self.__load_embedding(
                     splitter.embedding,
                     verbose=verbose,
                 )
@@ -1135,20 +1123,19 @@ class RAGWorkflow:
                 include_metadata=splitter.include_metadata,
                 include_prev_next_rel=splitter.include_prev_next_rel,
             )
-        elif isinstance(splitter, CodeSplitterConfig):
+        elif isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
+            splitter, CodeSplitterConfig
+        ):
             return CodeSplitter(
                 language=splitter.language,
                 chunk_lines=splitter.chunk_lines,
                 chunk_lines_overlap=splitter.chunk_lines_overlap,
                 max_chars=splitter.max_chars,
             )
-        else:
-            error(f"Unrecognized SplitterConfig: {splitter}")
 
-    async def __load_extractor(
+    def __load_extractor(
         self,
         config: ExtractorConfig,
-        num_workers: int = DEFAULT_NUM_WORKERS,
         verbose: bool = False,
     ) -> TransformComponent | None:
         if isinstance(config, KeywordExtractorConfig):
@@ -1156,7 +1143,6 @@ class RAGWorkflow:
             return KeywordExtractor(
                 keywords=config.keywords,
                 llm=llm,
-                num_workers=num_workers,
                 show_progress=verbose,
             )
         elif isinstance(config, SummaryExtractorConfig):
@@ -1164,7 +1150,6 @@ class RAGWorkflow:
             return SummaryExtractor(
                 summaries=config.summaries,
                 llm=llm,
-                num_workers=num_workers,
                 show_progress=verbose,
             )
         elif isinstance(config, TitleExtractorConfig):
@@ -1172,40 +1157,33 @@ class RAGWorkflow:
             return TitleExtractor(
                 nodes=config.nodes,
                 llm=llm,
-                num_workers=num_workers,
                 show_progress=verbose,
             )
-        elif isinstance(config, QuestionsAnsweredExtractorConfig):
-            self.logger.info(f"Generate {config.questions} questions/chunk")
+        elif isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
+            config, QuestionsAnsweredExtractorConfig
+        ):
             llm = self.realize_llm(config.llm, verbose=verbose)
             return QuestionsAnsweredExtractor(
                 questions=config.questions,
                 llm=llm,
-                num_workers=num_workers,
                 show_progress=verbose,
             )
-        else:
-            error(f"Unrecognized ExtractorConfig: {config}")
 
-    async def __split_documents(
+    def __split_documents(
         self,
         documents: Iterable[Document],
-        num_workers: int = DEFAULT_NUM_WORKERS,
         verbose: bool = False,
     ) -> Sequence[BaseNode]:
-        self.logger.info("Split documents")
-
         transformations: list[TransformComponent] = [
-            await self.__load_splitter(
+            self.__load_splitter(
                 splitter=self.config.retrieval.splitter,
                 verbose=verbose,
             )
         ]
 
         extractors = [
-            await self.__load_extractor(
+            self.__load_extractor(
                 entry,
-                num_workers=num_workers,
                 verbose=verbose,
             )
             for entry in self.config.retrieval.extractors
@@ -1222,26 +1200,21 @@ class RAGWorkflow:
             transformations=transformations,
             # cache=ingest_cache,
         )
-        return await pipeline.arun(
+        return pipeline.run(
             documents=documents,
-            num_workers=num_workers,
             show_progress=verbose,
         )
 
-    async def __populate_vector_store(
+    def __populate_vector_store(
         self,
         embed_llm: EmbeddingType,
         nodes: Sequence[BaseNode],
         storage_context: StorageContext,
         verbose: bool = False,
     ) -> tuple[VectorStoreIndex | BGEM3Index, BaseKeywordTableIndex | None]:
-        self.logger.info("Populate vector store")
-
         index_structs = storage_context.index_store.index_structs()
         for struct in index_structs:
-            storage_context.index_store.delete_index_struct(
-                key=struct.index_id
-            )
+            storage_context.index_store.delete_index_struct(key=struct.index_id)
 
         if isinstance(embed_llm, BGEM3Embedding):
             vector_index = BGEM3Index(
@@ -1256,7 +1229,6 @@ class RAGWorkflow:
                 storage_context=storage_context,
                 embed_model=embed_llm,
                 show_progress=verbose,
-                use_async=True,
             )
 
         if self.config.retrieval.keywords.collect:
@@ -1265,7 +1237,6 @@ class RAGWorkflow:
                     nodes,
                     storage_context=storage_context,
                     show_progress=verbose,
-                    use_async=True,
                 )
             else:
                 llm = self.realize_llm(self.config.retrieval.keywords.llm)
@@ -1273,7 +1244,6 @@ class RAGWorkflow:
                     nodes,
                     storage_context=storage_context,
                     show_progress=verbose,
-                    use_async=True,
                     llm=llm,
                 )
         else:
@@ -1281,30 +1251,29 @@ class RAGWorkflow:
 
         return vector_index, keyword_index
 
-    async def __ingest_documents(
+    def __ingest_documents(
         self,
         embed_llm: EmbeddingType,
         storage_context: StorageContext,
         input_files: list[Path],
-        num_workers: int = DEFAULT_NUM_WORKERS,
+        num_workers: int | None = None,
         verbose: bool = False,
     ) -> tuple[
         VectorStoreIndex | BGEM3Index,
         BaseKeywordTableIndex | None,
     ]:
-        documents = await self.__read_documents(
-            input_files=input_files,
-            num_workers=self.config.num_workers,
-            verbose=verbose,
-        )
-
-        nodes = await self.__split_documents(
-            documents,
+        documents = self.__read_documents(
             num_workers=num_workers,
+            input_files=input_files,
             verbose=verbose,
         )
 
-        vector_index, keyword_index = await self.__populate_vector_store(
+        nodes = self.__split_documents(
+            documents,
+            verbose=verbose,
+        )
+
+        vector_index, keyword_index = self.__populate_vector_store(
             embed_llm=embed_llm,
             nodes=nodes,
             storage_context=storage_context,
@@ -1317,52 +1286,52 @@ class RAGWorkflow:
 
         return vector_index, keyword_index
 
-    async def __save_indices(
+    def __save_indices(
         self,
         storage_context: StorageContext,
         vector_index: BGEM3Index | None,
         persist_dir: Path | None,
     ):
-        if self.config.retrieval.db_conn is not None:
-            if vector_index is not None:
-                self.logger.info("Persist BGE-M3 index to database")
+        if self.config.retrieval.vector_store is not None:
+            if vector_index is not None and isinstance(
+                self.config.retrieval.vector_store, PostgresVectorStoreConfig
+            ):
                 BGEM3Embedding.persist_to_postgres(
-                    self.config.retrieval.db_conn,
+                    self.config.retrieval.vector_store.connection,
                     vector_index,
                 )
         elif persist_dir is not None:
             if vector_index is not None:
-                self.logger.info("Persist storage context and BGE-M3 index")
                 vector_index.persist(persist_dir=str(persist_dir))
-            self.logger.info("Persist storage context to disk")
             storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
                 persist_dir=str(persist_dir)
             )
 
-    async def __persist_dir(
+    def __persist_dir(
         self,
         input_files: list[Path],
         embedding: EmbeddingConfig,
     ) -> Path:
-        self.logger.info(f"{len(input_files)} input file(s)")
-        fp: str = await self.__determine_fingerprint(
+        fp: str = self.__determine_fingerprint(
             input_files,
             embedding.model,
             embedding.dimensions,
         )
-        self.logger.info(f"Fingerprint = {fp}")
         return cache_dir(fp)
 
-    async def __load_storage_context(
+    def __load_storage_context(
         self,
         persist_dir: Path | None,
     ) -> StorageContext:
         if (
-            self.config.retrieval.db_conn is not None
+            self.config.retrieval.vector_store is not None
+            and isinstance(
+                self.config.retrieval.vector_store, PostgresVectorStoreConfig
+            )
             and self.config.retrieval.embedding is not None
         ):
-            docstore, index_store, vector_store = await self.__postgres_stores(
-                uri=self.config.retrieval.db_conn,
+            docstore, index_store, vector_store = self.__postgres_stores(
+                config=self.config.retrieval.vector_store,
                 embedding_dimensions=self.config.retrieval.embedding.dimensions,
             )
         elif persist_dir is not None and os.path.isdir(persist_dir):
@@ -1379,13 +1348,11 @@ class RAGWorkflow:
             index_store=index_store,
             vector_store=vector_store,
             persist_dir=(
-                str(persist_dir)
-                if persist_dir is not None
-                else DEFAULT_PERSIST_DIR
+                str(persist_dir) if persist_dir is not None else DEFAULT_PERSIST_DIR
             ),
         )
 
-    async def __load_indices(
+    def __load_indices(
         self,
         embed_llm: EmbeddingType,
         storage_context: StorageContext,
@@ -1398,13 +1365,8 @@ class RAGWorkflow:
         keyword_index: BaseKeywordTableIndex | None = None
 
         try:
-            if self.config.retrieval.db_conn is not None:
-                self.logger.info("Read indices from database")
-            else:
-                self.logger.info("Read indices from cache")
-
             if isinstance(embed_llm, BGEM3Embedding):
-                if self.config.retrieval.db_conn is not None:
+                if self.config.retrieval.vector_store is not None:
                     error("BGE-M3 not current compatible with databases")
                     # logger.info("Read BGE-M3 index from database")
                     # self.vector_index = BGEM3Embedding.load_from_postgres(
@@ -1413,29 +1375,24 @@ class RAGWorkflow:
                     #     weights_for_different_modes=[0.4, 0.2, 0.4],
                     # )
                 else:
-                    self.logger.info("Read BGE-M3 index from cache")
                     vector_index = BGEM3Index.load_from_disk(
                         persist_dir=str(persist_dir),
                         weights_for_different_modes=[0.4, 0.2, 0.4],
                     )
             else:
-                indices: list[BaseIndex[IndexDict]] = (
-                    load_indices_from_storage(
-                        storage_context=storage_context,
-                        embed_model=(
-                            embed_llm
-                            if not isinstance(embed_llm, BGEM3Embedding)
-                            else None
-                        ),
-                        # This doesn't actually need an llm, but it tries to
-                        # load one if it's None
-                        llm=embed_llm,
-                        index_ids=(
-                            ["vector_index", "keyword_index"]
-                            if self.config.retrieval.keywords.collect
-                            else ["vector_index"]
-                        ),
-                    )
+                indices: list[BaseIndex[IndexDict]] = load_indices_from_storage(
+                    storage_context=storage_context,
+                    embed_model=(
+                        embed_llm if not isinstance(embed_llm, BGEM3Embedding) else None
+                    ),
+                    # This doesn't actually need an llm, but it tries to
+                    # load one if it's None
+                    llm=embed_llm,
+                    index_ids=(
+                        ["vector_index", "keyword_index"]
+                        if self.config.retrieval.keywords.collect
+                        else ["vector_index"]
+                    ),
                 )
                 if self.config.retrieval.keywords.collect:
                     [vi, ki] = indices
@@ -1446,14 +1403,14 @@ class RAGWorkflow:
                     vector_index = cast(VectorStoreIndex, vi)
 
         except ValueError:
-            self.logger.info("Failed to read indices")
+            pass
 
         return vector_index, keyword_index
 
-    async def __ingest_files(
+    def __ingest_files(
         self,
         input_files: list[Path] | None,
-        num_workers: int = DEFAULT_NUM_WORKERS,
+        num_workers: int | None = None,
         verbose: bool = False,
     ) -> tuple[
         VectorStoreIndex | BGEM3Index | None,
@@ -1463,30 +1420,30 @@ class RAGWorkflow:
         persisted = False
 
         if input_files is None:
-            self.logger.info("No input files")
+            pass
         elif self.config.retrieval.embedding is None:
             error("Cannot ingest files without an embedding model")
         else:
-            persist_dir = await self.__persist_dir(
+            persist_dir = self.__persist_dir(
                 input_files,
                 self.config.retrieval.embedding,
             )
             persisted = os.path.isdir(persist_dir)
 
-        storage_context = await self.__load_storage_context(
+        storage_context = self.__load_storage_context(
             persist_dir=persist_dir,
         )
 
         if self.config.retrieval.embedding is not None:
-            embed_llm = await self.__load_embedding(
+            embed_llm = self.__load_embedding(
                 embed_config=self.config.retrieval.embedding,
                 verbose=verbose,
             )
         else:
             error("File ingestion requires an embedding model")
 
-        if self.config.retrieval.db_conn is not None or persisted:
-            vector_index, keyword_index = await self.__load_indices(
+        if self.config.retrieval.vector_store is not None or persisted:
+            vector_index, keyword_index = self.__load_indices(
                 embed_llm=embed_llm,
                 storage_context=storage_context,
                 persist_dir=persist_dir,
@@ -1496,14 +1453,14 @@ class RAGWorkflow:
             keyword_index = None
 
         if input_files is not None and not persisted:
-            vector_index, keyword_index = await self.__ingest_documents(
+            vector_index, keyword_index = self.__ingest_documents(
+                num_workers=num_workers,
                 embed_llm=embed_llm,
                 storage_context=storage_context,
                 input_files=input_files,
-                num_workers=num_workers,
                 verbose=verbose,
             )
-            await self.__save_indices(
+            self.__save_indices(
                 storage_context,
                 vector_index if isinstance(vector_index, BGEM3Index) else None,
                 persist_dir=persist_dir,
@@ -1511,23 +1468,26 @@ class RAGWorkflow:
 
         return (vector_index, keyword_index)
 
-    async def load_retriever(
+    def load_retriever(
         self,
         input_files: list[Path] | None,
+        num_workers: int | None = None,
         verbose: bool = False,
     ) -> BaseRetriever | None:
-        vector_index, keyword_index = await self.__ingest_files(
+        vector_index, keyword_index = self.__ingest_files(
+            num_workers=num_workers,
             input_files=input_files,
-            num_workers=self.config.num_workers,
             verbose=verbose,
         )
 
         if vector_index is not None:
             if (
-                self.config.retrieval.db_conn is not None
-                and self.config.retrieval.hybrid_search
+                self.config.retrieval.vector_store is not None
+                and isinstance(
+                    self.config.retrieval.vector_store, PostgresVectorStoreConfig
+                )
+                and self.config.retrieval.vector_store.hybrid_search
             ):
-                self.logger.info("Create fusion vector retriever")
                 vector_retriever = vector_index.as_retriever(
                     vector_store_query_mode="default",
                     similarity_top_k=5,
@@ -1544,11 +1504,9 @@ class RAGWorkflow:
                     num_queries=1,  # set this to 1 to disable query generation
                     mode=FUSION_MODES.RELATIVE_SCORE,
                     llm=None,  # jww (2025-05-12): FIXME
-                    use_async=True,
                     verbose=verbose,
                 )
             else:
-                self.logger.info("Create vector retriever")
                 vector_retriever = vector_index.as_retriever(
                     similarity_top_k=self.config.retrieval.top_k,
                     verbose=verbose,
@@ -1557,7 +1515,6 @@ class RAGWorkflow:
             vector_retriever = None
 
         if keyword_index is not None:
-            self.logger.info("Create keyword retriever")
             keyword_retriever = keyword_index.as_retriever(
                 verbose=verbose,
             )
@@ -1566,7 +1523,6 @@ class RAGWorkflow:
 
         if vector_retriever is not None:
             if keyword_retriever is not None:
-                self.logger.info("Create aggregate custom retriever")
                 retriever = CustomRetriever(
                     vector_retriever=vector_retriever,
                     keyword_retriever=keyword_retriever,
@@ -1579,12 +1535,10 @@ class RAGWorkflow:
 
         return retriever
 
-    async def retrieve_nodes(
+    def retrieve_nodes(
         self, retriever: BaseRetriever, text: str
     ) -> list[dict[str, Any]]:
-        self.logger.info("Retrieve nodes from vector index")
-        nodes = await retriever.aretrieve(text)
-        self.logger.info(f"{len(nodes)} nodes found in vector index")
+        nodes = retriever.retrieve(text)
         return [
             {
                 "text": node.text,
@@ -1625,7 +1579,6 @@ class QueryState:
             self.query_engine = RetrieverQueryEngine.from_args(
                 retriever=retriever,
                 llm=llm,
-                use_async=True,
                 streaming=streaming,
                 # response_mode=ResponseMode.REFINE,
                 response_mode=ResponseMode.COMPACT,
@@ -1666,7 +1619,7 @@ class QueryState:
         else:
             self.query_engine = SimpleQueryEngine(llm=llm)
 
-    async def query(self, query: str) -> RESPONSE_TYPE:
+    def query(self, query: str) -> RESPONSE_TYPE:
         return self.query_engine.query(message=query)
 
     async def aquery(self, query: str) -> RESPONSE_TYPE:
@@ -1753,12 +1706,8 @@ class ChatState:
         **kwargs: Any,
     ) -> BaseChatEngine:
         if self.engine is None:
-            llm = RAGWorkflow.realize_llm(
-                self.rag.config.chat.llm, verbose=verbose
-            )
-            self.engine = ChatState.__initialize(
-                self.rag.config.chat, llm, **kwargs
-            )
+            llm = RAGWorkflow.realize_llm(self.rag.config.chat.llm, verbose=verbose)
+            self.engine = ChatState.__initialize(self.rag.config.chat, llm, **kwargs)
         return self.engine
 
     def chat(
@@ -1784,33 +1733,45 @@ class ChatState:
             return await self.chat_engine(verbose).achat(message=query)
 
 
-async def rag_initialize(
+def rag_initialize(
+    logger: logging.Logger,
     config_path: Path,
     input_from: str | None,
+    num_workers: int | None = None,
     recursive: bool = False,
     verbose: bool = False,
 ) -> tuple[RAGWorkflow, BaseRetriever | None]:
-    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    if verbose:
+        logger.info("Load RAG config")
+    config = RAGWorkflow.load_config(config_path)
 
-    config = await RAGWorkflow.load_config(config_path)
-
+    if verbose:
+        logger.info("Read input files...")
     if input_from is not None:
         input_files = read_files(input_from, recursive)
+        if verbose:
+            count = str(len(input_files)) if input_files else "no"
+            logger.info(f"Read {count} input file(s)...done")
     else:
-        input_files = awaitable_none()
+        input_files = None
 
-    rag = RAGWorkflow(config, logging.getLogger("rag"))
-
-    input_files = await input_files
+    if verbose:
+        logger.info("Construct RAGWorkflow object")
+    rag = RAGWorkflow(config)
 
     if config.retrieval.embedding is not None:
         # If the input_files is None, the retriever might still load indices
         # from cache or a database
-        retriever = await rag.load_retriever(
+        if verbose:
+            logger.info("Load retriever")
+        retriever = rag.load_retriever(
+            num_workers=num_workers,
             input_files=input_files,
             verbose=verbose,
         )
     else:
+        if verbose:
+            logger.info("No retriever used")
         retriever = None
 
     return (rag, retriever)
@@ -1824,9 +1785,7 @@ def rebuild_postgres_db(db_name: str):
             c.execute(f"DROP DATABASE IF EXISTS {db_name}")
             c.execute(f"CREATE DATABASE {db_name}")
 
-    connection_string2 = (
-        "postgresql://postgres:password@localhost:5432/{db_name}"
-    )
+    connection_string2 = "postgresql://postgres:password@localhost:5432/{db_name}"
     with psycopg2.connect(connection_string2) as conn:
         conn.autocommit = True
         with conn.cursor() as c:
@@ -1872,4 +1831,4 @@ def rebuild_postgres_db(db_name: str):
 #     llm=OpenAI(model="gpt-4o"), tools=tools, timeout=120, verbose=True
 # )
 
-# ret = await agent.run(input="Hello!")
+# ret = agent.run(input="Hello!")
