@@ -3,16 +3,16 @@ import json
 import os
 import time
 import uvicorn
-from rag import *
 
 from collections.abc import AsyncGenerator, Sequence
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 from typing import Any, NoReturn
 
 from llama_index.core.llms import ChatMessage
+
+from rag import *
 
 api = FastAPI(title="OpenAI API Compatible Interface")
 
@@ -26,74 +26,9 @@ api.add_middleware(
 
 
 workflow: RAGWorkflow | None = None
-models: Models | None = None
 retriever: BaseRetriever | None = None
-
-
-class Message(BaseModel):
-    role: str
-    content: str
-    name: str | None = None
-
-
-FunctionsType = list[dict[str, Any | None]] | None  # pyright: ignore[reportExplicitAny]
-
-
-class ChatCompletionRequest(BaseModel):
-    "https://platform.openai.com/docs/api-reference/chat/create"
-    messages: list[Message]
-    model: str
-    # audio
-    frequency_penalty: float | None = 0
-    function_call: str | dict[str, str | None] | None = None
-    # ^ instead use tool_choice
-    functions: FunctionsType = None
-    # ^ instead use tools
-    # logit_bias
-    # logprobs
-    # max_completion_tokens
-    max_tokens: int | None = None
-    # ^ instead use max_completion_tokens
-    # metadata
-    # modalities
-    n: int | None = 1
-    # parallel_tool_calls
-    # prediction
-    presence_penalty: float | None = 0
-    # reasoning_effort: str | None = None
-    # response_format
-    # seed
-    # service_tier
-    # stop
-    # store
-    stream: bool | None = False
-    # stream_options
-    temperature: float | None = 0.7
-    # tool_choice
-    # tools
-    # top_logprobs
-    top_p: float | None = 1.0
-    user: str | None = None
-    # web_search_options
-
-
-class CompletionRequest(BaseModel):
-    model: str
-    prompt: str | list[str]
-    temperature: float | None = 0.7
-    top_p: float | None = 1.0
-    n: int | None = 1
-    stream: bool | None = False
-    max_tokens: int | None = 16
-    presence_penalty: float | None = 0
-    frequency_penalty: float | None = 0
-    user: str | None = None
-
-
-class EmbeddingRequest(BaseModel):
-    model: str
-    input: str | list[str]
-    user: str | None = None
+query_state: QueryState | None = None
+chat_state: ChatState | None = None
 
 
 def verify_api_key(authorization: str | None = None):
@@ -261,13 +196,13 @@ async def list_models(
         "object": "list",
         "data": [
             {
-                "id": ((workflow.config.llm.model
+                "id": ((workflow.config.chat.llm.model
                         if workflow is not None and
-                           workflow.config.llm is not None
+                           workflow.config.chat.llm is not None
                         else None) or
-                       (workflow.config.embedding.model
+                       (workflow.config.retrieval.embedding.model
                         if workflow is not None and
-                           workflow.config.embedding is not None
+                           workflow.config.retrieval.embedding is not None
                         else None) or
                        "invalid") + "-RAG",
                 "object": "model",
@@ -281,24 +216,20 @@ async def list_models(
 async def process_chat_messages(
     messages: Sequence[ChatMessage],
     request: ChatCompletionRequest,
-):
+) -> StreamingAgentChatResponse | AGENT_CHAT_RESPONSE_TYPE:
     """Process chat messages with your custom logic."""
     user_message = next((msg for msg in messages if msg.role == "user"), None)
     if not user_message:
         error("No user message found")
 
-    if workflow is None:
-        error("RAGWorkflow not initialized")
-    if models is None:
-        error("RAGWorkflow not initialized")
+    if chat_state is None:
+        error("ChatState not initialized")
 
-    return await workflow.chat(
-        models=models,
-        retriever=retriever,
+    return await chat_state.chat(
         user=request.user or "user1",
         query=user_message.content or "",
         chat_history=list(messages),
-        token_limit=workflow.config.token_limit,
+        token_limit=request.max_tokens,
         streaming=request.stream or False,
     )
 

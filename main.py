@@ -27,7 +27,12 @@ import api
 
 class Args(TypedArgs):
     from_: str | None
+    recursive: bool
     verbose: bool
+    streaming: bool
+    host: str
+    port: int
+    reload_server: bool
     config: str
     command: str
     args: list[str]
@@ -39,7 +44,23 @@ def parse_args(arguments: list[str] = sys.argv[1:]) -> Args:
     _ = parser.add_argument(
         "--from", dest="from_", type=str, help="Where to read files from (optional)"
     )
+    _ = parser.add_argument(
+        "--recursive",
+        action="store_true",
+        type=str,
+        help="Whether to read directories recursively)",
+    )
     _ = parser.add_argument("--verbose", action="store_true", help="Verbose?")
+    _ = parser.add_argument("--streaming", action="store_true", help="Streaming?")
+    _ = parser.add_argument(
+        "--host", type=str, default="localhost", help="Host for 'serve' command"
+    )
+    _ = parser.add_argument(
+        "--port", type=int, default=7990, help="Port for 'serve' command"
+    )
+    _ = parser.add_argument(
+        "--reload-server", action="store_true", help="Reload on source change?"
+    )
     _ = parser.add_argument(
         "--config", "-c", type=str, help="Yaml config file, to set argument defaults"
     )
@@ -56,25 +77,8 @@ async def search_command(rag: RAGWorkflow, retriever: BaseRetriever, query: str)
     print(json.dumps(nodes, indent=2))
 
 
-async def query_command(
-    rag: RAGWorkflow,
-    models: Models,
-    retriever: BaseRetriever | None,
-    query: str,
-    streaming: bool,
-    retries: bool = False,
-    source_retries: bool = False,
-    verbose: bool = False,
-):
-    response: RESPONSE_TYPE = await rag.query(
-        models,
-        retriever,
-        query,
-        retries=retries,
-        source_retries=source_retries,
-        streaming=streaming,
-        verbose=verbose,
-    )
+async def query_command(query_state: QueryState, query: str):
+    response: RESPONSE_TYPE = await query_state.aquery(query=query)
     match response:
         case AsyncStreamingResponse():
             async for token in response.async_response_gen():
@@ -87,28 +91,10 @@ async def query_command(
             error(f"query_command cannot render response: {response}")
 
 
-async def chat_command(
-    rag: RAGWorkflow,
-    models: Models,
-    retriever: BaseRetriever | None,
-    user: str,
-    query: str,
-    streaming: bool,
-    token_limit: int,
-    chat_store: SimpleChatStore | None = None,
-    summarize_chat: bool = False,
-    verbose: bool = False,
-):
-    response: StreamingAgentChatResponse | AgentChatResponse = await rag.chat(
-        models,
-        retriever,
-        user=user,
+async def chat_command(chat_state: ChatState, query: str, streaming: bool):
+    response: StreamingAgentChatResponse | AgentChatResponse = await chat_state.achat(
         query=query,
-        token_limit=token_limit,
-        chat_store=chat_store,
         streaming=streaming,
-        summarize_chat=summarize_chat,
-        verbose=verbose,
     )
     if streaming:
         async for token in response.async_response_gen():
@@ -121,7 +107,6 @@ async def chat_command(
 
 async def rag_client(
     rag: RAGWorkflow,
-    models: Models,
     retriever: BaseRetriever | None,
     args: Args,
 ):
@@ -132,56 +117,55 @@ async def rag_client(
             else:
                 error("Search command requires a retriever")
         case "query":
-            await query_command(
-                rag,
-                models,
-                retriever,
-                args.args[0],
-                streaming=rag.config.streaming,
-                retries=rag.config.retries,
-                source_retries=rag.config.source_retries,
+            query_state = await rag.initialize_query(
+                retriever=retriever,
+                # retries=retries,
+                # source_retries=source_retries,
+                streaming=args.streaming,
                 verbose=args.verbose,
             )
+            await query_command(query_state, args.args[0])
         case "chat":
-            user = rag.config.chat_user or "user"
+            user = rag.config.chat.default_user or "user"
 
             chat_store_json = xdg_config_home() / "rag-client" / "chat_store.json"
-            if rag.config.chat_user is not None:
+            if rag.config.chat.keep_history:
                 chat_store = SimpleChatStore.from_persist_path(str(chat_store_json))
             else:
                 chat_store = SimpleChatStore()
 
+            query_state: QueryState | None = None
+            chat_state: ChatState | None = None
+
             while True:
                 query = input(f"\n{user}> ")
                 if query == "exit":
-                    if rag.config.chat_user is not None:
+                    if rag.config.chat.keep_history:
                         chat_store.persist(persist_path=str(chat_store_json))
                     break
                 elif query.startswith("search "):
                     if retriever is not None:
                         await search_command(rag, retriever, query[7:])
                 elif query.startswith("query "):
-                    await query_command(
-                        rag,
-                        models,
-                        retriever,
-                        query[6:],
-                        streaming=rag.config.streaming,
-                        retries=rag.config.retries,
-                        source_retries=rag.config.source_retries,
-                        verbose=args.verbose,
-                    )
+                    if query_state is None:
+                        query_state = await rag.initialize_query(
+                            retriever=retriever,
+                            # retries=retries,
+                            # source_retries=source_retries,
+                            streaming=args.streaming,
+                            verbose=args.verbose,
+                        )
+                    await query_command(query_state, query[6:])
                 else:
+                    if chat_state is None:
+                        chat_state = await rag.initialize_chat(
+                            retriever=retriever,
+                            verbose=args.verbose,
+                        )
                     await chat_command(
-                        rag,
-                        models,
-                        retriever,
-                        user=user,
+                        chat_state,
                         query=query,
-                        token_limit=rag.config.token_limit,
-                        chat_store=chat_store,
-                        streaming=rag.config.streaming,
-                        verbose=args.verbose,
+                        streaming=args.streaming,
                     )
         case _:
             error(f"Command unrecognized: {args.command}")
@@ -196,10 +180,11 @@ def main(args: Args):
         datefmt="%H:%M:%S",
     )
 
-    (rag, models, retriever) = asyncio.run(
+    (rag, retriever) = asyncio.run(
         rag_initialize(
             config_path=Path(args.config),
             input_from=args.from_,
+            recursive=args.recursive,
             verbose=args.verbose,
         )
     )
@@ -207,20 +192,17 @@ def main(args: Args):
     match args.command:
         case "serve":
             api.workflow = rag
-            api.llm_model = rag.config.llm_model
-            api.embedding = rag.config.embedding
-            api.token_limit = rag.config.token_limit
             # This cannot run inside asyncio.run, since it creates its own
             # async event loop.
             api.start_api_server(
-                host=rag.config.host,
-                port=rag.config.port,
-                reload=rag.config.reload_server,
+                host=args.host,
+                port=args.port,
+                reload=args.reload_server,
             )
         case "index":
             pass
         case _:
-            asyncio.run(rag_client(rag, models, retriever, args))
+            asyncio.run(rag_client(rag, retriever, args))
 
 
 if __name__ == "__main__":

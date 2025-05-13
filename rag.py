@@ -9,6 +9,7 @@ import logging
 import os
 import sys
 from llama_index.core.constants import DEFAULT_EMBED_BATCH_SIZE
+from llama_index.llms.openai.base import DEFAULT_OPENAI_MODEL
 import psycopg2
 import llama_cpp
 
@@ -18,6 +19,7 @@ from dataclasses import dataclass, field
 from dataclass_wizard import JSONWizard, YAMLWizard
 from functools import cache
 from pathlib import Path
+from pydantic import BaseModel
 from urllib.parse import urlparse
 from orgparse.node import OrgNode
 from xdg_base_dirs import xdg_cache_home
@@ -25,6 +27,7 @@ from typing import (
     Any,
     Literal,
     NoReturn,
+    TypeAlias,
     cast,
     final,
     no_type_check,
@@ -33,11 +36,13 @@ from typing import (
 
 from llama_index.core import (
     KeywordTableIndex,
+    PromptTemplate,
     QueryBundle,
     SimpleDirectoryReader,
     SimpleKeywordTableIndex,
     StorageContext,
     VectorStoreIndex,
+    get_response_synthesizer,  # pyright: ignore[reportUnknownVariableType]
     load_indices_from_storage,  # pyright: ignore[reportUnknownVariableType]
 )
 from llama_index.core.async_utils import DEFAULT_NUM_WORKERS
@@ -49,14 +54,15 @@ from llama_index.core.chat_engine import (
 )
 from llama_index.core.chat_engine.context import ContextChatEngine
 from llama_index.core.chat_engine.types import (
-    AgentChatResponse,
+    AGENT_CHAT_RESPONSE_TYPE,
     BaseChatEngine,
     StreamingAgentChatResponse,
 )
 from llama_index.core.data_structs.data_structs import IndexDict
 from llama_index.core.embeddings import BaseEmbedding
-from llama_index.core.evaluation import GuidelineEvaluator, RelevancyEvaluator
-from llama_index.core.evaluation.guideline import DEFAULT_GUIDELINES
+
+# from llama_index.core.evaluation import GuidelineEvaluator, RelevancyEvaluator
+# from llama_index.core.evaluation.guideline import DEFAULT_GUIDELINES
 from llama_index.core.extractors import (
     KeywordExtractor,
     QuestionsAnsweredExtractor,
@@ -77,13 +83,18 @@ from llama_index.core.node_parser import (
     SentenceWindowNodeParser,
 )
 from llama_index.core.query_engine import (
+    BaseQueryEngine,
     CitationQueryEngine,
+    CustomQueryEngine,
     RetrieverQueryEngine,
-    RetryQueryEngine,
-    RetrySourceQueryEngine,
+    # RetryQueryEngine,
+    # RetrySourceQueryEngine,
 )
 from llama_index.core.readers.base import BaseReader
-from llama_index.core.response_synthesizers import ResponseMode
+from llama_index.core.response_synthesizers import (
+    BaseSynthesizer,
+    ResponseMode,
+)
 from llama_index.core.retrievers import BaseRetriever, QueryFusionRetriever
 from llama_index.core.retrievers.fusion_retriever import FUSION_MODES
 from llama_index.core.schema import (
@@ -97,8 +108,9 @@ from llama_index.core.storage.chat_store import SimpleChatStore
 from llama_index.core.storage.docstore import SimpleDocumentStore
 from llama_index.core.storage.index_store import SimpleIndexStore
 from llama_index.core.storage.storage_context import DEFAULT_PERSIST_DIR
-from llama_index.core.tools import FunctionTool
 from llama_index.core.vector_stores.simple import SimpleVectorStore
+
+# from llama_index.core.tools import FunctionTool
 
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.embeddings.ollama import OllamaEmbedding
@@ -182,7 +194,7 @@ async def read_files(
         error(f"Input path is unrecognized or non-existent: {read_from}")
 
 
-async def convert_str(read_from: str | None) -> str | None:
+def convert_str(read_from: str | None) -> str | None:
     if read_from is None:
         return read_from
     elif read_from == "-":
@@ -190,7 +202,7 @@ async def convert_str(read_from: str | None) -> str | None:
         if not s:
             error("No input provided on standard input")
         return s
-    elif await asyncio.to_thread(os.path.isfile, read_from):
+    elif os.path.isfile(read_from):
         with open(read_from, "r") as f:
             return f.read()
     else:
@@ -244,8 +256,8 @@ class GlobalJSONMeta(JSONWizard.Meta):
 
 @dataclass
 class LLMConfig(YAMLWizard):
-    provider: str
-    model: str
+    provider: str = "OpenAI"
+    model: str = DEFAULT_OPENAI_MODEL
     base_url: str | None = None
     api_key: str = "fake_key"
     api_version: str = ""
@@ -265,21 +277,32 @@ class EmbeddingConfig(LLMConfig):
 
 
 @dataclass
-class SentenceSplitterConfig(YAMLWizard):
+class KeywordsConfig(YAMLWizard):
+    collect: bool = False
+    llm: LLMConfig | None = None
+
+
+@dataclass
+class SplitterConfig(YAMLWizard):
+    pass
+
+
+@dataclass
+class SentenceSplitterConfig(SplitterConfig):
     chunk_size: int = 512
     chunk_overlap: int = 20
     include_metadata: bool = True
 
 
 @dataclass
-class SentenceWindowSplitterConfig(YAMLWizard):
+class SentenceWindowSplitterConfig(SplitterConfig):
     window_size: int = 3
     window_metadata_key: str = "window"
     original_text_metadata_key: str = "original_text"
 
 
 @dataclass
-class SemanticSplitterConfig(YAMLWizard):
+class SemanticSplitterConfig(SplitterConfig):
     embedding: EmbeddingConfig | None
     buffer_size: int = 256
     breakpoint_percentile_threshold: int = 95
@@ -287,13 +310,13 @@ class SemanticSplitterConfig(YAMLWizard):
 
 
 @dataclass
-class JSONNodeParserConfig(YAMLWizard):
+class JSONNodeParserConfig(SplitterConfig):
     include_metadata: bool = True
     include_prev_next_rel: bool = True
 
 
 @dataclass
-class CodeSplitterConfig(YAMLWizard):
+class CodeSplitterConfig(SplitterConfig):
     language: str = "python"
     chunk_lines: int = 40
     chunk_lines_overlap: int = 15
@@ -301,41 +324,94 @@ class CodeSplitterConfig(YAMLWizard):
 
 
 @dataclass
-class Config(YAMLWizard):
+class ExtractorConfig(YAMLWizard):
+    llm: LLMConfig = field(default_factory=LLMConfig)
+
+
+@dataclass
+class KeywordExtractorConfig(ExtractorConfig):
+    keywords: int = 5
+
+
+@dataclass
+class SummaryExtractorConfig(ExtractorConfig):
+    summaries: list[str] = ["self"]
+
+
+@dataclass
+class TitleExtractorConfig(ExtractorConfig):
+    nodes: int = 5
+
+
+@dataclass
+class QuestionsAnsweredExtractorConfig(ExtractorConfig):
+    questions: int = 1
+
+
+@dataclass
+class ChatEngineConfig(YAMLWizard):
+    pass
+
+
+@dataclass
+class SimpleChatEngineConfig(ChatEngineConfig):
+    pass
+
+
+@dataclass
+class ContextChatEngineConfig(ChatEngineConfig):
+    pass
+
+
+@dataclass
+class CondensePlusContextChatEngineConfig(ChatEngineConfig):
+    skip_condense: bool = False
+
+
+@dataclass
+class RetrievalConfig(YAMLWizard):
     db_conn: str | None = None
-    embedding: EmbeddingConfig | None = None
-    llm: LLMConfig | None = None
-    splitter: (
-        SentenceSplitterConfig
-        | SentenceWindowSplitterConfig
-        | SemanticSplitterConfig
-        | JSONNodeParserConfig
-        | CodeSplitterConfig
-    ) = field(default_factory=SentenceSplitterConfig)
-    # Questions answered extractor
-    questions_answered: int | None = None
-    questions_answered_llm: LLMConfig | None = None
     hybrid_search: bool = False
-    chat_user: str | None = None
-    metadata_extractor_llm: LLMConfig | None = None
-    collect_keywords: bool = False
-    keywords_llm: LLMConfig | None = None
+
+    embedding: EmbeddingConfig | None = None
+
+    keywords: KeywordsConfig = field(default_factory=KeywordsConfig)
+
+    splitter: SplitterConfig = field(default_factory=SentenceSplitterConfig)
+    extractors: list[ExtractorConfig] = field(default_factory=list)
+    top_k: int = 3
+
+
+@dataclass
+class QueryConfig(YAMLWizard):
+    llm: LLMConfig = field(default_factory=LLMConfig)
     retries: bool = False
     source_retries: bool = False
     evaluator_llm: LLMConfig | None = None
-    summarize_chat: bool = False
+
+
+@dataclass
+class ChatConfig(YAMLWizard):
+    llm: LLMConfig = field(default_factory=LLMConfig)
+    engine: ChatEngineConfig = field(default_factory=SimpleChatEngineConfig)
+    default_user: str = "user"
+    summarize: bool = False
+    keep_history: bool = False
+
+
+@dataclass
+class Config(YAMLWizard):
+    retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
+    query: QueryConfig = field(default_factory=QueryConfig)
+    chat: ChatConfig = field(default_factory=ChatConfig)
+
     num_workers: int = DEFAULT_NUM_WORKERS
-    streaming: bool = False
+
+    # jww (2025-05-12): Move into PostgresVectorStoreConfig
     hnsw_m: int = 16
     hnsw_ef_construction: int = 64
     hnsw_ef_search: int = 40
     hnsw_dist_method: str = "vector_cosine_ops"
-    top_k: int = 3
-    token_limit: int = 1500
-    recursive: bool = False
-    host: str = "localhost"
-    port: int = 8000
-    reload_server: bool = False
 
 
 # Readers
@@ -618,6 +694,29 @@ class PostgresDetails:
                 )
 
 
+class SimpleQueryEngine(CustomQueryEngine):
+    """RAG String Query Engine."""
+
+    llm: LLM
+    response_synthesizer: BaseSynthesizer
+    qa_prompt: PromptTemplate = field(
+        default=PromptTemplate("Query: {query_str}\nAnswer: ")
+    )
+
+    def __init__(self, **kwargs: Any):
+        self.response_synthesizer = kwargs[
+            "response_synthesizer"
+        ] or get_response_synthesizer(response_mode=ResponseMode.COMPACT)
+        super().__init__(**kwargs)
+
+    @override
+    def custom_query(self, query_str: str):
+        response = self.llm.complete(
+            self.qa_prompt.format(query_str=query_str)
+        )
+        return str(response)
+
+
 class BGEM3Embedding:
     @classmethod
     def load_from_postgres(
@@ -662,82 +761,77 @@ class BGEM3Embedding:
         )
 
 
-@dataclass
-class Models:
-    embed_llm: BaseEmbedding | BGEM3Embedding | None = None
-    llm: LLM | None = None
-    questions_answered_llm: LLM | None = None
-    metadata_extractor_llm: LLM | None = None
-    keywords_llm: LLM | None = None
-    evaluator_llm: LLM | None = None
+EmbeddingType: TypeAlias = BaseEmbedding | BGEM3Embedding
+FunctionsType: TypeAlias = list[dict[str, Any | None]] | None
+
+
+class Message(BaseModel):
+    role: str
+    content: str
+    name: str | None = None
+
+
+class ChatCompletionRequest(BaseModel):
+    "https://platform.openai.com/docs/api-reference/chat/create"
+    messages: list[Message]
+    model: str
+    # audio
+    frequency_penalty: float | None = 0
+    function_call: str | dict[str, str | None] | None = None
+    # ^ instead use tool_choice
+    functions: FunctionsType = None
+    # ^ instead use tools
+    # logit_bias
+    # logprobs
+    # max_completion_tokens
+    max_tokens: int | None = None
+    # ^ instead use max_completion_tokens
+    # metadata
+    # modalities
+    n: int | None = 1
+    # parallel_tool_calls
+    # prediction
+    presence_penalty: float | None = 0
+    # reasoning_effort: str | None = None
+    # response_format
+    # seed
+    # service_tier
+    # stop
+    # store
+    stream: bool | None = False
+    # stream_options
+    temperature: float | None = 0.7
+    # tool_choice
+    # tools
+    # top_logprobs
+    top_p: float | None = 1.0
+    user: str | None = None
+    # web_search_options
+
+
+class CompletionRequest(BaseModel):
+    model: str
+    prompt: str | list[str]
+    temperature: float | None = 0.7
+    top_p: float | None = 1.0
+    n: int | None = 1
+    stream: bool | None = False
+    max_tokens: int | None = 16
+    presence_penalty: float | None = 0
+    frequency_penalty: float | None = 0
+    user: str | None = None
+
+
+class EmbeddingRequest(BaseModel):
+    model: str
+    input: str | list[str]
+    user: str | None = None
 
 
 @dataclass
 class RAGWorkflow:
     config: Config
     logger: logging.Logger
-    chat_memory: ChatMemoryBuffer | ChatSummaryMemoryBuffer | None = None
-    chat_history: list[ChatMessage] | None = None
-    chat_engine: BaseChatEngine | None = None
-
-    async def initialize(self, verbose: bool = False) -> Models:
-        embed_llm = (
-            self.__load_embedding(
-                self.config.embedding,
-                verbose=verbose,
-            )
-            if self.config.embedding
-            else awaitable_none()
-        )
-        llm = (
-            self.__load_llm(
-                self.config.llm,
-                verbose=verbose,
-            )
-            if self.config.llm
-            else awaitable_none()
-        )
-        questions_answered_llm = (
-            self.__load_llm(
-                self.config.questions_answered_llm,
-                verbose=verbose,
-            )
-            if self.config.questions_answered_llm
-            else awaitable_none()
-        )
-        metadata_extractor_llm = (
-            self.__load_llm(
-                self.config.metadata_extractor_llm,
-                verbose=verbose,
-            )
-            if self.config.metadata_extractor_llm
-            else awaitable_none()
-        )
-        keywords_llm = (
-            self.__load_llm(
-                self.config.keywords_llm,
-                verbose=verbose,
-            )
-            if self.config.keywords_llm
-            else awaitable_none()
-        )
-        evaluator_llm = (
-            self.__load_llm(
-                self.config.evaluator_llm,
-                verbose=verbose,
-            )
-            if self.config.evaluator_llm
-            else awaitable_none()
-        )
-
-        return Models(
-            embed_llm=await embed_llm,
-            llm=await llm,
-            questions_answered_llm=await questions_answered_llm,
-            metadata_extractor_llm=await metadata_extractor_llm,
-            keywords_llm=await keywords_llm,
-            evaluator_llm=await evaluator_llm,
-        )
 
     @classmethod
     async def load_config(cls, config: Path) -> Config:
@@ -746,9 +840,9 @@ class RAGWorkflow:
                 str(config)
             )
             if isinstance(cfg, Config):
-                if cfg.embedding is not None:
-                    if cfg.embedding.provider == "BGEM3":
-                        cfg.embedding.model = "BAAI/bge-m3"
+                if cfg.retrieval.embedding is not None:
+                    if cfg.retrieval.embedding.provider == "BGEM3":
+                        cfg.retrieval.embedding.model = "BAAI/bge-m3"
                 return cfg
             else:
                 error("Config file should define a single Config object")
@@ -779,7 +873,7 @@ class RAGWorkflow:
             user=details.user,
             table_name="vectorstore",
             embed_dim=embedding_dimensions,
-            hybrid_search=self.config.hybrid_search,
+            hybrid_search=self.config.retrieval.hybrid_search,
             hnsw_kwargs={
                 "hnsw_m": self.config.hnsw_m,
                 "hnsw_ef_construction": self.config.hnsw_ef_construction,
@@ -793,7 +887,7 @@ class RAGWorkflow:
         self,
         embed_config: EmbeddingConfig,
         verbose: bool = False,
-    ) -> BaseEmbedding | BGEM3Embedding:
+    ) -> EmbeddingType:
         self.logger.info(
             f"Load embedding {embed_config.provider}:{embed_config.model}"
         )
@@ -840,12 +934,12 @@ class RAGWorkflow:
         else:
             error(f"Embedding model not recognized: {embed_config.model}")
 
-    async def __load_llm(
-        self,
+    @classmethod
+    def __load_llm(
+        cls,
         llm_config: LLMConfig,
         verbose: bool = False,
     ) -> LLM:
-        self.logger.info(f"Load LLM {llm_config.provider}:{llm_config.model}")
         if llm_config.provider == "Ollama":
             return Ollama(
                 model=llm_config.model,
@@ -853,7 +947,7 @@ class RAGWorkflow:
                 temperature=llm_config.temperature,
                 context_window=llm_config.context_window,
                 max_tokens=llm_config.max_tokens,
-                system_prompt=await convert_str(llm_config.system_prompt),
+                system_prompt=convert_str(llm_config.system_prompt),
                 # request_timeout,
                 # prompt_key,
                 # json_mode,
@@ -873,7 +967,7 @@ class RAGWorkflow:
                 timeout=llm_config.timeout,
                 is_chat_model=True,
                 is_function_calling_model=False,
-                system_prompt=await convert_str(llm_config.system_prompt),
+                system_prompt=convert_str(llm_config.system_prompt),
                 # max_retries,
                 # reuse_client,
             )
@@ -888,7 +982,7 @@ class RAGWorkflow:
                 context_window=llm_config.context_window,
                 reasoning_effort=llm_config.reasoning_effort,
                 timeout=llm_config.timeout,
-                system_prompt=await convert_str(llm_config.system_prompt),
+                system_prompt=convert_str(llm_config.system_prompt),
                 # max_retries,
                 # reuse_client,
                 # strict,
@@ -903,7 +997,7 @@ class RAGWorkflow:
                 generate_kwargs={},
                 model_kwargs={"n_gpu_layers": llm_config.gpu_layers},
                 verbose=verbose,
-                system_prompt=await convert_str(llm_config.system_prompt),
+                system_prompt=convert_str(llm_config.system_prompt),
             )
         elif llm_config.provider == "Perplexity":
             return Perplexity(
@@ -917,7 +1011,7 @@ class RAGWorkflow:
                 # in this particular context
                 enable_search_classifier=True,
                 timeout=llm_config.timeout,
-                system_prompt=await convert_str(llm_config.system_prompt),
+                system_prompt=convert_str(llm_config.system_prompt),
                 # max_retries,
             )
         elif llm_config.provider == "OpenRouter":
@@ -929,7 +1023,7 @@ class RAGWorkflow:
                 context_window=llm_config.context_window,
                 reasoning_effort=llm_config.reasoning_effort,
                 timeout=llm_config.timeout,
-                system_prompt=await convert_str(llm_config.system_prompt),
+                system_prompt=convert_str(llm_config.system_prompt),
                 is_chat_model=True,
             )
         elif llm_config.provider == "LMStudio":
@@ -939,13 +1033,32 @@ class RAGWorkflow:
                 temperature=llm_config.temperature,
                 context_window=llm_config.context_window,
                 timeout=llm_config.timeout,
-                system_prompt=await convert_str(llm_config.system_prompt),
+                system_prompt=convert_str(llm_config.system_prompt),
                 is_chat_model=True,
                 # request_timeout,
                 # num_output,
             )
         else:
             error(f"LLM model not recognized: {llm_config.model}")
+
+    @classmethod
+    def realize_llm(
+        cls,
+        llm_config: LLMConfig | None,
+        verbose: bool = False,
+    ) -> LLM | NoReturn:
+        llm = (
+            cls.__load_llm(
+                llm_config=llm_config,
+                verbose=verbose,
+            )
+            if llm_config is not None
+            else None
+        )
+        if llm is None:
+            error(f"Failed to start LLM: {llm_config}")
+        else:
+            return llm
 
     async def __determine_fingerprint(
         self,
@@ -966,7 +1079,8 @@ class RAGWorkflow:
     async def __read_documents(
         self,
         input_files: list[Path],
-        num_workers: int | None,
+        recursive: bool = False,
+        num_workers: int = DEFAULT_NUM_WORKERS,
         verbose: bool = False,
     ) -> Iterable[Document]:
         self.logger.info("Read documents from disk")
@@ -976,19 +1090,12 @@ class RAGWorkflow:
         return SimpleDirectoryReader(
             input_files=input_files,
             file_extractor=file_extractor,
-            recursive=self.config.recursive,
+            recursive=recursive,
         ).load_data(num_workers=num_workers, show_progress=verbose)
 
     async def __load_splitter(
         self,
-        models: Models,
-        splitter: (
-            SentenceSplitterConfig
-            | SentenceWindowSplitterConfig
-            | SemanticSplitterConfig
-            | JSONNodeParserConfig
-            | CodeSplitterConfig
-        ),
+        splitter: SplitterConfig,
         verbose: bool = False,
     ) -> TransformComponent | NoReturn:
         self.logger.info(f"Load splitter {splitter.__class__.__name__}")
@@ -1010,10 +1117,8 @@ class RAGWorkflow:
                     splitter.embedding,
                     verbose=verbose,
                 )
-            elif models.embed_llm is not None:
-                embed_llm = models.embed_llm
             else:
-                error("Semantic splitter needs embedding model")
+                error("Semantic splitter needs an embedding model")
 
             if isinstance(embed_llm, BGEM3Embedding):
                 error("Semantic splitter not working with BGE-M3")
@@ -1029,69 +1134,83 @@ class RAGWorkflow:
                 include_metadata=splitter.include_metadata,
                 include_prev_next_rel=splitter.include_prev_next_rel,
             )
-        elif isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
-            splitter, CodeSplitterConfig
-        ):
+        elif isinstance(splitter, CodeSplitterConfig):
             return CodeSplitter(
                 language=splitter.language,
                 chunk_lines=splitter.chunk_lines,
                 chunk_lines_overlap=splitter.chunk_lines_overlap,
                 max_chars=splitter.max_chars,
             )
+        else:
+            error(f"Unrecognized SplitterConfig: {splitter}")
+
+    async def __load_extractor(
+        self,
+        config: ExtractorConfig,
+        num_workers: int = DEFAULT_NUM_WORKERS,
+        verbose: bool = False,
+    ) -> TransformComponent | None:
+        if isinstance(config, KeywordExtractorConfig):
+            llm = self.realize_llm(config.llm, verbose=verbose)
+            return KeywordExtractor(
+                keywords=config.keywords,
+                llm=llm,
+                num_workers=num_workers,
+                show_progress=verbose,
+            )
+        elif isinstance(config, SummaryExtractorConfig):
+            llm = self.realize_llm(config.llm, verbose=verbose)
+            return SummaryExtractor(
+                summaries=config.summaries,
+                llm=llm,
+                num_workers=num_workers,
+                show_progress=verbose,
+            )
+        elif isinstance(config, TitleExtractorConfig):
+            llm = self.realize_llm(config.llm, verbose=verbose)
+            return TitleExtractor(
+                nodes=config.nodes,
+                llm=llm,
+                num_workers=num_workers,
+                show_progress=verbose,
+            )
+        elif isinstance(config, QuestionsAnsweredExtractorConfig):
+            self.logger.info(f"Generate {config.questions} questions/chunk")
+            llm = self.realize_llm(config.llm, verbose=verbose)
+            return QuestionsAnsweredExtractor(
+                questions=config.questions,
+                llm=llm,
+                num_workers=num_workers,
+                show_progress=verbose,
+            )
+        else:
+            error(f"Unrecognized ExtractorConfig: {config}")
 
     async def __split_documents(
         self,
-        models: Models,
         documents: Iterable[Document],
-        questions_answered: int | None,
-        num_workers: int | None,
+        num_workers: int = DEFAULT_NUM_WORKERS,
         verbose: bool = False,
     ) -> Sequence[BaseNode]:
         self.logger.info("Split documents")
 
         transformations: list[TransformComponent] = [
             await self.__load_splitter(
-                models=models,
-                splitter=self.config.splitter,
+                splitter=self.config.retrieval.splitter,
                 verbose=verbose,
             )
         ]
 
-        if models.llm is not None:
-            transformations.extend(
-                [
-                    KeywordExtractor(
-                        keywords=5,
-                        llm=models.keywords_llm or models.llm,
-                        num_workers=self.config.num_workers,
-                        show_progress=verbose,
-                    ),
-                    SummaryExtractor(
-                        summaries=["self"],
-                        llm=models.metadata_extractor_llm or models.llm,
-                        num_workers=self.config.num_workers,
-                        show_progress=verbose,
-                    ),
-                    TitleExtractor(
-                        nodes=5,
-                        llm=models.metadata_extractor_llm or models.llm,
-                        num_workers=self.config.num_workers,
-                        show_progress=verbose,
-                    ),
-                ]
+        extractors = [
+            await self.__load_extractor(
+                entry,
+                num_workers=num_workers,
+                verbose=verbose,
             )
-            if questions_answered is not None:
-                self.logger.info(
-                    f"Generate {questions_answered} questions/chunk"
-                )
-                transformations.append(
-                    QuestionsAnsweredExtractor(
-                        questions=questions_answered,
-                        llm=models.questions_answered_llm or models.llm,
-                        num_workers=self.config.num_workers,
-                        show_progress=verbose,
-                    )
-                )
+            for entry in self.config.retrieval.extractors
+        ]
+
+        transformations.extend([x for x in extractors if x is not None])
 
         # ingest_cache = IngestionCache(
         #     cache=RedisCache.from_host_and_port(host="127.0.0.1", port=6379),
@@ -1110,9 +1229,8 @@ class RAGWorkflow:
 
     async def __populate_vector_store(
         self,
-        models: Models,
+        embed_llm: EmbeddingType,
         nodes: Sequence[BaseNode],
-        collect_keywords: bool,
         storage_context: StorageContext,
         verbose: bool = False,
     ) -> tuple[VectorStoreIndex | BGEM3Index, BaseKeywordTableIndex | None]:
@@ -1124,7 +1242,7 @@ class RAGWorkflow:
                 key=struct.index_id
             )
 
-        if isinstance(models.embed_llm, BGEM3Embedding):
+        if isinstance(embed_llm, BGEM3Embedding):
             vector_index = BGEM3Index(
                 nodes,
                 storage_context=storage_context,
@@ -1135,13 +1253,13 @@ class RAGWorkflow:
             vector_index = VectorStoreIndex(
                 nodes,
                 storage_context=storage_context,
-                embed_model=models.embed_llm,
+                embed_model=embed_llm,
                 show_progress=verbose,
                 use_async=True,
             )
 
-        if collect_keywords:
-            if models.llm is None:
+        if self.config.retrieval.keywords.collect:
+            if self.config.retrieval.keywords.llm is None:
                 keyword_index = SimpleKeywordTableIndex(
                     nodes,
                     storage_context=storage_context,
@@ -1149,12 +1267,13 @@ class RAGWorkflow:
                     use_async=True,
                 )
             else:
+                llm = self.realize_llm(self.config.retrieval.keywords.llm)
                 keyword_index = KeywordTableIndex(
                     nodes,
                     storage_context=storage_context,
                     show_progress=verbose,
                     use_async=True,
-                    llm=models.keywords_llm or models.llm,
+                    llm=llm,
                 )
         else:
             keyword_index = None
@@ -1163,12 +1282,10 @@ class RAGWorkflow:
 
     async def __ingest_documents(
         self,
+        embed_llm: EmbeddingType,
         storage_context: StorageContext,
-        models: Models,
         input_files: list[Path],
-        collect_keywords: bool,
-        questions_answered: int | None,
-        num_workers: int | None,
+        num_workers: int = DEFAULT_NUM_WORKERS,
         verbose: bool = False,
     ) -> tuple[
         VectorStoreIndex | BGEM3Index,
@@ -1181,17 +1298,14 @@ class RAGWorkflow:
         )
 
         nodes = await self.__split_documents(
-            models,
             documents,
-            questions_answered=questions_answered,
             num_workers=num_workers,
             verbose=verbose,
         )
 
         vector_index, keyword_index = await self.__populate_vector_store(
-            models,
-            nodes,
-            collect_keywords=collect_keywords,
+            embed_llm=embed_llm,
+            nodes=nodes,
             storage_context=storage_context,
             verbose=verbose,
         )
@@ -1208,11 +1322,11 @@ class RAGWorkflow:
         vector_index: BGEM3Index | None,
         persist_dir: Path | None,
     ):
-        if self.config.db_conn is not None:
+        if self.config.retrieval.db_conn is not None:
             if vector_index is not None:
                 self.logger.info("Persist BGE-M3 index to database")
                 BGEM3Embedding.persist_to_postgres(
-                    self.config.db_conn,
+                    self.config.retrieval.db_conn,
                     vector_index,
                 )
         elif persist_dir is not None:
@@ -1243,12 +1357,12 @@ class RAGWorkflow:
         persist_dir: Path | None,
     ) -> StorageContext:
         if (
-            self.config.db_conn is not None
-            and self.config.embedding is not None
+            self.config.retrieval.db_conn is not None
+            and self.config.retrieval.embedding is not None
         ):
             docstore, index_store, vector_store = await self.__postgres_stores(
-                uri=self.config.db_conn,
-                embedding_dimensions=self.config.embedding.dimensions,
+                uri=self.config.retrieval.db_conn,
+                embedding_dimensions=self.config.retrieval.embedding.dimensions,
             )
         elif persist_dir is not None and os.path.isdir(persist_dir):
             docstore = SimpleDocumentStore.from_persist_dir(str(persist_dir))
@@ -1272,10 +1386,9 @@ class RAGWorkflow:
 
     async def __load_indices(
         self,
+        embed_llm: EmbeddingType,
         storage_context: StorageContext,
-        models: Models,
         persist_dir: Path | None,
-        collect_keywords: bool = False,
     ) -> tuple[
         VectorStoreIndex | BGEM3Index | None,
         BaseKeywordTableIndex | None,
@@ -1284,13 +1397,13 @@ class RAGWorkflow:
         keyword_index: BaseKeywordTableIndex | None = None
 
         try:
-            if self.config.db_conn is not None:
+            if self.config.retrieval.db_conn is not None:
                 self.logger.info("Read indices from database")
             else:
                 self.logger.info("Read indices from cache")
 
-            if isinstance(models.embed_llm, BGEM3Embedding):
-                if self.config.db_conn is not None:
+            if isinstance(embed_llm, BGEM3Embedding):
+                if self.config.retrieval.db_conn is not None:
                     error("BGE-M3 not current compatible with databases")
                     # logger.info("Read BGE-M3 index from database")
                     # self.vector_index = BGEM3Embedding.load_from_postgres(
@@ -1309,19 +1422,21 @@ class RAGWorkflow:
                     load_indices_from_storage(
                         storage_context=storage_context,
                         embed_model=(
-                            models.embed_llm
-                            if not isinstance(models.embed_llm, BGEM3Embedding)
+                            embed_llm
+                            if not isinstance(embed_llm, BGEM3Embedding)
                             else None
                         ),
-                        llm=models.llm,
+                        # This doesn't actually need an llm, but it tries to
+                        # load one if it's None
+                        llm=embed_llm,
                         index_ids=(
                             ["vector_index", "keyword_index"]
-                            if collect_keywords
+                            if self.config.retrieval.keywords.collect
                             else ["vector_index"]
                         ),
                     )
                 )
-                if collect_keywords:
+                if self.config.retrieval.keywords.collect:
                     [vi, ki] = indices
                     vector_index = cast(VectorStoreIndex, vi)
                     keyword_index = cast(BaseKeywordTableIndex, ki)
@@ -1336,11 +1451,8 @@ class RAGWorkflow:
 
     async def __ingest_files(
         self,
-        models: Models,
         input_files: list[Path] | None,
-        collect_keywords: bool,
-        questions_answered: int | None,
-        num_workers: int | None,
+        num_workers: int = DEFAULT_NUM_WORKERS,
         verbose: bool = False,
     ) -> tuple[
         VectorStoreIndex | BGEM3Index | None,
@@ -1351,12 +1463,12 @@ class RAGWorkflow:
 
         if input_files is None:
             self.logger.info("No input files")
-        elif self.config.embedding is None:
+        elif self.config.retrieval.embedding is None:
             error("Cannot ingest files without an embedding model")
         else:
             persist_dir = await self.__persist_dir(
                 input_files,
-                self.config.embedding,
+                self.config.retrieval.embedding,
             )
             persisted = os.path.isdir(persist_dir)
 
@@ -1364,12 +1476,19 @@ class RAGWorkflow:
             persist_dir=persist_dir,
         )
 
-        if self.config.db_conn is not None or persisted:
+        if self.config.retrieval.embedding is not None:
+            embed_llm = await self.__load_embedding(
+                embed_config=self.config.retrieval.embedding,
+                verbose=verbose,
+            )
+        else:
+            error("File ingestion requires an embedding model")
+
+        if self.config.retrieval.db_conn is not None or persisted:
             vector_index, keyword_index = await self.__load_indices(
+                embed_llm=embed_llm,
                 storage_context=storage_context,
-                models=models,
                 persist_dir=persist_dir,
-                collect_keywords=collect_keywords,
             )
         else:
             vector_index = None
@@ -1377,11 +1496,9 @@ class RAGWorkflow:
 
         if input_files is not None and not persisted:
             vector_index, keyword_index = await self.__ingest_documents(
+                embed_llm=embed_llm,
                 storage_context=storage_context,
-                models=models,
                 input_files=input_files,
-                collect_keywords=collect_keywords,
-                questions_answered=questions_answered,
                 num_workers=num_workers,
                 verbose=verbose,
             )
@@ -1395,21 +1512,20 @@ class RAGWorkflow:
 
     async def load_retriever(
         self,
-        models: Models,
         input_files: list[Path] | None,
         verbose: bool = False,
     ) -> BaseRetriever | None:
         vector_index, keyword_index = await self.__ingest_files(
-            models=models,
             input_files=input_files,
-            collect_keywords=self.config.collect_keywords,
-            questions_answered=self.config.questions_answered,
             num_workers=self.config.num_workers,
             verbose=verbose,
         )
 
         if vector_index is not None:
-            if self.config.db_conn is not None and self.config.hybrid_search:
+            if (
+                self.config.retrieval.db_conn is not None
+                and self.config.retrieval.hybrid_search
+            ):
                 self.logger.info("Create fusion vector retriever")
                 vector_retriever = vector_index.as_retriever(
                     vector_store_query_mode="default",
@@ -1423,17 +1539,17 @@ class RAGWorkflow:
                 )
                 vector_retriever = QueryFusionRetriever(
                     [vector_retriever, text_retriever],
-                    similarity_top_k=self.config.top_k,
+                    similarity_top_k=self.config.retrieval.top_k,
                     num_queries=1,  # set this to 1 to disable query generation
                     mode=FUSION_MODES.RELATIVE_SCORE,
-                    llm=models.llm,
+                    llm=None,  # jww (2025-05-12): FIXME
                     use_async=True,
                     verbose=verbose,
                 )
             else:
                 self.logger.info("Create vector retriever")
                 vector_retriever = vector_index.as_retriever(
-                    similarity_top_k=self.config.top_k,
+                    similarity_top_k=self.config.retrieval.top_k,
                     verbose=verbose,
                 )
         else:
@@ -1476,36 +1592,38 @@ class RAGWorkflow:
             for node in nodes
         ]
 
-    # Query a document collection
-    async def query(
-        self,
-        models: Models,
-        retriever: BaseRetriever | None,
-        query: str,
-        streaming: bool = False,
-        retries: bool = False,
-        source_retries: bool = False,
-        verbose: bool = False,
-    ) -> RESPONSE_TYPE | NoReturn:
-        if retriever is None:
-            error("There is no retriever configured to query")
-        if models.llm is None:
-            error("There is no LLM configured to chat with")
 
-        self.logger.info("Query with retriever query engine")
-        if True:
-            query_engine = CitationQueryEngine(
+@dataclass
+class QueryState:
+    query_engine: BaseQueryEngine
+
+    def __init__(
+        self,
+        llm: LLM,
+        user: str,
+        chat_store: SimpleChatStore | None = None,
+        chat_history: list[ChatMessage] | None = None,
+        retriever: BaseRetriever | None = None,
+        token_limit: int = 1500,
+        system_prompt: str | None = None,
+        summarize_chat: bool = False,
+        show_citations: bool = False,
+        streaming: bool = False,
+        verbose: bool = False,
+    ):
+        if retriever is not None and show_citations:
+            self.query_engine = CitationQueryEngine(
                 retriever=retriever,
-                llm=models.llm,
+                llm=llm,
                 # here we can control how granular citation sources are, the
                 # default is 512
                 # citation_chunk_size=self.config.embedding.chunk_size,
                 # citation_chunk_overlap=self.config.embedding.chunk_overlap,
             )
-        else:
-            query_engine = RetrieverQueryEngine.from_args(
+        elif retriever is not None:
+            self.query_engine = RetrieverQueryEngine.from_args(
                 retriever=retriever,
-                llm=models.llm,
+                llm=llm,
                 use_async=True,
                 streaming=streaming,
                 # response_mode=ResponseMode.REFINE,
@@ -1520,175 +1638,179 @@ class RAGWorkflow:
                 verbose=verbose,
             )
 
-            if retries or source_retries:
-                relevancy_evaluator = RelevancyEvaluator(
-                    llm=models.evaluator_llm or models.llm,
-                )
-                _guideline_evaluator = GuidelineEvaluator(
-                    llm=models.evaluator_llm or models.llm,
-                    guidelines=DEFAULT_GUIDELINES
-                    + "\nThe response should not be overly long.\n"
-                    + "The response should try to summarize where possible.\n",
-                )
-                if source_retries:
-                    self.logger.info("Add retry source query engine")
-                    query_engine = RetrySourceQueryEngine(
-                        query_engine,
-                        evaluator=relevancy_evaluator,
-                        llm=models.llm,
-                    )
-                else:
-                    self.logger.info("Add retry query engine")
-                    query_engine = RetryQueryEngine(
-                        query_engine,
-                        evaluator=relevancy_evaluator,
-                    )
+            # jww (2025-05-12): restore
+            # if retries or source_retries:
+            #     relevancy_evaluator = RelevancyEvaluator(
+            #         llm=models.evaluator_llm or models.llm,
+            #     )
+            #     _guideline_evaluator = GuidelineEvaluator(
+            #         llm=models.evaluator_llm or models.llm,
+            #         guidelines=DEFAULT_GUIDELINES
+            #         + "\nThe response should not be overly long.\n"
+            #         + "The response should try to summarize where possible.\n",
+            #     )
+            #     if source_retries:
+            #         self.logger.info("Add retry source query engine")
+            #         query_engine = RetrySourceQueryEngine(
+            #             query_engine,
+            #             evaluator=relevancy_evaluator,
+            #             llm=models.llm,
+            #         )
+            #     else:
+            #         self.logger.info("Add retry query engine")
+            #         query_engine = RetryQueryEngine(
+            #             query_engine,
+            #             evaluator=relevancy_evaluator,
+            #         )
+        else:
+            self.query_engine = SimpleQueryEngine(llm=llm)
 
-        self.logger.info("Submit query to LLM")
-        return await query_engine.aquery(query)
+    async def query(self, query: str) -> RESPONSE_TYPE:
+        return self.query_engine.query(message=query)
 
-    async def reset_chat(self):
-        self.chat_engine = None
-        self.chat_memory = None
+    async def aquery(self, query: str) -> RESPONSE_TYPE:
+        return await self.query_engine.aquery(message=query)
 
-    # Chat with the LLM, possibly in the context of a document collection
-    async def chat(
-        self,
-        models: Models,
-        retriever: BaseRetriever | None,
+
+@dataclass
+class ChatState:
+    "Chat with the LLM, possibly in the context of a document collection."
+    rag: RAGWorkflow
+    engine: BaseChatEngine | None = None
+
+    @classmethod
+    def __initialize(
+        cls,
+        config: ChatConfig,
+        llm: LLM,
         user: str,
-        query: str,
-        token_limit: int,
         chat_store: SimpleChatStore | None = None,
         chat_history: list[ChatMessage] | None = None,
+        retriever: BaseRetriever | None = None,
+        token_limit: int = 1500,
         system_prompt: str | None = None,
-        summarize_chat: bool = False,
-        streaming: bool = False,
         verbose: bool = False,
-    ) -> StreamingAgentChatResponse | AgentChatResponse | NoReturn:
-        if models.llm is None:
-            error("There is no LLM configured to chat with")
-
-        if chat_store is None and chat_history is not None:
-            await self.reset_chat()
-            chat_store = SimpleChatStore()
+    ) -> BaseChatEngine:
+        chat_store = SimpleChatStore()
+        if chat_history is not None:
             chat_store.set_messages(key=user, messages=chat_history)
 
-        if self.chat_memory is None and chat_store is not None:
-            if summarize_chat:
-                self.chat_memory = ChatSummaryMemoryBuffer.from_defaults(  # pyright: ignore[reportUnknownMemberType]
-                    token_limit=token_limit,
-                    summarize_prompt=(
-                        "The following is a conversation between the user and assistant. "
-                        "Write a concise summary about the contents of this conversation."
-                    ),
-                    chat_store=chat_store,
-                    chat_story_key=user,
-                    llm=models.llm,
-                )
-            else:
-                self.chat_memory = ChatMemoryBuffer.from_defaults(  # pyright: ignore[reportUnknownMemberType]
-                    token_limit=token_limit,
-                    chat_store=chat_store,
-                    chat_store_key=user,
-                    llm=models.llm,
-                )
-
-        if self.chat_engine is None:
-            if retriever is None:
-                self.chat_engine = SimpleChatEngine.from_defaults(
-                    llm=models.llm,
-                    memory=self.chat_memory,
-                    system_prompt=system_prompt,
-                    verbose=verbose,
-                )
-            elif True:
-                self.chat_engine = CondensePlusContextChatEngine.from_defaults(
-                    retriever=retriever,
-                    llm=models.llm,
-                    memory=self.chat_memory,
-                    system_prompt=system_prompt,
-                    skip_condense=False,
-                    verbose=verbose,
-                )
-            else:
-                self.chat_engine = ContextChatEngine.from_defaults(
-                    retriever=retriever,
-                    llm=models.llm,
-                    memory=self.chat_memory,
-                    system_prompt=system_prompt,
-                    verbose=verbose,
-                )
-
-        self.logger.info("Submit chat to LLM")
-        if streaming:
-            return await self.chat_engine.astream_chat(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
-                message=query
+        if config.summarize:
+            chat_memory = ChatSummaryMemoryBuffer.from_defaults(  # pyright: ignore[reportUnknownMemberType]
+                token_limit=token_limit,
+                summarize_prompt=(
+                    "The following is a conversation between the user and assistant. "
+                    "Write a concise summary about the contents of this conversation."
+                ),
+                chat_store=chat_store,
+                chat_story_key=user,
+                llm=llm,
             )
         else:
-            return await self.chat_engine.achat(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-                message=query
+            chat_memory = ChatMemoryBuffer.from_defaults(  # pyright: ignore[reportUnknownMemberType]
+                token_limit=token_limit,
+                chat_store=chat_store,
+                chat_store_key=user,
+                llm=llm,
             )
 
+        if isinstance(config.engine, ContextChatEngineConfig):
+            if retriever is None:
+                error("ContextChatEngine requires a retriever")
+            chat_engine = ContextChatEngine.from_defaults(
+                retriever=retriever,
+                llm=llm,
+                memory=chat_memory,
+                system_prompt=system_prompt,
+                verbose=verbose,
+            )
+        elif isinstance(config.engine, CondensePlusContextChatEngineConfig):
+            if retriever is None:
+                error("ContextChatEngine requires a retriever")
+            chat_engine = CondensePlusContextChatEngine.from_defaults(
+                retriever=retriever,
+                llm=llm,
+                memory=chat_memory,
+                system_prompt=system_prompt,
+                skip_condense=config.engine.skip_condense,
+                verbose=verbose,
+            )
+        else:
+            assert isinstance(config.engine, SimpleChatEngineConfig)
+            chat_engine = SimpleChatEngine.from_defaults(
+                llm=llm,
+                memory=chat_memory,
+                system_prompt=system_prompt,
+                verbose=verbose,
+            )
 
-def query_perplexity(query: str) -> str:
-    """
-    Queries the Perplexity API via the LlamaIndex integration.
+        return chat_engine
 
-    This function instantiates a Perplexity LLM with updated default settings
-    (using model "sonar-pro" and enabling search classifier so that the API
-    can intelligently decide if a search is needed), wraps the query into a
-    ChatMessage, and returns the generated response content.
-    """
-    pplx_api_key = (
-        "your-perplexity-api-key"  # Replace with your actual API key
-    )
+    def chat_engine(
+        self,
+        verbose: bool = False,
+        **kwargs: Any,
+    ) -> BaseChatEngine:
+        if self.engine is None:
+            llm = RAGWorkflow.realize_llm(
+                self.rag.config.chat.llm, verbose=verbose
+            )
+            self.engine = ChatState.__initialize(
+                self.rag.config.chat, llm, **kwargs
+            )
+        return self.engine
 
-    llm = Perplexity(
-        api_key=pplx_api_key,
-        model="sonar-pro",
-        temperature=0.7,
-    )
+    def chat(
+        self,
+        query: str,
+        streaming: bool = False,
+        verbose: bool = False,
+    ) -> StreamingAgentChatResponse | AGENT_CHAT_RESPONSE_TYPE:
+        if streaming:
+            return self.chat_engine(verbose).stream_chat(message=query)
+        else:
+            return self.chat_engine(verbose).chat(message=query)
 
-    messages = [ChatMessage(role="user", content=query)]
-    response = llm.chat(messages)
-    return response.message.content or ""
-
-
-def query_perplexity_tool() -> FunctionTool:
-    return FunctionTool.from_defaults(fn=query_perplexity)
+    async def achat(
+        self,
+        query: str,
+        streaming: bool = False,
+        verbose: bool = False,
+    ) -> StreamingAgentChatResponse | AGENT_CHAT_RESPONSE_TYPE:
+        if streaming:
+            return await self.chat_engine(verbose).astream_chat(message=query)
+        else:
+            return await self.chat_engine(verbose).achat(message=query)
 
 
 async def rag_initialize(
     config_path: Path,
     input_from: str | None,
+    recursive: bool = False,
     verbose: bool = False,
-) -> tuple[RAGWorkflow, Models, BaseRetriever | None]:
+) -> tuple[RAGWorkflow, BaseRetriever | None]:
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
     config = await RAGWorkflow.load_config(config_path)
 
     if input_from is not None:
-        input_files = read_files(input_from, config.recursive)
+        input_files = read_files(input_from, recursive)
     else:
         input_files = awaitable_none()
 
     rag = RAGWorkflow(config, logging.getLogger("rag"))
 
-    models = await rag.initialize(
-        verbose=verbose,
-    )
-
-    if config.embedding is not None:
+    if config.retrieval.embedding is not None:
+        # If the input_files is None, the retriever might still load indices
+        # from cache or a database
         retriever = await rag.load_retriever(
-            models=models,
             input_files=await input_files,
             verbose=verbose,
         )
     else:
         retriever = None
 
-    return (rag, models, retriever)
+    return (rag, retriever)
 
 
 def rebuild_postgres_db(db_name: str):
