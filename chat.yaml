@@ -1,10 +1,12 @@
 query:
   llm: &llm
     provider: "OpenAILike"
-    model: "Qwen3-0.6B"
+    model: "Llama-4-Maverick-17B-128E-Instruct"
     base_url: "http://localhost:8080/v1"
     # base_url: "http://192.168.50.5:8080/v1"
-    max_tokens: 200
+    context_window: 100000
+    temperature: 0.7
+    max_tokens: 1500
     timeout: 7200
   source_retries: false
 
@@ -16,7 +18,7 @@ chat:
   #   type: SimpleChatEngineConfig
 
 retrieval:
-  top_k: 3
+  top_k: 40
 
   # vector_store:
   #   connection: "postgresql+psycopg2://postgres@localhost:5432/vector_db"
@@ -28,19 +30,21 @@ retrieval:
   #   dimensions: 1024
   embedding:
     provider: "HuggingFace"
-    # model: "BAAI/bge-large-en-v1.5"
-    model: "BAAI/bge-base-en-v1.5"
+    model: "BAAI/bge-large-en-v1.5"
+    # model: "BAAI/bge-base-en-v1.5"
     dimensions: 512
 
   splitter:
     type: SentenceSplitterConfig
-    chunk_size: 2048
-    chunk_overlap: 256
+    chunk_size: 512
+    chunk_overlap: 20
 
   extractors:
     - type: KeywordExtractorConfig
       keywords: 5
-      llm: *llm
+      llm:
+        <<: *llm
+        max_tokens: 100
     - type: SummaryExtractorConfig
       summaries:
         - "self"

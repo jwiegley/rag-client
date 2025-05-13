@@ -5,10 +5,10 @@
 import base64
 import hashlib
 import logging
-import pprint
 import os
 import sys
 from llama_index.core.constants import DEFAULT_EMBED_BATCH_SIZE
+from llama_index.core.query_engine.custom import STR_OR_RESPONSE_TYPE
 from llama_index.llms.openai.base import DEFAULT_OPENAI_MODEL
 import psycopg2
 import llama_cpp
@@ -101,6 +101,7 @@ from llama_index.core.schema import (
     Document,
     Node,
     NodeWithScore,
+    QueryType,
     TransformComponent,
 )
 from llama_index.core.storage.chat_store import SimpleChatStore
@@ -235,7 +236,7 @@ def clean_special_tokens(text: str) -> str:
 class GlobalJSONMeta(JSONWizard.Meta):
     tag_key = "type"
     auto_assign_tags = True
-    v1_debug = logging.INFO
+    # v1_debug = logging.INFO
 
 
 @dataclass
@@ -381,6 +382,10 @@ class PostgresVectorStoreConfig(YAMLWizard):
 
 @dataclass
 class RetrievalConfig(YAMLWizard):
+    class _(JSONWizard.Meta):
+        tag_key = "type"
+        auto_assign_tags = True
+
     embedding: EmbeddingConfig | None = None
     keywords: KeywordsConfig = field(default_factory=KeywordsConfig)
     splitter: SplitterConfig = field(default_factory=SentenceSplitterConfig)
@@ -394,6 +399,7 @@ class QueryConfig(YAMLWizard):
     llm: LLMConfig = field(default_factory=LLMConfig)
     retries: bool = False
     source_retries: bool = False
+    show_citations: bool = False
     evaluator_llm: LLMConfig | None = None
 
 
@@ -709,7 +715,7 @@ class SimpleQueryEngine(CustomQueryEngine):
         super().__init__(**kwargs)
 
     @override
-    def custom_query(self, query_str: str):
+    def custom_query(self, query_str: str) -> STR_OR_RESPONSE_TYPE:
         response = self.llm.complete(self.qa_prompt.format(query_str=query_str))
         return str(response)
 
@@ -1554,19 +1560,14 @@ class QueryState:
 
     def __init__(
         self,
+        config: QueryConfig,
         llm: LLM,
-        user: str,
-        chat_store: SimpleChatStore | None = None,
-        chat_history: list[ChatMessage] | None = None,
         retriever: BaseRetriever | None = None,
-        token_limit: int = 1500,
-        system_prompt: str | None = None,
-        summarize_chat: bool = False,
-        show_citations: bool = False,
         streaming: bool = False,
         verbose: bool = False,
     ):
-        if retriever is not None and show_citations:
+        # jww (2025-05-13): Add MultiStepQueryEngine
+        if retriever is not None and config.show_citations:
             self.query_engine = CitationQueryEngine(
                 retriever=retriever,
                 llm=llm,
@@ -1580,8 +1581,8 @@ class QueryState:
                 retriever=retriever,
                 llm=llm,
                 streaming=streaming,
-                # response_mode=ResponseMode.REFINE,
-                response_mode=ResponseMode.COMPACT,
+                response_mode=ResponseMode.REFINE,
+                # response_mode=ResponseMode.COMPACT,
                 # response_mode=ResponseMode.SIMPLE_SUMMARIZE,
                 # response_mode=ResponseMode.TREE_SUMMARIZE,
                 # response_mode=ResponseMode.GENERATION, # ignore context
@@ -1619,22 +1620,20 @@ class QueryState:
         else:
             self.query_engine = SimpleQueryEngine(llm=llm)
 
-    def query(self, query: str) -> RESPONSE_TYPE:
-        return self.query_engine.query(message=query)
+    def query(self, query: QueryType) -> RESPONSE_TYPE:
+        return self.query_engine.query(query)
 
-    async def aquery(self, query: str) -> RESPONSE_TYPE:
-        return await self.query_engine.aquery(message=query)
+    async def aquery(self, query: QueryType) -> RESPONSE_TYPE:
+        return await self.query_engine.aquery(query)
 
 
 @dataclass
 class ChatState:
     "Chat with the LLM, possibly in the context of a document collection."
-    rag: RAGWorkflow
-    engine: BaseChatEngine | None = None
+    chat_engine: BaseChatEngine
 
-    @classmethod
-    def __initialize(
-        cls,
+    def __init__(
+        self,
         config: ChatConfig,
         llm: LLM,
         user: str,
@@ -1644,7 +1643,7 @@ class ChatState:
         token_limit: int = 1500,
         system_prompt: str | None = None,
         verbose: bool = False,
-    ) -> BaseChatEngine:
+    ):
         chat_store = SimpleChatStore()
         if chat_history is not None:
             chat_store.set_messages(key=user, messages=chat_history)
@@ -1698,39 +1697,27 @@ class ChatState:
                 verbose=verbose,
             )
 
-        return chat_engine
-
-    def chat_engine(
-        self,
-        verbose: bool = False,
-        **kwargs: Any,
-    ) -> BaseChatEngine:
-        if self.engine is None:
-            llm = RAGWorkflow.realize_llm(self.rag.config.chat.llm, verbose=verbose)
-            self.engine = ChatState.__initialize(self.rag.config.chat, llm, **kwargs)
-        return self.engine
+        self.chat_engine = chat_engine
 
     def chat(
         self,
         query: str,
         streaming: bool = False,
-        verbose: bool = False,
     ) -> StreamingAgentChatResponse | AGENT_CHAT_RESPONSE_TYPE:
         if streaming:
-            return self.chat_engine(verbose).stream_chat(message=query)
+            return self.chat_engine.stream_chat(query)
         else:
-            return self.chat_engine(verbose).chat(message=query)
+            return self.chat_engine.chat(query)
 
     async def achat(
         self,
         query: str,
         streaming: bool = False,
-        verbose: bool = False,
     ) -> StreamingAgentChatResponse | AGENT_CHAT_RESPONSE_TYPE:
         if streaming:
-            return await self.chat_engine(verbose).astream_chat(message=query)
+            return await self.chat_engine.astream_chat(query)
         else:
-            return await self.chat_engine(verbose).achat(message=query)
+            return await self.chat_engine.achat(query)
 
 
 def rag_initialize(

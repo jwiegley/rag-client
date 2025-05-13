@@ -1,10 +1,12 @@
 #!/usr/bin/env python
 # pyright: reportUnknownVariableType=false
 
+import atexit
 import json
 import logging
 import sys
 import argparse
+import readline
 
 from typed_argparse import TypedArgs
 from xdg_base_dirs import xdg_config_home
@@ -15,7 +17,7 @@ from llama_index.core.base.response.schema import (
     Response,
 )
 from llama_index.core.chat_engine.types import (
-    AgentChatResponse,
+    AGENT_CHAT_RESPONSE_TYPE,
     StreamingAgentChatResponse,
 )
 from llama_index.core.storage.chat_store import SimpleChatStore
@@ -64,7 +66,11 @@ def parse_args(arguments: list[str] = sys.argv[1:]) -> Args:
         "--reload-server", action="store_true", help="Reload on source change?"
     )
     _ = parser.add_argument(
-        "--config", "-c", type=str, help="Yaml config file, to set argument defaults"
+        "--config",
+        "-c",
+        type=str,
+        required=True,
+        help="Yaml config file, to set argument defaults",
     )
     _ = parser.add_argument("command")
     _ = parser.add_argument("args", nargs=argparse.REMAINDER)
@@ -79,8 +85,8 @@ def search_command(rag: RAGWorkflow, retriever: BaseRetriever, query: str):
     print(json.dumps(nodes, indent=2))
 
 
-def query_command(query_state: QueryState, query: str):
-    response: RESPONSE_TYPE = query_state.query(query=query)
+def query_command(query_state: QueryState, query: QueryType):
+    response = query_state.query(query=query)
     match response:
         case StreamingResponse():
             for token in response.response_gen:
@@ -94,7 +100,7 @@ def query_command(query_state: QueryState, query: str):
 
 
 def chat_command(chat_state: ChatState, query: str, streaming: bool):
-    response: StreamingAgentChatResponse | AgentChatResponse = chat_state.chat(
+    response = chat_state.chat(
         query=query,
         streaming=streaming,
     )
@@ -119,15 +125,34 @@ def rag_client(
             else:
                 error("Search command requires a retriever")
         case "query":
-            query_state = rag.initialize_query(
+            llm = rag.realize_llm(rag.config.query.llm, verbose=args.verbose)
+            query_state = QueryState(
+                config=rag.config.query,
+                llm=llm,
                 retriever=retriever,
-                # retries=retries,
-                # source_retries=source_retries,
                 streaming=args.streaming,
                 verbose=args.verbose,
             )
-            query_command(query_state, args.args[0])
+            query_command(query_state, query=args.args[0])
         case "chat":
+            # Path to the history file (change as needed)
+            HISTFILE = xdg_config_home() / "rag-client" / "chat_history"
+
+            # Load history if it exists
+            try:
+                readline.read_history_file(HISTFILE)
+            except FileNotFoundError:
+                pass
+
+            # Optionally limit the history length
+            readline.set_history_length(1000)
+
+            # Save history on exit
+            _ = atexit.register(readline.write_history_file, HISTFILE)
+
+            # Optional: Enable tab completion (if you want)
+            # readline.parse_and_bind("tab: complete")
+
             user = rag.config.chat.default_user or "user"
 
             chat_store_json = xdg_config_home() / "rag-client" / "chat_store.json"
@@ -141,7 +166,8 @@ def rag_client(
 
             while True:
                 query = input(f"\n{user}> ")
-                if query == "exit":
+                if query.strip().lower() in {"exit", "quit"}:
+                    print("Goodbye!")
                     if rag.config.chat.keep_history:
                         chat_store.persist(persist_path=str(chat_store_json))
                     break
@@ -150,17 +176,27 @@ def rag_client(
                         search_command(rag, retriever, query[7:])
                 elif query.startswith("query "):
                     if query_state is None:
-                        query_state = rag.initialize_query(
+                        llm = rag.realize_llm(
+                            rag.config.query.llm, verbose=args.verbose
+                        )
+                        query_state = QueryState(
+                            config=rag.config.query,
+                            llm=llm,
                             retriever=retriever,
-                            # retries=retries,
-                            # source_retries=source_retries,
                             streaming=args.streaming,
                             verbose=args.verbose,
                         )
                     query_command(query_state, query[6:])
                 else:
                     if chat_state is None:
-                        chat_state = rag.initialize_chat(
+                        llm = rag.realize_llm(
+                            rag.config.chat.llm,
+                            verbose=args.verbose,
+                        )
+                        chat_state = ChatState(
+                            config=rag.config.chat,
+                            llm=llm,
+                            user="user",
                             retriever=retriever,
                             verbose=args.verbose,
                         )
