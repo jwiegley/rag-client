@@ -335,7 +335,8 @@ class KeywordExtractorConfig(ExtractorConfig):
 
 @dataclass
 class SummaryExtractorConfig(ExtractorConfig):
-    summaries: list[str] = ["self"]
+    # ["self"]
+    summaries: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -1800,11 +1801,13 @@ async def rag_initialize(
 
     rag = RAGWorkflow(config, logging.getLogger("rag"))
 
+    input_files = await input_files
+
     if config.retrieval.embedding is not None:
         # If the input_files is None, the retriever might still load indices
         # from cache or a database
         retriever = await rag.load_retriever(
-            input_files=await input_files,
+            input_files=input_files,
             verbose=verbose,
         )
     else:

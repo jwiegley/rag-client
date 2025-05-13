@@ -47,7 +47,6 @@ def parse_args(arguments: list[str] = sys.argv[1:]) -> Args:
     _ = parser.add_argument(
         "--recursive",
         action="store_true",
-        type=str,
         help="Whether to read directories recursively)",
     )
     _ = parser.add_argument("--verbose", action="store_true", help="Verbose?")
