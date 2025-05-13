@@ -8,15 +8,15 @@ splitter:
   type: SentenceSplitterConfig
   chunk_size: 512
   chunk_overlap: 42
-top_k: 20
+top_k: 3
 db_conn: "postgresql+psycopg2://postgres@localhost:5432/guidance"
-collect_keywords: true
-questions_answered: 3
-source_retries: false
-num_workers: 16
+# collect_keywords: true
+# questions_answered: 3
+# source_retries: false
+# num_workers: 16
 llm:
   provider: "OpenAILike"
-  model: "Qwen3-32B"
+  model: "Qwen3-0.6B"
   base_url: "http://localhost:8080/v1"
   timeout: 7200
   max-tokens: 1000

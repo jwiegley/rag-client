@@ -43,7 +43,10 @@ from llama_index.core import (
 from llama_index.core.async_utils import DEFAULT_NUM_WORKERS
 from llama_index.core.base.embeddings.base import Embedding
 from llama_index.core.base.response.schema import RESPONSE_TYPE
-from llama_index.core.chat_engine import SimpleChatEngine
+from llama_index.core.chat_engine import (
+    CondensePlusContextChatEngine,
+    SimpleChatEngine,
+)
 from llama_index.core.chat_engine.context import ContextChatEngine
 from llama_index.core.chat_engine.types import (
     AgentChatResponse,
@@ -74,6 +77,7 @@ from llama_index.core.node_parser import (
     SentenceWindowNodeParser,
 )
 from llama_index.core.query_engine import (
+    CitationQueryEngine,
     RetrieverQueryEngine,
     RetryQueryEngine,
     RetrySourceQueryEngine,
@@ -820,6 +824,7 @@ class RAGWorkflow:
                 api_version=embed_config.api_version,
                 api_base=embed_config.base_url,
                 timeout=embed_config.timeout,
+                num_workers=self.config.num_workers,
             )
         elif embed_config.provider == "OpenAILike":
             return OpenAILikeEmbedding(
@@ -828,6 +833,7 @@ class RAGWorkflow:
                 api_version=embed_config.api_version,
                 api_base=embed_config.base_url,
                 timeout=embed_config.timeout,
+                num_workers=self.config.num_workers,
             )
         elif embed_config.provider == "BGEM3":
             return BGEM3Embedding()
@@ -1479,6 +1485,7 @@ class RAGWorkflow:
         streaming: bool = False,
         retries: bool = False,
         source_retries: bool = False,
+        verbose: bool = False,
     ) -> RESPONSE_TYPE | NoReturn:
         if retriever is None:
             error("There is no retriever configured to query")
@@ -1486,44 +1493,56 @@ class RAGWorkflow:
             error("There is no LLM configured to chat with")
 
         self.logger.info("Query with retriever query engine")
-        query_engine = RetrieverQueryEngine.from_args(
-            retriever=retriever,
-            llm=models.llm,
-            use_async=True,
-            streaming=streaming,
-            # response_mode=ResponseMode.REFINE,
-            response_mode=ResponseMode.COMPACT,
-            # response_mode=ResponseMode.SIMPLE_SUMMARIZE,
-            # response_mode=ResponseMode.TREE_SUMMARIZE,
-            # response_mode=ResponseMode.GENERATION, # ignore context
-            # response_mode=ResponseMode.NO_TEXT, # only context
-            # response_mode=ResponseMode.CONTEXT_ONLY,
-            # response_mode=ResponseMode.ACCUMULATE,
-            # response_mode=ResponseMode.COMPACT_ACCUMULATE,
-        )
+        if True:
+            query_engine = CitationQueryEngine(
+                retriever=retriever,
+                llm=models.llm,
+                # here we can control how granular citation sources are, the
+                # default is 512
+                # citation_chunk_size=self.config.embedding.chunk_size,
+                # citation_chunk_overlap=self.config.embedding.chunk_overlap,
+            )
+        else:
+            query_engine = RetrieverQueryEngine.from_args(
+                retriever=retriever,
+                llm=models.llm,
+                use_async=True,
+                streaming=streaming,
+                # response_mode=ResponseMode.REFINE,
+                response_mode=ResponseMode.COMPACT,
+                # response_mode=ResponseMode.SIMPLE_SUMMARIZE,
+                # response_mode=ResponseMode.TREE_SUMMARIZE,
+                # response_mode=ResponseMode.GENERATION, # ignore context
+                # response_mode=ResponseMode.NO_TEXT, # only context
+                # response_mode=ResponseMode.CONTEXT_ONLY,
+                # response_mode=ResponseMode.ACCUMULATE,
+                # response_mode=ResponseMode.COMPACT_ACCUMULATE,
+                verbose=verbose,
+            )
 
-        if retries or source_retries:
-            relevancy_evaluator = RelevancyEvaluator(
-                llm=models.evaluator_llm or models.llm,
-            )
-            _guideline_evaluator = GuidelineEvaluator(
-                llm=models.evaluator_llm or models.llm,
-                guidelines=DEFAULT_GUIDELINES
-                + "\nThe response should not be overly long.\n"
-                + "The response should try to summarize where possible.\n",
-            )
-            if source_retries:
-                self.logger.info("Add retry source query engine")
-                query_engine = RetrySourceQueryEngine(
-                    query_engine,
-                    evaluator=relevancy_evaluator,
-                    llm=models.llm,
+            if retries or source_retries:
+                relevancy_evaluator = RelevancyEvaluator(
+                    llm=models.evaluator_llm or models.llm,
                 )
-            else:
-                self.logger.info("Add retry query engine")
-                query_engine = RetryQueryEngine(
-                    query_engine, evaluator=relevancy_evaluator
+                _guideline_evaluator = GuidelineEvaluator(
+                    llm=models.evaluator_llm or models.llm,
+                    guidelines=DEFAULT_GUIDELINES
+                    + "\nThe response should not be overly long.\n"
+                    + "The response should try to summarize where possible.\n",
                 )
+                if source_retries:
+                    self.logger.info("Add retry source query engine")
+                    query_engine = RetrySourceQueryEngine(
+                        query_engine,
+                        evaluator=relevancy_evaluator,
+                        llm=models.llm,
+                    )
+                else:
+                    self.logger.info("Add retry query engine")
+                    query_engine = RetryQueryEngine(
+                        query_engine,
+                        evaluator=relevancy_evaluator,
+                    )
 
         self.logger.info("Submit query to LLM")
         return await query_engine.aquery(query)
@@ -1545,6 +1564,7 @@ class RAGWorkflow:
         system_prompt: str | None = None,
         summarize_chat: bool = False,
         streaming: bool = False,
+        verbose: bool = False,
     ) -> StreamingAgentChatResponse | AgentChatResponse | NoReturn:
         if models.llm is None:
             error("There is no LLM configured to chat with")
@@ -1580,6 +1600,16 @@ class RAGWorkflow:
                     llm=models.llm,
                     memory=self.chat_memory,
                     system_prompt=system_prompt,
+                    verbose=verbose,
+                )
+            elif True:
+                self.chat_engine = CondensePlusContextChatEngine.from_defaults(
+                    retriever=retriever,
+                    llm=models.llm,
+                    memory=self.chat_memory,
+                    system_prompt=system_prompt,
+                    skip_condense=False,
+                    verbose=verbose,
                 )
             else:
                 self.chat_engine = ContextChatEngine.from_defaults(
@@ -1587,6 +1617,7 @@ class RAGWorkflow:
                     llm=models.llm,
                     memory=self.chat_memory,
                     system_prompt=system_prompt,
+                    verbose=verbose,
                 )
 
         self.logger.info("Submit chat to LLM")

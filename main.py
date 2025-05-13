@@ -64,6 +64,7 @@ async def query_command(
     streaming: bool,
     retries: bool = False,
     source_retries: bool = False,
+    verbose: bool = False,
 ):
     response: RESPONSE_TYPE = await rag.query(
         models,
@@ -72,6 +73,7 @@ async def query_command(
         retries=retries,
         source_retries=source_retries,
         streaming=streaming,
+        verbose=verbose,
     )
     match response:
         case AsyncStreamingResponse():
@@ -95,6 +97,7 @@ async def chat_command(
     token_limit: int,
     chat_store: SimpleChatStore | None = None,
     summarize_chat: bool = False,
+    verbose: bool = False,
 ):
     response: StreamingAgentChatResponse | AgentChatResponse = await rag.chat(
         models,
@@ -105,6 +108,7 @@ async def chat_command(
         chat_store=chat_store,
         streaming=streaming,
         summarize_chat=summarize_chat,
+        verbose=verbose,
     )
     if streaming:
         async for token in response.async_response_gen():
@@ -136,6 +140,7 @@ async def rag_client(
                 streaming=rag.config.streaming,
                 retries=rag.config.retries,
                 source_retries=rag.config.source_retries,
+                verbose=args.verbose,
             )
         case "chat":
             user = rag.config.chat_user or "user"
@@ -164,6 +169,7 @@ async def rag_client(
                         streaming=rag.config.streaming,
                         retries=rag.config.retries,
                         source_retries=rag.config.source_retries,
+                        verbose=args.verbose,
                     )
                 else:
                     await chat_command(
@@ -175,6 +181,7 @@ async def rag_client(
                         token_limit=rag.config.token_limit,
                         chat_store=chat_store,
                         streaming=rag.config.streaming,
+                        verbose=args.verbose,
                     )
         case _:
             error(f"Command unrecognized: {args.command}")
