@@ -262,6 +262,61 @@ class EmbeddingConfig(LLMConfig):
 
 
 @dataclass
+class LlamaCPPEmbeddingConfig(EmbeddingConfig):
+    model_path: Path = field(default_factory=Path)
+    n_gpu_layers: int = 0
+    split_mode: int = llama_cpp.LLAMA_SPLIT_MODE_LAYER
+    main_gpu: int = 0
+    tensor_split: list[float] | None = None
+    rpc_servers: str | None = None
+    vocab_only: bool = False
+    use_mmap: bool = True
+    use_mlock: bool = False
+    kv_overrides: dict[str, bool | int | float | str] | None = None
+    # Context Params
+    seed: int = llama_cpp.LLAMA_DEFAULT_SEED
+    n_ctx: int = 512
+    n_batch: int = 512
+    n_ubatch: int = 512
+    n_threads: int | None = None
+    n_threads_batch: int | None = None
+    rope_scaling_type: int | None = llama_cpp.LLAMA_ROPE_SCALING_TYPE_UNSPECIFIED
+    pooling_type: int = llama_cpp.LLAMA_POOLING_TYPE_UNSPECIFIED
+    rope_freq_base: float = 0.0
+    rope_freq_scale: float = 0.0
+    yarn_ext_factor: float = -1.0
+    yarn_attn_factor: float = 1.0
+    yarn_beta_fast: float = 32.0
+    yarn_beta_slow: float = 1.0
+    yarn_orig_ctx: int = 0
+    logits_all: bool = False
+    embedding: bool = False
+    offload_kqv: bool = True
+    flash_attn: bool = False
+    # Sampling Params
+    no_perf: bool = False
+    last_n_tokens_size: int = 64
+    # LoRA Params
+    lora_base: str | None = None
+    lora_scale: float = 1.0
+    lora_path: str | None = None
+    # Backend Params
+    numa: bool | int = False
+    # Chat Format Params
+    chat_format: str | None = None
+    chat_handler: llama_cpp.llama_chat_format.LlamaChatCompletionHandler | None = None
+    # Speculative Decoding
+    draft_model: llama_cpp.LlamaDraftModel | None = None
+    # Tokenizer Override
+    tokenizer: llama_cpp.BaseLlamaTokenizer | None = None
+    # KV cache quantization
+    type_k: int | None = None
+    type_v: int | None = None
+    # Misc
+    spm_infill: bool = False
+
+
+@dataclass
 class KeywordsConfig(YAMLWizard):
     collect: bool = False
     llm: LLMConfig | None = None
@@ -346,23 +401,25 @@ ExtractorConfig: TypeAlias = (
 
 
 @dataclass
-class ChatEngineConfig(YAMLWizard):
+class SimpleChatEngineConfig(YAMLWizard):
     pass
 
 
 @dataclass
-class SimpleChatEngineConfig(ChatEngineConfig):
+class ContextChatEngineConfig(YAMLWizard):
     pass
 
 
 @dataclass
-class ContextChatEngineConfig(ChatEngineConfig):
-    pass
-
-
-@dataclass
-class CondensePlusContextChatEngineConfig(ChatEngineConfig):
+class CondensePlusContextChatEngineConfig(YAMLWizard):
     skip_condense: bool = False
+
+
+ChatEngineConfig: TypeAlias = (
+    SimpleChatEngineConfig
+    | ContextChatEngineConfig
+    | CondensePlusContextChatEngineConfig
+)
 
 
 @dataclass
@@ -382,7 +439,10 @@ class PostgresVectorStoreConfig(YAMLWizard):
 
 @dataclass
 class RetrievalConfig(YAMLWizard):
+    @final
     class _(JSONWizard.Meta):
+        # v1 = True  # Enable v1 opt-in
+        # v1_unsafe_parse_dataclass_in_union = True
         tag_key = "type"
         auto_assign_tags = True
 
@@ -405,6 +465,13 @@ class QueryConfig(YAMLWizard):
 
 @dataclass
 class ChatConfig(YAMLWizard):
+    @final
+    class _(JSONWizard.Meta):
+        # v1 = True  # Enable v1 opt-in
+        # v1_unsafe_parse_dataclass_in_union = True
+        tag_key = "type"
+        auto_assign_tags = True
+
     llm: LLMConfig = field(default_factory=LLMConfig)
     engine: ChatEngineConfig = field(default_factory=SimpleChatEngineConfig)
     default_user: str = "user"
@@ -1094,86 +1161,84 @@ class RAGWorkflow:
         splitter: SplitterConfig,
         verbose: bool = False,
     ) -> TransformComponent | NoReturn:
-        if isinstance(splitter, SentenceSplitterConfig):
-            return SentenceSplitter(
-                chunk_size=splitter.chunk_size,
-                chunk_overlap=splitter.chunk_overlap,
-                include_metadata=splitter.include_metadata,
-            )
-        elif isinstance(splitter, SentenceWindowSplitterConfig):
-            return SentenceWindowNodeParser.from_defaults(
-                window_size=splitter.window_size,
-                window_metadata_key=splitter.window_metadata_key,
-                original_text_metadata_key=splitter.original_text_metadata_key,
-            )
-        elif isinstance(splitter, SemanticSplitterConfig):
-            if splitter.embedding is not None:
-                embed_llm = self.__load_embedding(
-                    splitter.embedding,
-                    verbose=verbose,
+        match splitter:
+            case SentenceSplitterConfig():
+                return SentenceSplitter(
+                    chunk_size=splitter.chunk_size,
+                    chunk_overlap=splitter.chunk_overlap,
+                    include_metadata=splitter.include_metadata,
                 )
-            else:
-                error("Semantic splitter needs an embedding model")
+            case SentenceWindowSplitterConfig():
+                return SentenceWindowNodeParser.from_defaults(
+                    window_size=splitter.window_size,
+                    window_metadata_key=splitter.window_metadata_key,
+                    original_text_metadata_key=splitter.original_text_metadata_key,
+                )
+            case SemanticSplitterConfig():
+                if splitter.embedding is not None:
+                    embed_llm = self.__load_embedding(
+                        splitter.embedding,
+                        verbose=verbose,
+                    )
+                else:
+                    error("Semantic splitter needs an embedding model")
 
-            if isinstance(embed_llm, BGEM3Embedding):
-                error("Semantic splitter not working with BGE-M3")
+                if isinstance(embed_llm, BGEM3Embedding):
+                    error("Semantic splitter not working with BGE-M3")
 
-            return SemanticSplitterNodeParser(
-                buffer_size=splitter.buffer_size,
-                breakpoint_percentile_threshold=splitter.breakpoint_percentile_threshold,
-                embed_model=embed_llm,
-                include_metadata=splitter.include_metadata,
-            )
-        elif isinstance(splitter, JSONNodeParserConfig):
-            return JSONNodeParser(
-                include_metadata=splitter.include_metadata,
-                include_prev_next_rel=splitter.include_prev_next_rel,
-            )
-        elif isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
-            splitter, CodeSplitterConfig
-        ):
-            return CodeSplitter(
-                language=splitter.language,
-                chunk_lines=splitter.chunk_lines,
-                chunk_lines_overlap=splitter.chunk_lines_overlap,
-                max_chars=splitter.max_chars,
-            )
+                return SemanticSplitterNodeParser(
+                    buffer_size=splitter.buffer_size,
+                    breakpoint_percentile_threshold=splitter.breakpoint_percentile_threshold,
+                    embed_model=embed_llm,
+                    include_metadata=splitter.include_metadata,
+                )
+            case JSONNodeParserConfig():
+                return JSONNodeParser(
+                    include_metadata=splitter.include_metadata,
+                    include_prev_next_rel=splitter.include_prev_next_rel,
+                )
+            case CodeSplitterConfig():
+                return CodeSplitter(
+                    language=splitter.language,
+                    chunk_lines=splitter.chunk_lines,
+                    chunk_lines_overlap=splitter.chunk_lines_overlap,
+                    max_chars=splitter.max_chars,
+                )
 
     def __load_extractor(
         self,
         config: ExtractorConfig,
         verbose: bool = False,
     ) -> TransformComponent | None:
-        if isinstance(config, KeywordExtractorConfig):
-            llm = self.realize_llm(config.llm, verbose=verbose)
-            return KeywordExtractor(
-                keywords=config.keywords,
-                llm=llm,
-                show_progress=verbose,
-            )
-        elif isinstance(config, SummaryExtractorConfig):
-            llm = self.realize_llm(config.llm, verbose=verbose)
-            return SummaryExtractor(
-                summaries=config.summaries,
-                llm=llm,
-                show_progress=verbose,
-            )
-        elif isinstance(config, TitleExtractorConfig):
-            llm = self.realize_llm(config.llm, verbose=verbose)
-            return TitleExtractor(
-                nodes=config.nodes,
-                llm=llm,
-                show_progress=verbose,
-            )
-        elif isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
-            config, QuestionsAnsweredExtractorConfig
-        ):
-            llm = self.realize_llm(config.llm, verbose=verbose)
-            return QuestionsAnsweredExtractor(
-                questions=config.questions,
-                llm=llm,
-                show_progress=verbose,
-            )
+        match config:
+            case KeywordExtractorConfig():
+                llm = self.realize_llm(config.llm, verbose=verbose)
+                return KeywordExtractor(
+                    keywords=config.keywords,
+                    llm=llm,
+                    show_progress=verbose,
+                )
+            case SummaryExtractorConfig():
+                llm = self.realize_llm(config.llm, verbose=verbose)
+                return SummaryExtractor(
+                    summaries=config.summaries,
+                    llm=llm,
+                    show_progress=verbose,
+                )
+            case TitleExtractorConfig():
+                llm = self.realize_llm(config.llm, verbose=verbose)
+                return TitleExtractor(
+                    nodes=config.nodes,
+                    llm=llm,
+                    show_progress=verbose,
+                )
+            case QuestionsAnsweredExtractorConfig():
+                llm = self.realize_llm(config.llm, verbose=verbose)
+                return QuestionsAnsweredExtractor(
+                    questions=config.questions,
+                    llm=llm,
+                    show_progress=verbose,
+                )
 
     def __split_documents(
         self,
@@ -1222,20 +1287,21 @@ class RAGWorkflow:
         for struct in index_structs:
             storage_context.index_store.delete_index_struct(key=struct.index_id)
 
-        if isinstance(embed_llm, BGEM3Embedding):
-            vector_index = BGEM3Index(
-                nodes,
-                storage_context=storage_context,
-                weights_for_different_modes=[0.4, 0.2, 0.4],
-                show_progress=verbose,
-            )
-        else:
-            vector_index = VectorStoreIndex(
-                nodes,
-                storage_context=storage_context,
-                embed_model=embed_llm,
-                show_progress=verbose,
-            )
+        match embed_llm:
+            case BGEM3Embedding():
+                vector_index = BGEM3Index(
+                    nodes,
+                    storage_context=storage_context,
+                    weights_for_different_modes=[0.4, 0.2, 0.4],
+                    show_progress=verbose,
+                )
+            case BaseEmbedding():
+                vector_index = VectorStoreIndex(
+                    nodes,
+                    storage_context=storage_context,
+                    embed_model=embed_llm,
+                    show_progress=verbose,
+                )
 
         if self.config.retrieval.keywords.collect:
             if self.config.retrieval.keywords.llm is None:
@@ -1367,11 +1433,10 @@ class RAGWorkflow:
         VectorStoreIndex | BGEM3Index | None,
         BaseKeywordTableIndex | None,
     ]:
-        vector_index: VectorStoreIndex | BGEM3Index | None = None
-        keyword_index: BaseKeywordTableIndex | None = None
+        keyword_index = None
 
-        try:
-            if isinstance(embed_llm, BGEM3Embedding):
+        match embed_llm:
+            case BGEM3Embedding():
                 if self.config.retrieval.vector_store is not None:
                     error("BGE-M3 not current compatible with databases")
                     # logger.info("Read BGE-M3 index from database")
@@ -1385,7 +1450,7 @@ class RAGWorkflow:
                         persist_dir=str(persist_dir),
                         weights_for_different_modes=[0.4, 0.2, 0.4],
                     )
-            else:
+            case BaseEmbedding():
                 indices: list[BaseIndex[IndexDict]] = load_indices_from_storage(
                     storage_context=storage_context,
                     embed_model=(
@@ -1407,9 +1472,6 @@ class RAGWorkflow:
                 else:
                     [vi] = indices
                     vector_index = cast(VectorStoreIndex, vi)
-
-        except ValueError:
-            pass
 
         return vector_index, keyword_index
 
@@ -1448,15 +1510,18 @@ class RAGWorkflow:
         else:
             error("File ingestion requires an embedding model")
 
+        vector_index = None
+        keyword_index = None
+
         if self.config.retrieval.vector_store is not None or persisted:
-            vector_index, keyword_index = self.__load_indices(
-                embed_llm=embed_llm,
-                storage_context=storage_context,
-                persist_dir=persist_dir,
-            )
-        else:
-            vector_index = None
-            keyword_index = None
+            try:
+                vector_index, keyword_index = self.__load_indices(
+                    embed_llm=embed_llm,
+                    storage_context=storage_context,
+                    persist_dir=persist_dir,
+                )
+            except ValueError:
+                pass
 
         if input_files is not None and not persisted:
             vector_index, keyword_index = self.__ingest_documents(
@@ -1667,35 +1732,35 @@ class ChatState:
                 llm=llm,
             )
 
-        if isinstance(config.engine, ContextChatEngineConfig):
-            if retriever is None:
-                error("ContextChatEngine requires a retriever")
-            chat_engine = ContextChatEngine.from_defaults(
-                retriever=retriever,
-                llm=llm,
-                memory=chat_memory,
-                system_prompt=system_prompt,
-                verbose=verbose,
-            )
-        elif isinstance(config.engine, CondensePlusContextChatEngineConfig):
-            if retriever is None:
-                error("ContextChatEngine requires a retriever")
-            chat_engine = CondensePlusContextChatEngine.from_defaults(
-                retriever=retriever,
-                llm=llm,
-                memory=chat_memory,
-                system_prompt=system_prompt,
-                skip_condense=config.engine.skip_condense,
-                verbose=verbose,
-            )
-        else:
-            assert isinstance(config.engine, SimpleChatEngineConfig)
-            chat_engine = SimpleChatEngine.from_defaults(
-                llm=llm,
-                memory=chat_memory,
-                system_prompt=system_prompt,
-                verbose=verbose,
-            )
+        match config.engine:
+            case ContextChatEngineConfig():
+                if retriever is None:
+                    error("ContextChatEngine requires a retriever")
+                chat_engine = ContextChatEngine.from_defaults(
+                    retriever=retriever,
+                    llm=llm,
+                    memory=chat_memory,
+                    system_prompt=system_prompt,
+                    verbose=verbose,
+                )
+            case CondensePlusContextChatEngineConfig():
+                if retriever is None:
+                    error("ContextChatEngine requires a retriever")
+                chat_engine = CondensePlusContextChatEngine.from_defaults(
+                    retriever=retriever,
+                    llm=llm,
+                    memory=chat_memory,
+                    system_prompt=system_prompt,
+                    skip_condense=config.engine.skip_condense,
+                    verbose=verbose,
+                )
+            case SimpleChatEngineConfig():
+                chat_engine = SimpleChatEngine.from_defaults(
+                    llm=llm,
+                    memory=chat_memory,
+                    system_prompt=system_prompt,
+                    verbose=verbose,
+                )
 
         self.chat_engine = chat_engine
 

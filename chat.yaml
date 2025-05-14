@@ -14,8 +14,9 @@ chat:
   llm: *llm
   # default_user: "user1"
   # summarize: False
-  # engine:
-  #   type: SimpleChatEngineConfig
+  engine:
+    type: CondensePlusContextChatEngineConfig
+    skip_condense: false
 
 retrieval:
   top_k: 40
@@ -39,23 +40,23 @@ retrieval:
     chunk_size: 512
     chunk_overlap: 20
 
-  extractors:
-    - type: KeywordExtractorConfig
-      keywords: 5
-      llm:
-        <<: *llm
-        max_tokens: 100
-    - type: SummaryExtractorConfig
-      summaries:
-        - "self"
-      llm: *llm
-    - type: TitleExtractorConfig
-      nodes: 5
-      llm: *llm
-    - type: QuestionsAnsweredExtractorConfig
-      questions: 3
-      llm: *llm
+  extractors: []
+    # - type: KeywordExtractorConfig
+    #   keywords: 5
+    #   llm:
+    #     <<: *llm
+    #     max_tokens: 100
+    # - type: SummaryExtractorConfig
+    #   summaries:
+    #     - "self"
+    #   llm: *llm
+    # - type: TitleExtractorConfig
+    #   nodes: 5
+    #   llm: *llm
+    # - type: QuestionsAnsweredExtractorConfig
+    #   questions: 3
+    #   llm: *llm
 
-  keywords:
-    collect: true
-    llm: *llm
+  # keywords:
+  #   collect: true
+  #   llm: *llm
