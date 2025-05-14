@@ -7,9 +7,6 @@ import hashlib
 import logging
 import os
 import sys
-from llama_index.core.constants import DEFAULT_EMBED_BATCH_SIZE
-from llama_index.core.query_engine.custom import STR_OR_RESPONSE_TYPE
-from llama_index.llms.openai.base import DEFAULT_OPENAI_MODEL
 import psycopg2
 import llama_cpp
 
@@ -45,6 +42,8 @@ from llama_index.core import (
     get_response_synthesizer,  # pyright: ignore[reportUnknownVariableType]
     load_indices_from_storage,  # pyright: ignore[reportUnknownVariableType]
 )
+from llama_index.core.constants import DEFAULT_EMBED_BATCH_SIZE
+from llama_index.core.query_engine.custom import STR_OR_RESPONSE_TYPE
 from llama_index.core.base.embeddings.base import Embedding
 from llama_index.core.base.response.schema import RESPONSE_TYPE
 from llama_index.core.chat_engine import (
@@ -120,6 +119,7 @@ from llama_index.indices.managed.bge_m3 import BGEM3Index
 from llama_index.llms.llama_cpp import LlamaCPP
 from llama_index.llms.lmstudio import LMStudio
 from llama_index.llms.ollama import Ollama
+from llama_index.llms.openai.base import DEFAULT_OPENAI_MODEL
 from llama_index.llms.openai import OpenAI
 from llama_index.llms.openai_like import OpenAILike
 from llama_index.llms.openrouter import OpenRouter
