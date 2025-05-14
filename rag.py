@@ -120,6 +120,7 @@ import llama_index.llms.llama_cpp.base
 import llama_index.llms.ollama.base
 import llama_index.llms.openrouter.base
 import llama_index.llms.lmstudio.base
+import llama_index.llms.mlx.base
 
 from llama_index.embeddings.huggingface.base import (
     DEFAULT_HUGGINGFACE_EMBEDDING_MODEL,
@@ -141,6 +142,7 @@ from llama_index.llms.openai import OpenAI
 from llama_index.llms.openai_like import OpenAILike
 from llama_index.llms.openrouter import OpenRouter
 from llama_index.llms.perplexity import Perplexity
+from llama_index.llms.mlx import MLXLLM
 from llama_index.storage.docstore.postgres import PostgresDocumentStore
 from llama_index.storage.index_store.postgres import PostgresIndexStore
 from llama_index.vector_stores.postgres import PGVectorStore
@@ -247,13 +249,6 @@ def clean_special_tokens(text: str) -> str:
 
 
 # Config
-
-
-@final
-class GlobalJSONMeta(JSONWizard.Meta):
-    tag_key = "type"
-    auto_assign_tags = True
-    v1_debug = logging.INFO
 
 
 @dataclass
@@ -496,6 +491,22 @@ class LMStudioConfig(YAMLWizard):
     additional_kwargs: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class MLXLLMConfig(YAMLWizard):
+    context_window: int = DEFAULT_CONTEXT_WINDOW
+    max_new_tokens: int = DEFAULT_NUM_OUTPUTS
+    # query_wrapper_prompt: str | PromptTemplate = "{query_str}"
+    model_name: str = llama_index.llms.mlx.base.DEFAULT_MLX_MODEL
+    model: Any | None = None
+    tokenizer: Any | None = None
+    tokenizer_kwargs: dict[str, Any] | None = None
+    tokenizer_outputs_to_remove: list[str] | None = None
+    model_kwargs: dict[str, Any] | None = None
+    generate_kwargs: dict[str, Any] | None = None
+    system_prompt: str = ""
+    # output_parser: BaseOutputParser | None = None
+
+
 LLMConfig: TypeAlias = (
     OllamaConfig
     | OpenAILikeConfig
@@ -504,6 +515,7 @@ LLMConfig: TypeAlias = (
     | PerplexityConfig
     | OpenRouterConfig
     | LMStudioConfig
+    | MLXLLMConfig
 )
 
 
@@ -524,6 +536,14 @@ def llm_model(config: LLMConfig) -> str:
             return config.model
         case LMStudioConfig():
             return config.model_name
+        case MLXLLMConfig():
+            return config.model_name
+
+
+@final
+class GlobalJSONMeta(JSONWizard.Meta):
+    tag_key = "type"
+    auto_assign_tags = True
 
 
 @dataclass
@@ -661,14 +681,6 @@ class FusionRetrieverConfig(YAMLWizard):
 
 @dataclass
 class RetrievalConfig(YAMLWizard):
-    @final
-    class _(JSONWizard.Meta):
-        # v1 = True  # Enable v1 opt-in
-        # v1_unsafe_parse_dataclass_in_union = True
-        tag_key = "type"
-        auto_assign_tags = True
-        v1_debug = logging.INFO
-
     embedding: EmbeddingConfig | None = None
     keywords: KeywordsConfig | None = None
     splitter: SplitterConfig | None = None
@@ -681,14 +693,6 @@ class RetrievalConfig(YAMLWizard):
 
 @dataclass
 class QueryConfig(YAMLWizard):
-    @final
-    class _(JSONWizard.Meta):
-        # v1 = True  # Enable v1 opt-in
-        # v1_unsafe_parse_dataclass_in_union = True
-        tag_key = "type"
-        auto_assign_tags = True
-        v1_debug = logging.INFO
-
     llm: LLMConfig
     retries: bool = False
     source_retries: bool = False
@@ -698,14 +702,6 @@ class QueryConfig(YAMLWizard):
 
 @dataclass
 class ChatConfig(YAMLWizard):
-    @final
-    class _(JSONWizard.Meta):
-        # v1 = True  # Enable v1 opt-in
-        # v1_unsafe_parse_dataclass_in_union = True
-        tag_key = "type"
-        auto_assign_tags = True
-        v1_debug = logging.INFO
-
     llm: LLMConfig
     engine: ChatEngineConfig | None = None
     default_user: str = "user"
@@ -1242,6 +1238,8 @@ class RAGWorkflow:
                 return OpenRouter(**asdict(config), show_progress=verbose)
             case LMStudioConfig():
                 return LMStudio(**asdict(config))
+            case MLXLLMConfig():
+                return MLXLLM(**asdict(config))
 
     @classmethod
     def realize_llm(
