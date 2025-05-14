@@ -176,6 +176,8 @@ def rag_client(
             else:
                 error("Search command requires a retriever")
         case "query":
+            if rag.config.query is None:
+                error("'query' command requires query engine to be configured")
             # Create a query state object
             llm = rag.realize_llm(rag.config.query.llm, verbose=args.verbose)
             query_state = QueryState(
@@ -188,6 +190,9 @@ def rag_client(
             # Execute the query command
             query_command(query_state, query=args.args[0])
         case "chat":
+            if rag.config.chat is None:
+                error("'chat' command requires chat engine to be configured")
+
             # Path to the history file (change as needed)
             HISTFILE = xdg_config_home() / "rag-client" / "chat_history"
 
@@ -232,19 +237,22 @@ def rag_client(
                     if retriever is not None:
                         search_command(rag, retriever, query[7:])
                 elif query.startswith("query "):
-                    # Handle query commands within the chat loop
-                    if query_state is None:
-                        llm = rag.realize_llm(
-                            rag.config.query.llm, verbose=args.verbose
-                        )
-                        query_state = QueryState(
-                            config=rag.config.query,
-                            llm=llm,
-                            retriever=retriever,
-                            streaming=args.streaming,
-                            verbose=args.verbose,
-                        )
-                    query_command(query_state, query[6:])
+                    if rag.config.query is None:
+                        print("'query' command requires query engine to be configured")
+                    else:
+                        # Handle query commands within the chat loop
+                        if query_state is None:
+                            llm = rag.realize_llm(
+                                rag.config.query.llm, verbose=args.verbose
+                            )
+                            query_state = QueryState(
+                                config=rag.config.query,
+                                llm=llm,
+                                retriever=retriever,
+                                streaming=args.streaming,
+                                verbose=args.verbose,
+                            )
+                        query_command(query_state, query[6:])
                 else:
                     # Handle chat queries
                     if chat_state is None:

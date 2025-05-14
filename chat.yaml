@@ -1,10 +1,9 @@
 query:
   llm: &llm
-    provider: "OpenAILike"
+    type: OpenAILikeConfig
     model: "Llama-4-Maverick-17B-128E-Instruct"
-    base_url: "http://localhost:8080/v1"
-    # base_url: "http://192.168.50.5:8080/v1"
-    context_window: 100000
+    api_base: "http://localhost:8080/v1"
+    # api_base: "http://192.168.50.5:8080/v1"
     temperature: 0.7
     max_tokens: 1500
     timeout: 7200
@@ -20,6 +19,10 @@ chat:
 
 retrieval:
   top_k: 40
+  sparse_top_k: 5
+
+  fusion:
+    llm: *llm
 
   # vector_store:
   #   connection: "postgresql+psycopg2://postgres@localhost:5432/vector_db"
@@ -30,10 +33,9 @@ retrieval:
   #   model: "BAAI/bge-m3"
   #   dimensions: 1024
   embedding:
-    provider: "HuggingFace"
-    model: "BAAI/bge-large-en-v1.5"
-    # model: "BAAI/bge-base-en-v1.5"
-    dimensions: 512
+    type: HuggingFaceEmbeddingConfig
+    model_name: "BAAI/bge-large-en-v1.5"
+    # model_name: "BAAI/bge-base-en-v1.5"
 
   splitter:
     type: SentenceSplitterConfig

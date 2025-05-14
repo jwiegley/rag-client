@@ -196,11 +196,11 @@ async def list_models(
         "object": "list",
         "data": [
             {
-                "id": ((workflow.config.chat.llm.model
+                "id": ((llm_model(workflow.config.chat.llm)
                         if workflow is not None and
-                           workflow.config.chat.llm is not None
+                           workflow.config.chat is not None
                         else None) or
-                       (workflow.config.retrieval.embedding.model
+                       (embedding_model(workflow.config.retrieval.embedding)
                         if workflow is not None and
                            workflow.config.retrieval.embedding is not None
                         else None) or
@@ -225,11 +225,12 @@ async def process_chat_messages(
     if chat_state is None:
         error("ChatState not initialized")
 
+        # user=request.user or "user1",
+        # chat_history=list(messages),
+        # token_limit=request.max_tokens,
+
     return chat_state.chat(
-        user=request.user or "user1",
         query=user_message.content or "",
-        chat_history=list(messages),
-        token_limit=request.max_tokens,
         streaming=request.stream or False,
     )
 

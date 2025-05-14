@@ -12,7 +12,7 @@ import llama_cpp
 
 from collections.abc import Iterable, Sequence
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from dataclass_wizard import JSONWizard, YAMLWizard
 from functools import cache
 from pathlib import Path
@@ -42,7 +42,12 @@ from llama_index.core import (
     get_response_synthesizer,  # pyright: ignore[reportUnknownVariableType]
     load_indices_from_storage,  # pyright: ignore[reportUnknownVariableType]
 )
-from llama_index.core.constants import DEFAULT_EMBED_BATCH_SIZE
+from llama_index.core.constants import (
+    DEFAULT_CONTEXT_WINDOW,
+    DEFAULT_EMBED_BATCH_SIZE,
+    DEFAULT_NUM_OUTPUTS,
+    DEFAULT_TEMPERATURE,
+)
 from llama_index.core.query_engine.custom import STR_OR_RESPONSE_TYPE
 from llama_index.core.base.embeddings.base import Embedding
 from llama_index.core.base.response.schema import RESPONSE_TYPE
@@ -111,9 +116,21 @@ from llama_index.core.vector_stores.simple import SimpleVectorStore
 
 # from llama_index.core.tools import FunctionTool
 
+import llama_index.llms.llama_cpp.base
+import llama_index.llms.ollama.base
+import llama_index.llms.openrouter.base
+import llama_index.llms.lmstudio.base
+
+from llama_index.embeddings.huggingface.base import (
+    DEFAULT_HUGGINGFACE_EMBEDDING_MODEL,
+)
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.embeddings.ollama import OllamaEmbedding
-from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.embeddings.openai import (
+    OpenAIEmbedding,
+    OpenAIEmbeddingMode,
+    OpenAIEmbeddingModelType,
+)
 from llama_index.embeddings.openai_like import OpenAILikeEmbedding
 from llama_index.indices.managed.bge_m3 import BGEM3Index
 from llama_index.llms.llama_cpp import LlamaCPP
@@ -236,34 +253,74 @@ def clean_special_tokens(text: str) -> str:
 class GlobalJSONMeta(JSONWizard.Meta):
     tag_key = "type"
     auto_assign_tags = True
-    # v1_debug = logging.INFO
+    v1_debug = logging.INFO
 
 
 @dataclass
-class LLMConfig(YAMLWizard):
-    provider: str = "OpenAI"
-    model: str = DEFAULT_OPENAI_MODEL
-    base_url: str | None = None
-    api_key: str = "fake_key"
-    api_version: str = ""
-    timeout: int = 60
-    system_prompt: str | None = None
-    temperature: float = 1.0
-    max_tokens: int = 200
-    context_window: int = 2048
-    reasoning_effort: Literal["low", "medium", "high"] = "medium"
-    gpu_layers: int = -1
-
-
-@dataclass
-class EmbeddingConfig(LLMConfig):
-    dimensions: int = 512
+class HuggingFaceEmbeddingConfig(YAMLWizard):
+    model_name: str = DEFAULT_HUGGINGFACE_EMBEDDING_MODEL
+    max_length: int | None = None
     query_instruction: str | None = None
+    text_instruction: str | None = None
+    normalize: bool = True
+    embed_batch_size: int = DEFAULT_EMBED_BATCH_SIZE
+    cache_folder: str | None = None
+    trust_remote_code: bool = False
+    device: str | None = None
+    parallel_process: bool = False
+    target_devices: list[str] | None = None
 
 
 @dataclass
-class LlamaCPPEmbeddingConfig(EmbeddingConfig):
-    model_path: Path = field(default_factory=Path)
+class OllamaEmbeddingConfig(YAMLWizard):
+    model_name: str
+    base_url: str = "http://localhost:11434"
+    embed_batch_size: int = DEFAULT_EMBED_BATCH_SIZE
+    ollama_additional_kwargs: dict[str, Any] | None = None
+    client_kwargs: dict[str, Any] | None = None
+
+
+@dataclass
+class OpenAIEmbeddingConfig(YAMLWizard):
+    mode: str = OpenAIEmbeddingMode.TEXT_SEARCH_MODE
+    model: str = OpenAIEmbeddingModelType.TEXT_EMBED_ADA_002
+    embed_batch_size: int = 100
+    dimensions: int | None = None
+    additional_kwargs: dict[str, Any] | None = None
+    api_key: str | None = None
+    api_base: str | None = None
+    api_version: str | None = None
+    max_retries: int = 10
+    timeout: float = 60.0
+    reuse_client: bool = True
+    default_headers: dict[str, str] | None = None
+    num_workers: int | None = None
+
+
+@dataclass
+class OpenAILikeEmbeddingConfig(YAMLWizard):
+    model_name: str
+    embed_batch_size: int = 10
+    dimensions: int | None = None
+    additional_kwargs: dict[str, Any] | None = None
+    api_key: str = "fake"
+    api_base: str | None = None
+    api_version: str | None = None
+    max_retries: int = 10
+    timeout: float = 60.0
+    reuse_client: bool = True
+    default_headers: dict[str, str] | None = None
+    num_workers: int | None = None
+
+
+@dataclass
+class BGEM3EmbeddingConfig(YAMLWizard):
+    pass
+
+
+@dataclass
+class LlamaCPPEmbeddingConfig(YAMLWizard):
+    model_path: Path
     n_gpu_layers: int = 0
     split_mode: int = llama_cpp.LLAMA_SPLIT_MODE_LAYER
     main_gpu: int = 0
@@ -280,7 +337,7 @@ class LlamaCPPEmbeddingConfig(EmbeddingConfig):
     n_ubatch: int = 512
     n_threads: int | None = None
     n_threads_batch: int | None = None
-    rope_scaling_type: int | None = llama_cpp.LLAMA_ROPE_SCALING_TYPE_UNSPECIFIED
+    rope_scaling_type: int = llama_cpp.LLAMA_ROPE_SCALING_TYPE_UNSPECIFIED
     pooling_type: int = llama_cpp.LLAMA_POOLING_TYPE_UNSPECIFIED
     rope_freq_base: float = 0.0
     rope_freq_scale: float = 0.0
@@ -304,16 +361,169 @@ class LlamaCPPEmbeddingConfig(EmbeddingConfig):
     numa: bool | int = False
     # Chat Format Params
     chat_format: str | None = None
-    chat_handler: llama_cpp.llama_chat_format.LlamaChatCompletionHandler | None = None
     # Speculative Decoding
-    draft_model: llama_cpp.LlamaDraftModel | None = None
+    # draft_model: llama_cpp.LlamaDraftModel | None = None
     # Tokenizer Override
-    tokenizer: llama_cpp.BaseLlamaTokenizer | None = None
+    # tokenizer: llama_cpp.BaseLlamaTokenizer | None = None
     # KV cache quantization
     type_k: int | None = None
     type_v: int | None = None
     # Misc
     spm_infill: bool = False
+
+
+EmbeddingConfig: TypeAlias = (
+    HuggingFaceEmbeddingConfig
+    | OllamaEmbeddingConfig
+    | OpenAIEmbeddingConfig
+    | OpenAILikeEmbeddingConfig
+    | BGEM3EmbeddingConfig
+    | LlamaCPPEmbeddingConfig
+)
+
+
+def embedding_model(config: EmbeddingConfig) -> str:
+    match config:
+        case HuggingFaceEmbeddingConfig():
+            return config.model_name
+        case OllamaEmbeddingConfig():
+            return config.model_name
+        case LlamaCPPEmbeddingConfig():
+            return str(config.model_path)
+        case OpenAIEmbeddingConfig():
+            return config.model
+        case OpenAILikeEmbeddingConfig():
+            return config.model_name
+        case BGEM3EmbeddingConfig():
+            return "BAAI/bge-m3"
+
+
+@dataclass
+class OllamaConfig(YAMLWizard):
+    model: str
+    base_url: str = "http://localhost:11434"
+    temperature: float = 0.75
+    context_window: int = DEFAULT_CONTEXT_WINDOW
+    request_timeout: float | None = llama_index.llms.ollama.base.DEFAULT_REQUEST_TIMEOUT
+    prompt_key: str = "prompt"
+    json_mode: bool = False
+    # additional_kwargs: dict[str, Any] = field(default_factory=dict)
+    is_function_calling_model: bool = True
+    keep_alive: float | str | None = None
+
+
+@dataclass
+class OpenAIConfig(YAMLWizard):
+    model: str = DEFAULT_OPENAI_MODEL
+    temperature: float = DEFAULT_TEMPERATURE
+    max_tokens: int | None = None
+    additional_kwargs: dict[str, Any] | None = None
+    max_retries: int = 3
+    timeout: float = 60.0
+    reuse_client: bool = True
+    api_key: str = "fake"
+    api_base: str | None = None
+    api_version: str = ""
+    default_headers: dict[str, str] | None = None
+    # base class
+    system_prompt: str | None = None
+    # output_parser: BaseOutputParser | None = None
+    strict: bool = False
+    reasoning_effort: Literal["low", "medium", "high"] | None = None
+    modalities: list[str] | None = None
+    audio_config: dict[str, Any] | None = None
+
+
+@dataclass
+class OpenAILikeConfig(OpenAIConfig):
+    context_window: int = DEFAULT_CONTEXT_WINDOW
+    is_chat_model: bool = False
+    is_function_calling_model: bool = False
+
+
+@dataclass
+class LlamaCPPConfig(YAMLWizard):
+    model_url: str | None = None
+    model_path: str | None = None
+    temperature: float = DEFAULT_TEMPERATURE
+    max_new_tokens: int = DEFAULT_NUM_OUTPUTS
+    context_window: int = DEFAULT_CONTEXT_WINDOW
+    generate_kwargs: dict[str, Any] | None = None
+    model_kwargs: dict[str, Any] | None = None
+    verbose: bool = llama_index.llms.llama_cpp.base.DEFAULT_LLAMA_CPP_MODEL_VERBOSITY
+    system_prompt: str | None = None
+    # output_parser: BaseOutputParser | None = None
+
+
+@dataclass
+class PerplexityConfig(YAMLWizard):
+    model: str = "sonar-pro"
+    temperature: float = 0.2
+    max_tokens: int | None = None
+    api_key: str | None = None
+    api_base: str | None = "https://api.perplexity.ai"
+    additional_kwargs: dict[str, Any] | None = None
+    max_retries: int = 10
+    context_window: int | None = None
+    system_prompt: str | None = None
+    # output_parser: BaseOutputParser | None = None
+    enable_search_classifier: bool = False
+
+
+@dataclass
+class OpenRouterConfig(YAMLWizard):
+    model: str = llama_index.llms.openrouter.base.DEFAULT_MODEL
+    temperature: float = DEFAULT_TEMPERATURE
+    max_tokens: int = DEFAULT_NUM_OUTPUTS
+    additional_kwargs: dict[str, Any] | None = None
+    max_retries: int = 5
+    api_base: str | None = llama_index.llms.openrouter.base.DEFAULT_API_BASE
+    api_key: str | None = None
+
+
+@dataclass
+class LMStudioConfig(YAMLWizard):
+    model_name: str
+    system_prompt: str | None = None
+    # output_parser: BaseOutputParser | None = None
+    base_url: str = "http://localhost:1234/v1"
+    context_window: int = DEFAULT_CONTEXT_WINDOW
+    request_timeout: float = llama_index.llms.lmstudio.base.DEFAULT_REQUEST_TIMEOUT
+    num_output: int = DEFAULT_NUM_OUTPUTS
+    is_chat_model: bool = True
+    temperature: float = DEFAULT_TEMPERATURE
+    timeout: float = 120
+    additional_kwargs: dict[str, Any] = field(default_factory=dict)
+
+
+LLMConfig: TypeAlias = (
+    OllamaConfig
+    | OpenAILikeConfig
+    | OpenAIConfig
+    | LlamaCPPConfig
+    | PerplexityConfig
+    | OpenRouterConfig
+    | LMStudioConfig
+)
+
+
+def llm_model(config: LLMConfig) -> str:
+    match config:
+        case OllamaConfig():
+            return config.model
+        case OpenAILikeConfig():
+            return config.model
+        case OpenAIConfig():
+            return config.model
+        case LlamaCPPConfig():
+            msg = "<unknown LlamaCPP model>"
+            return config.model_path or config.model_url or msg
+        case PerplexityConfig():
+            return config.model
+        case OpenRouterConfig():
+            return config.model
+        case LMStudioConfig():
+            return config.model_name
 
 
 @dataclass
@@ -369,26 +579,27 @@ SplitterConfig: TypeAlias = (
 
 @dataclass
 class KeywordExtractorConfig(YAMLWizard):
-    llm: LLMConfig = field(default_factory=LLMConfig)
+    llm: LLMConfig
     keywords: int = 5
 
 
 @dataclass
 class SummaryExtractorConfig(YAMLWizard):
-    llm: LLMConfig = field(default_factory=LLMConfig)
+    llm: LLMConfig
     # ["self"]
-    summaries: list[str] = field(default_factory=list)
+    # summaries: list[str] = field(default_factory=list)
+    summaries: list[str] | None = None
 
 
 @dataclass
 class TitleExtractorConfig(YAMLWizard):
-    llm: LLMConfig = field(default_factory=LLMConfig)
+    llm: LLMConfig
     nodes: int = 5
 
 
 @dataclass
 class QuestionsAnsweredExtractorConfig(YAMLWizard):
-    llm: LLMConfig = field(default_factory=LLMConfig)
+    llm: LLMConfig
     questions: int = 1
 
 
@@ -423,7 +634,7 @@ ChatEngineConfig: TypeAlias = (
 
 
 @dataclass
-class VectorStoreConfig(YAMLWizard):
+class SimpleVectorStoreConfig(YAMLWizard):
     pass
 
 
@@ -431,10 +642,21 @@ class VectorStoreConfig(YAMLWizard):
 class PostgresVectorStoreConfig(YAMLWizard):
     connection: str
     hybrid_search: bool = False
+    dimensions: int = 512
     hnsw_m: int = 16
     hnsw_ef_construction: int = 64
     hnsw_ef_search: int = 40
     hnsw_dist_method: str = "vector_cosine_ops"
+
+
+VectorStoreConfig: TypeAlias = SimpleVectorStoreConfig | PostgresVectorStoreConfig
+
+
+@dataclass
+class FusionRetrieverConfig(YAMLWizard):
+    llm: LLMConfig
+    num_queries: int = 1  # set this to 1 to disable query generation
+    mode: FUSION_MODES = FUSION_MODES.RELATIVE_SCORE
 
 
 @dataclass
@@ -445,18 +667,29 @@ class RetrievalConfig(YAMLWizard):
         # v1_unsafe_parse_dataclass_in_union = True
         tag_key = "type"
         auto_assign_tags = True
+        v1_debug = logging.INFO
 
     embedding: EmbeddingConfig | None = None
-    keywords: KeywordsConfig = field(default_factory=KeywordsConfig)
-    splitter: SplitterConfig = field(default_factory=SentenceSplitterConfig)
-    extractors: list[ExtractorConfig] = field(default_factory=list)
+    keywords: KeywordsConfig | None = None
+    splitter: SplitterConfig | None = None
+    extractors: list[ExtractorConfig] | None = None
     vector_store: VectorStoreConfig | None = None
     top_k: int = 3
+    sparse_top_k: int = 3
+    fusion: FusionRetrieverConfig | None = None
 
 
 @dataclass
 class QueryConfig(YAMLWizard):
-    llm: LLMConfig = field(default_factory=LLMConfig)
+    @final
+    class _(JSONWizard.Meta):
+        # v1 = True  # Enable v1 opt-in
+        # v1_unsafe_parse_dataclass_in_union = True
+        tag_key = "type"
+        auto_assign_tags = True
+        v1_debug = logging.INFO
+
+    llm: LLMConfig
     retries: bool = False
     source_retries: bool = False
     show_citations: bool = False
@@ -471,9 +704,10 @@ class ChatConfig(YAMLWizard):
         # v1_unsafe_parse_dataclass_in_union = True
         tag_key = "type"
         auto_assign_tags = True
+        v1_debug = logging.INFO
 
-    llm: LLMConfig = field(default_factory=LLMConfig)
-    engine: ChatEngineConfig = field(default_factory=SimpleChatEngineConfig)
+    llm: LLMConfig
+    engine: ChatEngineConfig | None = None
     default_user: str = "user"
     summarize: bool = False
     keep_history: bool = False
@@ -481,9 +715,9 @@ class ChatConfig(YAMLWizard):
 
 @dataclass
 class Config(YAMLWizard):
-    query: QueryConfig = field(default_factory=QueryConfig)
-    chat: ChatConfig = field(default_factory=ChatConfig)
-    retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
+    retrieval: RetrievalConfig
+    query: QueryConfig | None = None
+    chat: ChatConfig | None = None
 
 
 # Readers
@@ -557,14 +791,14 @@ class OrgReader(BaseReader):
 def flatten_floats(data: list[float] | list[list[float]]) -> list[float]:
     if not data:
         return []
-    # Check if the first element is a float (covers the List[float] case)
+    # Check if the first element is a float (covers the list[float] case)
     if isinstance(data[0], float):
         return data  # type: ignore
-    # Otherwise, assume it's List[List[float]]
+    # Otherwise, assume it's list[list[float]]
     return [item for sublist in data for item in sublist]
 
 
-class LlamaCppEmbedding(BaseEmbedding):
+class LlamaCPPEmbedding(BaseEmbedding):
     @no_type_check
     def __init__(self, model_path: str, **kwargs):
         super().__init__(**kwargs)
@@ -909,9 +1143,6 @@ class RAGWorkflow:
                 str(path)
             )
             if isinstance(cfg, Config):
-                if cfg.retrieval.embedding is not None:
-                    if cfg.retrieval.embedding.provider == "BGEM3":
-                        cfg.retrieval.embedding.model = "BAAI/bge-m3"
                 return cfg
             else:
                 error("Config file should define a single Config object")
@@ -955,187 +1186,87 @@ class RAGWorkflow:
 
     def __load_embedding(
         self,
-        embed_config: EmbeddingConfig,
+        config: EmbeddingConfig,
         verbose: bool = False,
     ) -> EmbeddingType:
-        if embed_config.provider == "HuggingFace":
-            return HuggingFaceEmbedding(
-                model_name=embed_config.model,
-                query_instruction=embed_config.query_instruction,
-                show_progress_bar=verbose,
-                # text_instruction=None,
-                # normalize=True,
-                embed_batch_size=DEFAULT_EMBED_BATCH_SIZE,
-                # cache_folder=None,
-                # trust_remote_code=False,
-                parallel_process=False,
-            )
-        elif embed_config.provider == "Ollama":
-            return OllamaEmbedding(
-                model_name=embed_config.model,
-                base_url=embed_config.base_url or "http://localhost:11434",
-                embed_batch_size=DEFAULT_EMBED_BATCH_SIZE,
-            )
-        elif embed_config.provider == "LlamaCpp":
-            return LlamaCppEmbedding(model_path=embed_config.model)
-        elif embed_config.provider == "OpenAI":
-            return OpenAIEmbedding(
-                model_name=embed_config.model,
-                api_key=embed_config.api_key,
-                api_version=embed_config.api_version,
-                api_base=embed_config.base_url,
-                timeout=embed_config.timeout,
-            )
-        elif embed_config.provider == "OpenAILike":
-            return OpenAILikeEmbedding(
-                model_name=embed_config.model,
-                api_key=embed_config.api_key or "fake_key",
-                api_version=embed_config.api_version,
-                api_base=embed_config.base_url,
-                timeout=embed_config.timeout,
-            )
-        elif embed_config.provider == "BGEM3":
-            return BGEM3Embedding()
-        else:
-            error(f"Embedding model not recognized: {embed_config.model}")
+        match config:
+            case HuggingFaceEmbeddingConfig():
+                return HuggingFaceEmbedding(
+                    **asdict(config),
+                    show_progress_bar=verbose,
+                )
+            case OllamaEmbeddingConfig():
+                return OllamaEmbedding(
+                    **asdict(config),
+                    show_progress=verbose,
+                )
+            case LlamaCPPEmbeddingConfig():
+                return LlamaCPPEmbedding(
+                    **asdict(config),
+                    show_progress=verbose,
+                )
+            case OpenAIEmbeddingConfig():
+                return OpenAIEmbedding(
+                    **asdict(config),
+                    show_progress=verbose,
+                )
+            case OpenAILikeEmbeddingConfig():
+                return OpenAILikeEmbedding(
+                    **asdict(config),
+                    show_progress=verbose,
+                )
+            case BGEM3EmbeddingConfig():
+                return BGEM3Embedding(
+                    **asdict(config),
+                    # show_progress=verbose,
+                )
 
     @classmethod
     def __load_llm(
         cls,
-        llm_config: LLMConfig,
+        config: LLMConfig,
         verbose: bool = False,
     ) -> LLM:
-        if llm_config.provider == "Ollama":
-            return Ollama(
-                model=llm_config.model,
-                base_url=llm_config.base_url or "http://localhost:11434",
-                temperature=llm_config.temperature,
-                context_window=llm_config.context_window,
-                max_tokens=llm_config.max_tokens,
-                system_prompt=convert_str(llm_config.system_prompt),
-                # request_timeout,
-                # prompt_key,
-                # json_mode,
-                is_function_calling_model=False,
-                # keep_alive,
-            )
-        elif llm_config.provider == "OpenAILike":
-            return OpenAILike(
-                model=llm_config.model,
-                api_base=llm_config.base_url or "http://localhost:1234/v1",
-                api_key=llm_config.api_key or "fake_key",
-                api_version=llm_config.api_version or "",
-                temperature=llm_config.temperature,
-                max_tokens=llm_config.max_tokens,
-                context_window=llm_config.context_window,
-                reasoning_effort=llm_config.reasoning_effort,
-                timeout=llm_config.timeout,
-                is_chat_model=True,
-                is_function_calling_model=False,
-                system_prompt=convert_str(llm_config.system_prompt),
-                # max_retries,
-                # reuse_client,
-            )
-        elif llm_config.provider == "OpenAI":
-            return OpenAI(
-                model=llm_config.model,
-                api_key=llm_config.api_key,
-                api_base=llm_config.base_url,
-                api_version=llm_config.api_version,
-                temperature=llm_config.temperature,
-                max_tokens=llm_config.max_tokens,
-                context_window=llm_config.context_window,
-                reasoning_effort=llm_config.reasoning_effort,
-                timeout=llm_config.timeout,
-                system_prompt=convert_str(llm_config.system_prompt),
-                # max_retries,
-                # reuse_client,
-                # strict,
-            )
-        elif llm_config.provider == "LlamaCpp":
-            return LlamaCPP(
-                # model_url=model_url,
-                model_path=llm_config.model,
-                temperature=llm_config.temperature,
-                max_new_tokens=llm_config.max_tokens,
-                context_window=llm_config.context_window,
-                generate_kwargs={},
-                model_kwargs={"n_gpu_layers": llm_config.gpu_layers},
-                verbose=verbose,
-                system_prompt=convert_str(llm_config.system_prompt),
-            )
-        elif llm_config.provider == "Perplexity":
-            return Perplexity(
-                model_name=llm_config.model,
-                api_key=llm_config.api_key,
-                temperature=llm_config.temperature,
-                max_tokens=llm_config.max_tokens,
-                context_window=llm_config.context_window,
-                reasoning_effort=llm_config.reasoning_effort,
-                # This will determine if the search component is necessary
-                # in this particular context
-                enable_search_classifier=True,
-                timeout=llm_config.timeout,
-                system_prompt=convert_str(llm_config.system_prompt),
-                # max_retries,
-            )
-        elif llm_config.provider == "OpenRouter":
-            return OpenRouter(
-                model_name=llm_config.model,
-                api_key=llm_config.api_key,
-                temperature=llm_config.temperature,
-                max_tokens=llm_config.max_tokens,
-                context_window=llm_config.context_window,
-                reasoning_effort=llm_config.reasoning_effort,
-                timeout=llm_config.timeout,
-                system_prompt=convert_str(llm_config.system_prompt),
-                is_chat_model=True,
-            )
-        elif llm_config.provider == "LMStudio":
-            return LMStudio(
-                model_name=llm_config.model,
-                base_url=llm_config.base_url or "http://localhost:1234/v1",
-                temperature=llm_config.temperature,
-                context_window=llm_config.context_window,
-                timeout=llm_config.timeout,
-                system_prompt=convert_str(llm_config.system_prompt),
-                is_chat_model=True,
-                # request_timeout,
-                # num_output,
-            )
-        else:
-            error(f"LLM model not recognized: {llm_config.model}")
+        match config:
+            case OllamaConfig():
+                return Ollama(**asdict(config), show_progress=verbose)
+            case OpenAILikeConfig():
+                return OpenAILike(**asdict(config))
+            case OpenAIConfig():
+                return OpenAI(**asdict(config), show_progress=verbose)
+            case LlamaCPPConfig():
+                return LlamaCPP(**asdict(config))
+            case PerplexityConfig():
+                return Perplexity(**asdict(config), show_progress=verbose)
+            case OpenRouterConfig():
+                return OpenRouter(**asdict(config), show_progress=verbose)
+            case LMStudioConfig():
+                return LMStudio(**asdict(config))
 
     @classmethod
     def realize_llm(
         cls,
-        llm_config: LLMConfig | None,
+        config: LLMConfig | None,
         verbose: bool = False,
     ) -> LLM | NoReturn:
         llm = (
             cls.__load_llm(
-                llm_config=llm_config,
+                config=config,
                 verbose=verbose,
             )
-            if llm_config is not None
+            if config is not None
             else None
         )
         if llm is None:
-            error(f"Failed to start LLM: {llm_config}")
+            error(f"Failed to start LLM: {config}")
         else:
             return llm
 
     def __determine_fingerprint(
         self,
         input_files: list[Path],
-        embed_model: str,
-        embed_dim: int,
     ) -> str:
-        fingerprint = [
-            collection_hash(input_files),
-            hashlib.sha512(embed_model.encode("utf-8")).hexdigest(),
-            hashlib.sha512(str(embed_dim).encode("utf-8")).hexdigest(),
-        ]
+        fingerprint = [collection_hash(input_files)]
         final_hash = "\n".join(fingerprint).encode("utf-8")
         final_base64 = base64.b64encode(final_hash).decode("utf-8")
         return final_base64[0:32]
@@ -1221,7 +1352,7 @@ class RAGWorkflow:
             case SummaryExtractorConfig():
                 llm = self.realize_llm(config.llm, verbose=verbose)
                 return SummaryExtractor(
-                    summaries=config.summaries,
+                    summaries=config.summaries or [],
                     llm=llm,
                     show_progress=verbose,
                 )
@@ -1247,7 +1378,7 @@ class RAGWorkflow:
     ) -> Sequence[BaseNode]:
         transformations: list[TransformComponent] = [
             self.__load_splitter(
-                splitter=self.config.retrieval.splitter,
+                splitter=self.config.retrieval.splitter or SentenceSplitterConfig(),
                 verbose=verbose,
             )
         ]
@@ -1257,7 +1388,7 @@ class RAGWorkflow:
                 entry,
                 verbose=verbose,
             )
-            for entry in self.config.retrieval.extractors
+            for entry in self.config.retrieval.extractors or []
         ]
 
         transformations.extend([x for x in extractors if x is not None])
@@ -1303,7 +1434,10 @@ class RAGWorkflow:
                     show_progress=verbose,
                 )
 
-        if self.config.retrieval.keywords.collect:
+        if (
+            self.config.retrieval.keywords is not None
+            and self.config.retrieval.keywords.collect
+        ):
             if self.config.retrieval.keywords.llm is None:
                 keyword_index = SimpleKeywordTableIndex(
                     nodes,
@@ -1382,14 +1516,8 @@ class RAGWorkflow:
     def __persist_dir(
         self,
         input_files: list[Path],
-        embedding: EmbeddingConfig,
     ) -> Path:
-        fp: str = self.__determine_fingerprint(
-            input_files,
-            embedding.model,
-            embedding.dimensions,
-        )
-        return cache_dir(fp)
+        return cache_dir(self.__determine_fingerprint(input_files))
 
     def __load_storage_context(
         self,
@@ -1404,7 +1532,7 @@ class RAGWorkflow:
         ):
             docstore, index_store, vector_store = self.__postgres_stores(
                 config=self.config.retrieval.vector_store,
-                embedding_dimensions=self.config.retrieval.embedding.dimensions,
+                embedding_dimensions=self.config.retrieval.vector_store.dimensions,
             )
         elif persist_dir is not None and os.path.isdir(persist_dir):
             docstore = SimpleDocumentStore.from_persist_dir(str(persist_dir))
@@ -1461,11 +1589,15 @@ class RAGWorkflow:
                     llm=embed_llm,
                     index_ids=(
                         ["vector_index", "keyword_index"]
-                        if self.config.retrieval.keywords.collect
+                        if self.config.retrieval.keywords is not None
+                        and self.config.retrieval.keywords.collect
                         else ["vector_index"]
                     ),
                 )
-                if self.config.retrieval.keywords.collect:
+                if (
+                    self.config.retrieval.keywords is not None
+                    and self.config.retrieval.keywords.collect
+                ):
                     [vi, ki] = indices
                     vector_index = cast(VectorStoreIndex, vi)
                     keyword_index = cast(BaseKeywordTableIndex, ki)
@@ -1492,10 +1624,7 @@ class RAGWorkflow:
         elif self.config.retrieval.embedding is None:
             error("Cannot ingest files without an embedding model")
         else:
-            persist_dir = self.__persist_dir(
-                input_files,
-                self.config.retrieval.embedding,
-            )
+            persist_dir = self.__persist_dir(input_files)
             persisted = os.path.isdir(persist_dir)
 
         storage_context = self.__load_storage_context(
@@ -1504,7 +1633,7 @@ class RAGWorkflow:
 
         if self.config.retrieval.embedding is not None:
             embed_llm = self.__load_embedding(
-                embed_config=self.config.retrieval.embedding,
+                config=self.config.retrieval.embedding,
                 verbose=verbose,
             )
         else:
@@ -1557,24 +1686,25 @@ class RAGWorkflow:
                 and isinstance(
                     self.config.retrieval.vector_store, PostgresVectorStoreConfig
                 )
-                and self.config.retrieval.vector_store.hybrid_search
+                and self.config.retrieval.fusion is not None
             ):
                 vector_retriever = vector_index.as_retriever(
                     vector_store_query_mode="default",
-                    similarity_top_k=5,
+                    similarity_top_k=self.config.retrieval.top_k,
                     verbose=verbose,
                 )
                 text_retriever = vector_index.as_retriever(
                     vector_store_query_mode="sparse",
-                    similarity_top_k=5,  # interchangeable with sparse_top_k
+                    similarity_top_k=self.config.retrieval.sparse_top_k,
                     verbose=verbose,
                 )
+                llm = self.realize_llm(self.config.retrieval.fusion.llm)
                 vector_retriever = QueryFusionRetriever(
                     [vector_retriever, text_retriever],
                     similarity_top_k=self.config.retrieval.top_k,
-                    num_queries=1,  # set this to 1 to disable query generation
-                    mode=FUSION_MODES.RELATIVE_SCORE,
-                    llm=None,  # jww (2025-05-12): FIXME
+                    num_queries=self.config.retrieval.fusion.num_queries,
+                    mode=self.config.retrieval.fusion.mode,
+                    llm=llm,
                     verbose=verbose,
                 )
             else:
@@ -1709,7 +1839,7 @@ class ChatState:
         system_prompt: str | None = None,
         verbose: bool = False,
     ):
-        chat_store = SimpleChatStore()
+        chat_store = chat_store or SimpleChatStore()
         if chat_history is not None:
             chat_store.set_messages(key=user, messages=chat_history)
 
@@ -1754,7 +1884,7 @@ class ChatState:
                     skip_condense=config.engine.skip_condense,
                     verbose=verbose,
                 )
-            case SimpleChatEngineConfig():
+            case SimpleChatEngineConfig() | None:
                 chat_engine = SimpleChatEngine.from_defaults(
                     llm=llm,
                     memory=chat_memory,
