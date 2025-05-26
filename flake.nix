@@ -30,6 +30,8 @@
       ];
 
       libPath = pkgs.lib.makeLibraryPath sysLibs;
+
+      pg = pkgs.postgresql.withPackages (p: with p; [ pgvector ]);
     in {
       inherit pkgs;
 
@@ -54,6 +56,7 @@
         buildInputs = [
           pythonPackage
           zlib
+          pg
         ];
 
         preBuild = ''
@@ -61,6 +64,8 @@
           export BUILD_VENV=$TMPDIR/build_venv
           ${pythonPackage}/bin/python -m venv $BUILD_VENV
           source $BUILD_VENV/bin/activate
+
+          export PATH=${pg}/bin:$PATH
 
           # Install dependencies using pip
           pip install --upgrade pip
