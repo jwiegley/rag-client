@@ -30,8 +30,6 @@
       ];
 
       libPath = pkgs.lib.makeLibraryPath sysLibs;
-
-      pg = pkgs.postgresql.withPackages (p: with p; [ pgvector ]);
     in {
       inherit pkgs;
 
@@ -56,7 +54,8 @@
         buildInputs = [
           pythonPackage
           zlib
-          pg
+          openssl.dev
+          libpq.pg_config
         ];
 
         preBuild = ''
@@ -65,7 +64,7 @@
           ${pythonPackage}/bin/python -m venv $BUILD_VENV
           source $BUILD_VENV/bin/activate
 
-          export PATH=${pg}/bin:$PATH
+          export PATH=${libpq.pg_config}/bin:$PATH
 
           # Install dependencies using pip
           pip install --upgrade pip
