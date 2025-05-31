@@ -26,6 +26,7 @@
         zlib
         glib
         libpq
+        libpq.pg_config
         openssl
       ];
 
@@ -54,8 +55,9 @@
         buildInputs = [
           pythonPackage
           zlib
-          openssl.dev
+          libpq
           libpq.pg_config
+          openssl.dev
         ];
 
         preBuild = ''
