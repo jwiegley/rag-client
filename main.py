@@ -236,9 +236,11 @@ def rag_client(
                     # Handle search queries within the chat loop
                     if retriever is not None:
                         search_command(rag, retriever, query[7:])
+                    else:
+                        print("ERROR: Search command requires a retriever")
                 elif query.startswith("query "):
                     if rag.config.query is None:
-                        print("'query' command requires query engine to be configured")
+                        print("ERROR: 'query' command requires engine to be configured")
                     else:
                         # Handle query commands within the chat loop
                         if query_state is None:
@@ -301,6 +303,7 @@ def main(args: Args):
         input_from=args.from_,
         num_workers=args.num_workers,
         recursive=args.recursive,
+        index_files=args.command == "index",
         verbose=args.verbose,
     )
 

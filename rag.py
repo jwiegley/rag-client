@@ -1130,6 +1130,7 @@ class EmbeddingRequest(BaseModel):
 
 @dataclass
 class RAGWorkflow:
+    logger: logging.Logger
     config: Config
 
     @classmethod
@@ -1145,8 +1146,9 @@ class RAGWorkflow:
         else:
             error(f"Cannot read config file {path}")
 
+    @classmethod
     def __postgres_stores(
-        self,
+        cls,
         config: PostgresVectorStoreConfig,
         embedding_dimensions: int,
     ) -> tuple[PostgresDocumentStore, PostgresIndexStore, PGVectorStore]:
@@ -1180,8 +1182,9 @@ class RAGWorkflow:
         )
         return docstore, index_store, vector_store
 
+    @classmethod
     def __load_embedding(
-        self,
+        cls,
         config: EmbeddingConfig,
         verbose: bool = False,
     ) -> EmbeddingType:
@@ -1260,8 +1263,9 @@ class RAGWorkflow:
         else:
             return llm
 
+    @classmethod
     def __determine_fingerprint(
-        self,
+        cls,
         input_files: list[Path],
     ) -> str:
         fingerprint = [collection_hash(input_files)]
@@ -1269,8 +1273,9 @@ class RAGWorkflow:
         final_base64 = base64.b64encode(final_hash).decode("utf-8")
         return final_base64[0:32]
 
+    @classmethod
     def __read_documents(
-        self,
+        cls,
         input_files: list[Path],
         num_workers: int | None = None,
         recursive: bool = False,
@@ -1285,8 +1290,9 @@ class RAGWorkflow:
             recursive=recursive,
         ).load_data(num_workers=num_workers, show_progress=verbose)
 
+    @classmethod
     def __load_splitter(
-        self,
+        cls,
         splitter: SplitterConfig,
         verbose: bool = False,
     ) -> TransformComponent | NoReturn:
@@ -1305,7 +1311,7 @@ class RAGWorkflow:
                 )
             case SemanticSplitterConfig():
                 if splitter.embedding is not None:
-                    embed_llm = self.__load_embedding(
+                    embed_llm = RAGWorkflow.__load_embedding(
                         splitter.embedding,
                         verbose=verbose,
                     )
@@ -1334,35 +1340,36 @@ class RAGWorkflow:
                     max_chars=splitter.max_chars,
                 )
 
+    @classmethod
     def __load_extractor(
-        self,
+        cls,
         config: ExtractorConfig,
         verbose: bool = False,
     ) -> TransformComponent | None:
         match config:
             case KeywordExtractorConfig():
-                llm = self.realize_llm(config.llm, verbose=verbose)
+                llm = RAGWorkflow.realize_llm(config.llm, verbose=verbose)
                 return KeywordExtractor(
                     keywords=config.keywords,
                     llm=llm,
                     show_progress=verbose,
                 )
             case SummaryExtractorConfig():
-                llm = self.realize_llm(config.llm, verbose=verbose)
+                llm = RAGWorkflow.realize_llm(config.llm, verbose=verbose)
                 return SummaryExtractor(
                     summaries=config.summaries or [],
                     llm=llm,
                     show_progress=verbose,
                 )
             case TitleExtractorConfig():
-                llm = self.realize_llm(config.llm, verbose=verbose)
+                llm = RAGWorkflow.realize_llm(config.llm, verbose=verbose)
                 return TitleExtractor(
                     nodes=config.nodes,
                     llm=llm,
                     show_progress=verbose,
                 )
             case QuestionsAnsweredExtractorConfig():
-                llm = self.realize_llm(config.llm, verbose=verbose)
+                llm = RAGWorkflow.realize_llm(config.llm, verbose=verbose)
                 return QuestionsAnsweredExtractor(
                     questions=config.questions,
                     llm=llm,
@@ -1521,6 +1528,7 @@ class RAGWorkflow:
         self,
         persist_dir: Path | None,
     ) -> StorageContext:
+        self.logger.info("Load storage context")
         if (
             self.config.retrieval.vector_store is not None
             and isinstance(
@@ -1577,7 +1585,7 @@ class RAGWorkflow:
                         weights_for_different_modes=[0.4, 0.2, 0.4],
                     )
             case BaseEmbedding():
-                indices: list[BaseIndex[IndexDict]] = load_indices_from_storage(
+                indices: list[BaseIndex[IndexDict]] = load_indices_from_storage(  # pyright: ignore[reportUnknownVariableType]
                     storage_context=storage_context,
                     embed_model=(
                         embed_llm if not isinstance(embed_llm, BGEM3Embedding) else None
@@ -1609,11 +1617,14 @@ class RAGWorkflow:
         self,
         input_files: list[Path] | None,
         num_workers: int | None = None,
+        index_files: bool = False,
         verbose: bool = False,
     ) -> tuple[
         VectorStoreIndex | BGEM3Index | None,
         BaseKeywordTableIndex | None,
     ]:
+        self.logger.info("Ingest files")
+
         persist_dir: Path | None = None
         persisted = False
 
@@ -1630,6 +1641,7 @@ class RAGWorkflow:
         )
 
         if self.config.retrieval.embedding is not None:
+            self.logger.info("Load embedding model")
             embed_llm = self.__load_embedding(
                 config=self.config.retrieval.embedding,
                 verbose=verbose,
@@ -1640,17 +1652,24 @@ class RAGWorkflow:
         vector_index = None
         keyword_index = None
 
-        if self.config.retrieval.vector_store is not None or persisted:
-            try:
-                vector_index, keyword_index = self.__load_indices(
-                    embed_llm=embed_llm,
-                    storage_context=storage_context,
-                    persist_dir=persist_dir,
-                )
-            except ValueError:
-                pass
+        if self.config.retrieval.vector_store is not None:
+            self.logger.info("Retrieval vector store is not None")
+        else:
+            self.logger.info("Retrieval vector store is None")
+        if persisted:
+            self.logger.info("Previous state was persisted")
+        else:
+            self.logger.info("Previous state was not persisted")
+        if input_files is not None:
+            self.logger.info("There are input files")
+        else:
+            self.logger.info("There are no input files")
 
-        if input_files is not None and not persisted:
+        if index_files:
+            if input_files is None:
+                error("Cannot create vector index without input files")
+
+            self.logger.info("Ingest documents")
             vector_index, keyword_index = self.__ingest_documents(
                 num_workers=num_workers,
                 embed_llm=embed_llm,
@@ -1658,11 +1677,26 @@ class RAGWorkflow:
                 input_files=input_files,
                 verbose=verbose,
             )
+            self.logger.info("Save indices")
             self.__save_indices(
                 storage_context,
                 vector_index if isinstance(vector_index, BGEM3Index) else None,
                 persist_dir=persist_dir,
             )
+        else:
+            if self.config.retrieval.vector_store is not None or persisted:
+                try:
+                    self.logger.info("Load indices...")
+                    vector_index, keyword_index = self.__load_indices(
+                        embed_llm=embed_llm,
+                        storage_context=storage_context,
+                        persist_dir=persist_dir,
+                    )
+                    self.logger.info("Load indices...done")
+                except ValueError:
+                    self.logger.info("Load indices...failed")
+            else:
+                error("Cannot load index from vector database or cache")
 
         return (vector_index, keyword_index)
 
@@ -1670,11 +1704,14 @@ class RAGWorkflow:
         self,
         input_files: list[Path] | None,
         num_workers: int | None = None,
+        index_files: bool = False,
         verbose: bool = False,
     ) -> BaseRetriever | None:
+        self.logger.info("Load retriever")
         vector_index, keyword_index = self.__ingest_files(
             num_workers=num_workers,
             input_files=input_files,
+            index_files=index_files,
             verbose=verbose,
         )
 
@@ -1686,6 +1723,7 @@ class RAGWorkflow:
                 )
                 and self.config.retrieval.fusion is not None
             ):
+                self.logger.info("Setup query fusion retriever")
                 vector_retriever = vector_index.as_retriever(
                     vector_store_query_mode="default",
                     similarity_top_k=self.config.retrieval.top_k,
@@ -1706,22 +1744,27 @@ class RAGWorkflow:
                     verbose=verbose,
                 )
             else:
+                self.logger.info("Load retriever from vector index")
                 vector_retriever = vector_index.as_retriever(
                     similarity_top_k=self.config.retrieval.top_k,
                     verbose=verbose,
                 )
         else:
+            self.logger.info("There is no vector index")
             vector_retriever = None
 
         if keyword_index is not None:
+            self.logger.info("Load retriever from keyword index")
             keyword_retriever = keyword_index.as_retriever(
                 verbose=verbose,
             )
         else:
+            self.logger.info("There is no keyword index")
             keyword_retriever = None
 
         if vector_retriever is not None:
             if keyword_retriever is not None:
+                self.logger.info("Load custom retriever")
                 retriever = CustomRetriever(
                     vector_retriever=vector_retriever,
                     keyword_retriever=keyword_retriever,
@@ -1919,39 +1962,34 @@ def rag_initialize(
     input_from: str | None,
     num_workers: int | None = None,
     recursive: bool = False,
+    index_files: bool = False,
     verbose: bool = False,
 ) -> tuple[RAGWorkflow, BaseRetriever | None]:
-    if verbose:
-        logger.info("Load RAG config")
+    logger.info("Load RAG config")
     config = RAGWorkflow.load_config(config_path)
 
-    if verbose:
-        logger.info("Read input files...")
+    logger.info("Read input files...")
     if input_from is not None:
         input_files = read_files(input_from, recursive)
-        if verbose:
-            count = str(len(input_files)) if input_files else "no"
-            logger.info(f"Read {count} input file(s)...done")
+        count = str(len(input_files)) if input_files else "no"
+        logger.info(f"Found {count} input file(s)...done")
     else:
         input_files = None
 
-    if verbose:
-        logger.info("Construct RAGWorkflow object")
-    rag = RAGWorkflow(config)
+    logger.info("Construct RAGWorkflow object")
+    rag = RAGWorkflow(logger, config)
 
     if config.retrieval.embedding is not None:
         # If the input_files is None, the retriever might still load indices
         # from cache or a database
-        if verbose:
-            logger.info("Load retriever")
         retriever = rag.load_retriever(
             num_workers=num_workers,
             input_files=input_files,
+            index_files=index_files,
             verbose=verbose,
         )
     else:
-        if verbose:
-            logger.info("No retriever used")
+        logger.info("No retriever used")
         retriever = None
 
     return (rag, retriever)

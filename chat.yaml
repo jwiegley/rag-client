@@ -1,7 +1,7 @@
 query:
   llm: &llm
     type: OpenAILikeConfig
-    model: "Llama-4-Maverick-17B-128E-Instruct"
+    model: "Qwen3-0.6B"
     api_base: "http://localhost:8080/v1"
     # api_base: "http://192.168.50.5:8080/v1"
     temperature: 0.7
@@ -14,28 +14,27 @@ chat:
   # default_user: "user1"
   # summarize: False
   engine:
-    type: CondensePlusContextChatEngineConfig
-    skip_condense: false
+    type: ContextChatEngineConfig
+    # type: CondensePlusContextChatEngineConfig
+    # skip_condense: false
 
 retrieval:
   top_k: 40
   sparse_top_k: 5
 
-  fusion:
-    llm: *llm
+  # fusion:
+  #   llm: *llm
 
   # vector_store:
   #   connection: "postgresql+psycopg2://postgres@localhost:5432/vector_db"
   #   hybrid_search: true
 
-  # embedding:
-  #   provider: "BGEM3"
-  #   model: "BAAI/bge-m3"
-  #   dimensions: 1024
   embedding:
-    type: HuggingFaceEmbeddingConfig
-    model_name: "BAAI/bge-large-en-v1.5"
-    # model_name: "BAAI/bge-base-en-v1.5"
+    type: BGEM3EmbeddingConfig
+  # embedding:
+  #   type: HuggingFaceEmbeddingConfig
+  #   model_name: "BAAI/bge-large-en-v1.5"
+  #   # model_name: "BAAI/bge-base-en-v1.5"
 
   splitter:
     type: SentenceSplitterConfig
