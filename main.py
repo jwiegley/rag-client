@@ -29,6 +29,7 @@ class Args(TypedArgs):
     num_workers: int | None
     recursive: bool
     verbose: bool
+    debug: bool
     streaming: bool
     host: str
     port: int
@@ -62,6 +63,7 @@ def parse_args(arguments: list[str] = sys.argv[1:]) -> Args:
         "--num-workers", "-j", type=int, help="Number of parallel jobs to use"
     )
     _ = parser.add_argument("--verbose", action="store_true", help="Verbose?")
+    _ = parser.add_argument("--debug", action="store_true", help="Debug?")
     _ = parser.add_argument("--streaming", action="store_true", help="Streaming?")
     _ = parser.add_argument(
         "--host", type=str, default="localhost", help="Host for 'serve' command"
@@ -128,7 +130,12 @@ def query_command(query_state: QueryState, query: QueryType):
             error(f"query_command cannot render response: {response}")
 
 
-def chat_command(chat_state: ChatState, query: str, streaming: bool):
+def chat_command(
+    logger: logging.Logger,
+    chat_state: ChatState,
+    query: str,
+    streaming: bool,
+):
     """
     Execute a chat command.
 
@@ -138,6 +145,7 @@ def chat_command(chat_state: ChatState, query: str, streaming: bool):
         streaming: Whether to stream the response.
     """
     # Execute the chat using the chat state
+    logger.debug("Submit chat query")
     response = chat_state.chat(
         query=query,
         streaming=streaming,
@@ -155,6 +163,7 @@ def chat_command(chat_state: ChatState, query: str, streaming: bool):
 
 
 def rag_client(
+    logger: logging.Logger,
     rag: RAGWorkflow,
     retriever: BaseRetriever | None,
     args: Args,
@@ -258,10 +267,12 @@ def rag_client(
                 else:
                     # Handle chat queries
                     if chat_state is None:
+                        logger.debug("Realize chat LLM")
                         llm = rag.realize_llm(
                             rag.config.chat.llm,
                             verbose=args.verbose,
                         )
+                        logger.debug("Initialize chat state")
                         chat_state = ChatState(
                             config=rag.config.chat,
                             llm=llm,
@@ -269,7 +280,9 @@ def rag_client(
                             retriever=retriever,
                             verbose=args.verbose,
                         )
+                    logger.debug("Handle chat command")
                     chat_command(
+                        logger,
                         chat_state,
                         query=query,
                         streaming=args.streaming,
@@ -286,11 +299,17 @@ def main(args: Args):
     Args:
         args: The parsed arguments.
     """
+    level = logging.WARN
+    if args.debug:
+        level = logging.DEBUG
+    elif args.verbose:
+        level = logging.INFO
+
     # Configure logging
     logging.basicConfig(
         stream=sys.stdout,
         encoding="utf-8",
-        level=logging.INFO if args.verbose else logging.WARN,
+        level=level,
         format="%(asctime)s [%(levelname)s] %(message)s",  # Log message format
         datefmt="%H:%M:%S",
     )
@@ -304,7 +323,7 @@ def main(args: Args):
         num_workers=args.num_workers,
         recursive=args.recursive,
         index_files=args.command == "index",
-        verbose=args.verbose,
+        verbose=args.verbose or args.debug,
     )
 
     # Handle different commands
@@ -323,7 +342,7 @@ def main(args: Args):
             pass
         case _:
             # Execute the RAG client
-            rag_client(rag, retriever, args)
+            rag_client(logger, rag, retriever, args)
 
 
 if __name__ == "__main__":

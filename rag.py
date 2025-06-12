@@ -9,6 +9,7 @@ import os
 import sys
 import psycopg2
 import llama_cpp
+import chat
 
 from collections.abc import Iterable, Sequence
 from copy import deepcopy
@@ -637,6 +638,11 @@ class SimpleChatEngineConfig(YAMLWizard):
 
 
 @dataclass
+class SimpleContextChatEngineConfig(YAMLWizard):
+    context_window: int = DEFAULT_CONTEXT_WINDOW
+
+
+@dataclass
 class ContextChatEngineConfig(YAMLWizard):
     pass
 
@@ -648,6 +654,7 @@ class CondensePlusContextChatEngineConfig(YAMLWizard):
 
 ChatEngineConfig: TypeAlias = (
     SimpleChatEngineConfig
+    | SimpleContextChatEngineConfig
     | ContextChatEngineConfig
     | CondensePlusContextChatEngineConfig
 )
@@ -1057,7 +1064,7 @@ class BGEM3Embedding:
         details.pickle_to_table(
             "multi_embed_store",
             1,
-            index._multi_embed_store,  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType, reportPrivateUsage]
+            index._multi_embed_store,  # pyright: ignore[reportPrivateUsage]
         )
 
 
@@ -1073,6 +1080,7 @@ class Message(BaseModel):
 
 class ChatCompletionRequest(BaseModel):
     "https://platform.openai.com/docs/api-reference/chat/create"
+
     messages: list[Message]
     model: str
     # audio
@@ -1585,20 +1593,24 @@ class RAGWorkflow:
                         weights_for_different_modes=[0.4, 0.2, 0.4],
                     )
             case BaseEmbedding():
-                indices: list[BaseIndex[IndexDict]] = load_indices_from_storage(  # pyright: ignore[reportUnknownVariableType]
-                    storage_context=storage_context,
-                    embed_model=(
-                        embed_llm if not isinstance(embed_llm, BGEM3Embedding) else None
-                    ),
-                    # This doesn't actually need an llm, but it tries to
-                    # load one if it's None
-                    llm=embed_llm,
-                    index_ids=(
-                        ["vector_index", "keyword_index"]
-                        if self.config.retrieval.keywords is not None
-                        and self.config.retrieval.keywords.collect
-                        else ["vector_index"]
-                    ),
+                indices: list[BaseIndex[IndexDict]] = (
+                    load_indices_from_storage(  # pyright: ignore[reportUnknownVariableType]
+                        storage_context=storage_context,
+                        embed_model=(
+                            embed_llm
+                            if not isinstance(embed_llm, BGEM3Embedding)
+                            else None
+                        ),
+                        # This doesn't actually need an llm, but it tries to
+                        # load one if it's None
+                        llm=embed_llm,
+                        index_ids=(
+                            ["vector_index", "keyword_index"]
+                            if self.config.retrieval.keywords is not None
+                            and self.config.retrieval.keywords.collect
+                            else ["vector_index"]
+                        ),
+                    )
                 )
                 if (
                     self.config.retrieval.keywords is not None
@@ -1866,6 +1878,7 @@ class QueryState:
 @dataclass
 class ChatState:
     "Chat with the LLM, possibly in the context of a document collection."
+
     chat_engine: BaseChatEngine
 
     def __init__(
@@ -1904,14 +1917,32 @@ class ChatState:
             )
 
         match config.engine:
+            case SimpleContextChatEngineConfig():
+                if retriever is None:
+                    error("SimpleContextChatEngine requires a retriever")
+                chat_engine = chat.SimpleContextChatEngine(
+                    retriever=retriever,
+                    llm=llm,
+                    memory=chat_memory,
+                    prefix_messages=None,
+                    node_postprocessors=None,
+                    context_window=config.engine.context_window,
+                    response_mode=ResponseMode.COMPACT,
+                    verbose=verbose,
+                    callback_manager=None,
+                )
             case ContextChatEngineConfig():
                 if retriever is None:
                     error("ContextChatEngine requires a retriever")
                 chat_engine = ContextChatEngine.from_defaults(
                     retriever=retriever,
-                    llm=llm,
                     memory=chat_memory,
                     system_prompt=system_prompt,
+                    node_postprocessors=None,
+                    context_template=None,
+                    context_refine_template=None,
+                    callback_manager=None,
+                    llm=llm,
                     verbose=verbose,
                 )
             case CondensePlusContextChatEngineConfig():
@@ -1919,9 +1950,9 @@ class ChatState:
                     error("ContextChatEngine requires a retriever")
                 chat_engine = CondensePlusContextChatEngine.from_defaults(
                     retriever=retriever,
-                    llm=llm,
                     memory=chat_memory,
                     system_prompt=system_prompt,
+                    llm=llm,
                     skip_condense=config.engine.skip_condense,
                     verbose=verbose,
                 )
@@ -1930,6 +1961,7 @@ class ChatState:
                     llm=llm,
                     memory=chat_memory,
                     system_prompt=system_prompt,
+                    prefix_messages=None,
                     verbose=verbose,
                 )
 
