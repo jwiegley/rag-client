@@ -4,7 +4,7 @@ query:
     model: "Qwen3-235B-A22B"
     api_base: "http://localhost:8080/v1"
     # api_base: "http://192.168.50.5:8080/v1"
-    temperature: 0.7
+    temperature: 0.6
     max_tokens: 8192
     timeout: 7200
   source_retries: false
@@ -20,7 +20,7 @@ chat:
     # skip_condense: false
 
 retrieval:
-  top_k: 40
+  top_k: 20
   sparse_top_k: 5
 
   # fusion:
