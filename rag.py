@@ -633,6 +633,27 @@ ExtractorConfig: TypeAlias = (
 
 
 @dataclass
+class CitationQueryEngineConfig(YAMLWizard):
+    chunk_size: int = 512
+    chunk_overlap: int = 20
+
+@dataclass
+class RetrieverQueryEngineConfig(YAMLWizard):
+    response_mode: ResponseMode = ResponseMode.REFINE
+
+@dataclass
+class SimpleQueryEngineConfig(YAMLWizard):
+    pass
+
+
+QueryEngineConfig: TypeAlias = (
+    SimpleQueryEngineConfig
+    | CitationQueryEngineConfig
+    | RetrieverQueryEngineConfig
+)
+
+
+@dataclass
 class SimpleChatEngineConfig(YAMLWizard):
     pass
 
@@ -701,6 +722,7 @@ class RetrievalConfig(YAMLWizard):
 @dataclass
 class QueryConfig(YAMLWizard):
     llm: LLMConfig
+    engine: QueryEngineConfig | None = None
     retries: bool = False
     source_retries: bool = False
     show_citations: bool = False
@@ -1814,59 +1836,59 @@ class QueryState:
         streaming: bool = False,
         verbose: bool = False,
     ):
-        # jww (2025-05-13): Add MultiStepQueryEngine
-        if retriever is not None and config.show_citations:
-            self.query_engine = CitationQueryEngine(
-                retriever=retriever,
-                llm=llm,
-                # here we can control how granular citation sources are, the
-                # default is 512
-                # citation_chunk_size=self.config.embedding.chunk_size,
-                # citation_chunk_overlap=self.config.embedding.chunk_overlap,
-            )
-        elif retriever is not None:
-            self.query_engine = RetrieverQueryEngine.from_args(
-                retriever=retriever,
-                llm=llm,
-                streaming=streaming,
-                response_mode=ResponseMode.REFINE,
-                # response_mode=ResponseMode.COMPACT,
-                # response_mode=ResponseMode.SIMPLE_SUMMARIZE,
-                # response_mode=ResponseMode.TREE_SUMMARIZE,
-                # response_mode=ResponseMode.GENERATION, # ignore context
-                # response_mode=ResponseMode.NO_TEXT, # only context
-                # response_mode=ResponseMode.CONTEXT_ONLY,
-                # response_mode=ResponseMode.ACCUMULATE,
-                # response_mode=ResponseMode.COMPACT_ACCUMULATE,
-                verbose=verbose,
-            )
+        match config.engine:
+            case CitationQueryEngineConfig():
+                if retriever is None:
+                    error("CitationQueryEngine requires a retriever")
+                self.query_engine = CitationQueryEngine(
+                    retriever=retriever,
+                    llm=llm,
+                    citation_chunk_size=config.engine.chunk_size,
+                    citation_chunk_overlap=config.engine.chunk_overlap,
+                )
 
-            # jww (2025-05-12): restore
-            # if retries or source_retries:
-            #     relevancy_evaluator = RelevancyEvaluator(
-            #         llm=models.evaluator_llm or models.llm,
-            #     )
-            #     _guideline_evaluator = GuidelineEvaluator(
-            #         llm=models.evaluator_llm or models.llm,
-            #         guidelines=DEFAULT_GUIDELINES
-            #         + "\nThe response should not be overly long.\n"
-            #         + "The response should try to summarize where possible.\n",
-            #     )
-            #     if source_retries:
-            #         self.logger.info("Add retry source query engine")
-            #         query_engine = RetrySourceQueryEngine(
-            #             query_engine,
-            #             evaluator=relevancy_evaluator,
-            #             llm=models.llm,
-            #         )
-            #     else:
-            #         self.logger.info("Add retry query engine")
-            #         query_engine = RetryQueryEngine(
-            #             query_engine,
-            #             evaluator=relevancy_evaluator,
-            #         )
-        else:
-            self.query_engine = SimpleQueryEngine(llm=llm)
+            case RetrieverQueryEngineConfig():
+                if retriever is None:
+                    error("RetrieverQueryEngine requires a retriever")
+                self.query_engine = RetrieverQueryEngine.from_args(
+                    retriever=retriever,
+                    llm=llm,
+                    streaming=streaming,
+                    response_mode=config.engine.response_mode,
+                    verbose=verbose,
+                )
+
+            case SimpleQueryEngineConfig() | None:
+                self.query_engine = SimpleQueryEngine(llm=llm)
+
+        # # jww (2025-05-13): Add MultiStepQueryEngine
+        # if retriever is not None and config.show_citations:
+        # elif retriever is not None:
+        #     # jww (2025-05-12): restore
+        #     # if retries or source_retries:
+        #     #     relevancy_evaluator = RelevancyEvaluator(
+        #     #         llm=models.evaluator_llm or models.llm,
+        #     #     )
+        #     #     _guideline_evaluator = GuidelineEvaluator(
+        #     #         llm=models.evaluator_llm or models.llm,
+        #     #         guidelines=DEFAULT_GUIDELINES
+        #     #         + "\nThe response should not be overly long.\n"
+        #     #         + "The response should try to summarize where possible.\n",
+        #     #     )
+        #     #     if source_retries:
+        #     #         self.logger.info("Add retry source query engine")
+        #     #         query_engine = RetrySourceQueryEngine(
+        #     #             query_engine,
+        #     #             evaluator=relevancy_evaluator,
+        #     #             llm=models.llm,
+        #     #         )
+        #     #     else:
+        #     #         self.logger.info("Add retry query engine")
+        #     #         query_engine = RetryQueryEngine(
+        #     #             query_engine,
+        #     #             evaluator=relevancy_evaluator,
+        #     #         )
+        # else:
 
     def query(self, query: QueryType) -> RESPONSE_TYPE:
         return self.query_engine.query(query)
