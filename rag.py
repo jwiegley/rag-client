@@ -748,7 +748,6 @@ class FusionRetrieverConfig(YAMLWizard):
 
 @dataclass
 class RetrievalConfig(YAMLWizard):
-    embed_individually: bool = True
     embedding: EmbeddingConfig | None = None
     keywords: KeywordsConfig | None = None
     splitter: SplitterConfig | None = None
@@ -1515,126 +1514,6 @@ class RAGWorkflow:
 
         return vector_index, keyword_index
 
-    def __handle_one_document(
-        self,
-        input_file: Path,
-        embed_llm: BaseEmbedding,
-        num_workers: int | None = None,
-        verbose: bool = False,
-    ) -> EmbeddedFile:
-        cache_file = cache_dir() / Path(str(input_file).replace("/", "!") + ".json")
-        if cache_file.is_file():
-            # jww (2025-06-13): Check whether the file is out of date or no
-            # longer matches the content.
-            f = EmbeddedFile.from_json_file(  # pyright: ignore[reportUnknownMemberType]
-                str(cache_file)
-            )
-            if isinstance(f, EmbeddedFile):
-                return f
-            else:
-                error("Cache file should define a single EmbeddedFile object")
-        else:
-            documents = self.__read_documents(
-                input_files=[input_file],
-                num_workers=num_workers,
-                verbose=verbose,
-            )
-            nodes = self.__process_documents(
-                documents=documents,
-                embed_llm=embed_llm,
-                num_workers=num_workers,
-                verbose=verbose,
-            )
-            entry = EmbeddedFile(
-                file_path=input_file,
-                embedded_nodes=[EmbeddedNode.from_node(node) for node in nodes],
-            )
-            entry.to_json_file(cache_file)  # pyright: ignore[reportUnknownMemberType]
-            return entry
-
-    def __handle_documents_individually(
-        self,
-        input_files: list[Path],
-        embed_llm: BaseEmbedding,
-        num_workers: int | None = None,
-        verbose: bool = False,
-    ) -> dict[Path, EmbeddedFile]:
-        return {
-            path: self.__handle_one_document(
-                path,
-                embed_llm=embed_llm,
-                num_workers=num_workers,
-                verbose=verbose,
-            )
-            for path in input_files
-        }
-
-    def __ingest_documents(
-        self,
-        embed_llm: BaseEmbedding,
-        storage_context: StorageContext,
-        input_files: list[Path],
-        num_workers: int | None = None,
-        individually: bool = True,
-        verbose: bool = False,
-    ) -> tuple[
-        VectorStoreIndex,
-        BaseKeywordTableIndex | None,
-    ]:
-        if individually:
-            entries: dict[Path, EmbeddedFile] = self.__handle_documents_individually(
-                input_files,
-                embed_llm,
-                num_workers,
-                verbose,
-            )
-            nodes = list(
-                itertools.chain.from_iterable(
-                    [
-                        [node.to_node() for node in entry.embedded_nodes]
-                        for entry in entries.values()
-                    ]
-                )
-            )
-        else:
-            documents = self.__read_documents(
-                input_files=input_files,
-                num_workers=num_workers,
-                verbose=verbose,
-            )
-
-            nodes = self.__process_documents(
-                documents=documents,
-                embed_llm=embed_llm,
-                num_workers=num_workers,
-                verbose=verbose,
-            )
-
-        vector_index, keyword_index = self.__build_vector_index(
-            embed_llm=embed_llm,
-            nodes=nodes,
-            storage_context=storage_context,
-            verbose=verbose,
-        )
-
-        vector_index.set_index_id("vector_index")
-        if keyword_index is not None:
-            keyword_index.set_index_id("keyword_index")
-
-        return vector_index, keyword_index
-
-    def __save_indices(
-        self,
-        storage_context: StorageContext,
-        persist_dir: Path | None,
-    ):
-        if self.config.retrieval.vector_store is not None:
-            pass
-        elif persist_dir is not None:
-            storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
-                persist_dir=str(persist_dir)
-            )
-
     def __persist_dir(
         self,
         input_files: list[Path],
@@ -1674,6 +1553,55 @@ class RAGWorkflow:
                 str(persist_dir) if persist_dir is not None else DEFAULT_PERSIST_DIR
             ),
         )
+
+    def __ingest_documents(
+        self,
+        embed_llm: BaseEmbedding,
+        storage_context: StorageContext,
+        input_files: list[Path],
+        num_workers: int | None = None,
+        verbose: bool = False,
+    ) -> tuple[
+        VectorStoreIndex,
+        BaseKeywordTableIndex | None,
+    ]:
+        documents = self.__read_documents(
+            input_files=input_files,
+            num_workers=num_workers,
+            verbose=verbose,
+        )
+
+        nodes = self.__process_documents(
+            documents=documents,
+            embed_llm=embed_llm,
+            num_workers=num_workers,
+            verbose=verbose,
+        )
+
+        vector_index, keyword_index = self.__build_vector_index(
+            embed_llm=embed_llm,
+            nodes=nodes,
+            storage_context=storage_context,
+            verbose=verbose,
+        )
+
+        vector_index.set_index_id("vector_index")
+        if keyword_index is not None:
+            keyword_index.set_index_id("keyword_index")
+
+        return vector_index, keyword_index
+
+    def __save_indices(
+        self,
+        storage_context: StorageContext,
+        persist_dir: Path | None,
+    ):
+        if self.config.retrieval.vector_store is not None:
+            pass
+        elif persist_dir is not None:
+            storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
+                persist_dir=str(persist_dir)
+            )
 
     def __load_indices(
         self,
@@ -1764,9 +1692,7 @@ class RAGWorkflow:
             persist_dir=persist_dir,
         )
 
-        individually: bool = self.config.retrieval.embed_individually
-
-        if index_files or individually:
+        if index_files:
             if input_files is None:
                 error("Cannot create vector index without input files")
 
@@ -1776,16 +1702,14 @@ class RAGWorkflow:
                 embed_llm=embed_llm,
                 storage_context=storage_context,
                 input_files=input_files,
-                individually=individually,
                 verbose=verbose,
             )
 
-            if not individually:
-                self.logger.info("Save indices")
-                self.__save_indices(
-                    storage_context,
-                    persist_dir=persist_dir,
-                )
+            self.logger.info("Save indices")
+            self.__save_indices(
+                storage_context,
+                persist_dir=persist_dir,
+            )
         else:
             if self.config.retrieval.vector_store is not None or persisted:
                 try:

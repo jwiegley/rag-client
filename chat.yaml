@@ -54,7 +54,6 @@ retrieval:
   #   connection: "postgresql+psycopg2://postgres@localhost:5432/vector_db"
   #   hybrid_search: true
 
-  # embed_individually: true
   embedding:
     # type: BGEM3EmbeddingConfig
 
