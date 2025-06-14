@@ -1515,10 +1515,7 @@ class RAGWorkflow:
 
         return vector_index, keyword_index
 
-    def __persist_dir(
-        self,
-        input_files: list[Path],
-    ) -> Path:
+    def __persist_dir(self, input_files: list[Path]) -> Path:
         return cache_dir() / self.__determine_fingerprint(input_files)
 
     def __load_storage_context(
