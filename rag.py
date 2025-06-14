@@ -4,7 +4,6 @@
 
 import base64
 import hashlib
-import itertools
 import logging
 import os
 import sys
@@ -1522,7 +1521,7 @@ class RAGWorkflow:
 
     def __load_storage_context(
         self,
-        persist_dir: Path | None,
+        persist_dir: Path | None = None,
     ) -> StorageContext:
         self.logger.info("Load storage context")
         if (
@@ -1643,8 +1642,8 @@ class RAGWorkflow:
     def __ingest_files(
         self,
         input_files: list[Path] | None,
-        num_workers: int | None = None,
         index_files: bool = False,
+        num_workers: int | None = None,
         verbose: bool = False,
     ) -> tuple[
         VectorStoreIndex | None,
@@ -1679,10 +1678,12 @@ class RAGWorkflow:
             self.logger.info("Retrieval vector store is not None")
         else:
             self.logger.info("Retrieval vector store is None")
+
         if persisted:
             self.logger.info("Previous state was persisted")
         else:
             self.logger.info("Previous state was not persisted")
+
         if input_files is not None:
             self.logger.info("There are input files")
         else:
@@ -1726,21 +1727,12 @@ class RAGWorkflow:
 
         return (vector_index, keyword_index)
 
-    def load_retriever(
+    def __retriever_from_index(
         self,
-        input_files: list[Path] | None,
-        num_workers: int | None = None,
-        index_files: bool = False,
+        vector_index: VectorStoreIndex | None,
+        keyword_index: BaseKeywordTableIndex | None,
         verbose: bool = False,
     ) -> BaseRetriever | None:
-        self.logger.info("Load retriever")
-        vector_index, keyword_index = self.__ingest_files(
-            num_workers=num_workers,
-            input_files=input_files,
-            index_files=index_files,
-            verbose=verbose,
-        )
-
         if vector_index is not None:
             if (
                 self.config.retrieval.vector_store is not None
@@ -1802,6 +1794,51 @@ class RAGWorkflow:
             retriever = keyword_retriever
 
         return retriever
+
+    def load_retriever(
+        self,
+        input_files: list[Path] | None,
+        num_workers: int | None = None,
+        index_files: bool = False,
+        verbose: bool = False,
+    ) -> BaseRetriever | None:
+        self.logger.info("Load retriever")
+
+        retrievers: list[BaseRetriever] = []
+
+        if input_files is not None:
+            for input_file in input_files:
+                vector_index, keyword_index = self.__ingest_files(
+                    num_workers=num_workers,
+                    input_files=[input_file],
+                    index_files=index_files,
+                    verbose=verbose,
+                )
+                retriever = self.__retriever_from_index(
+                    vector_index, keyword_index, verbose
+                )
+                if retriever is not None:
+                    retrievers.append(retriever)
+        else:
+            vector_index, keyword_index = self.__ingest_files(
+                num_workers=num_workers,
+                input_files=None,
+                index_files=index_files,
+                verbose=verbose,
+            )
+            retriever = self.__retriever_from_index(
+                vector_index, keyword_index, verbose
+            )
+            if retriever is not None:
+                retrievers.append(retriever)
+
+        return QueryFusionRetriever(
+            retrievers=retrievers,
+            similarity_top_k=self.config.retrieval.top_k,
+            num_queries=1,
+            use_async=False,
+            verbose=verbose,
+        )
 
     def retrieve_nodes(
         self, retriever: BaseRetriever, text: str
