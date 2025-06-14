@@ -37,6 +37,7 @@ from llama_index.core import (
     KeywordTableIndex,
     PromptTemplate,
     QueryBundle,
+    Settings,
     SimpleDirectoryReader,
     SimpleKeywordTableIndex,
     StorageContext,
@@ -747,6 +748,7 @@ class FusionRetrieverConfig(YAMLWizard):
 
 @dataclass
 class RetrievalConfig(YAMLWizard):
+    embed_individually: bool = False
     embedding: EmbeddingConfig | None = None
     keywords: KeywordsConfig | None = None
     splitter: SplitterConfig | None = None
@@ -1799,6 +1801,7 @@ class RAGWorkflow:
         self,
         input_files: list[Path] | None,
         num_workers: int | None = None,
+        embed_individually: bool = False,
         index_files: bool = False,
         verbose: bool = False,
     ) -> BaseRetriever | None:
@@ -1806,7 +1809,7 @@ class RAGWorkflow:
 
         retrievers: list[BaseRetriever] = []
 
-        if input_files is not None:
+        if input_files is not None and embed_individually:
             for input_file in input_files:
                 vector_index, keyword_index = self.__ingest_files(
                     num_workers=num_workers,
@@ -1822,7 +1825,7 @@ class RAGWorkflow:
         else:
             vector_index, keyword_index = self.__ingest_files(
                 num_workers=num_workers,
-                input_files=None,
+                input_files=input_files,
                 index_files=index_files,
                 verbose=verbose,
             )
@@ -1832,6 +1835,7 @@ class RAGWorkflow:
             if retriever is not None:
                 retrievers.append(retriever)
 
+        Settings.llm = None
         return QueryFusionRetriever(
             retrievers=retrievers,
             similarity_top_k=self.config.retrieval.top_k,
@@ -2125,6 +2129,7 @@ def rag_initialize(
         retriever = rag.load_retriever(
             num_workers=num_workers,
             input_files=input_files,
+            embed_individually=config.retrieval.embed_individually,
             index_files=index_files,
             verbose=verbose,
         )
