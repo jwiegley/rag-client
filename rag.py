@@ -4,6 +4,7 @@
 
 import base64
 import hashlib
+import itertools
 import logging
 import os
 import sys
@@ -14,7 +15,7 @@ import chat
 from collections.abc import Iterable, Sequence
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
-from dataclass_wizard import JSONWizard, YAMLWizard
+from dataclass_wizard import JSONFileWizard, JSONWizard, YAMLWizard
 from functools import cache
 from pathlib import Path
 from pydantic import BaseModel
@@ -25,6 +26,7 @@ from typing import (
     Any,
     Literal,
     NoReturn,
+    Self,
     TypeAlias,
     cast,
     final,
@@ -234,10 +236,10 @@ def collection_hash(file_list: list[Path]) -> str:
     return final_hash
 
 
-def cache_dir(fingerprint: str) -> Path:
-    cache_dir = xdg_cache_home() / "rag-client"
-    cache_dir.mkdir(parents=True, exist_ok=True)  # Ensure the directory exists
-    return cache_dir / fingerprint
+def cache_dir() -> Path:
+    d = xdg_cache_home() / "rag-client"
+    d.mkdir(parents=True, exist_ok=True)  # Ensure the directory exists
+    return d
 
 
 def clean_special_tokens(text: str) -> str:
@@ -746,6 +748,7 @@ class FusionRetrieverConfig(YAMLWizard):
 
 @dataclass
 class RetrievalConfig(YAMLWizard):
+    embed_individually: bool = True
     embedding: EmbeddingConfig | None = None
     keywords: KeywordsConfig | None = None
     splitter: SplitterConfig | None = None
@@ -1157,6 +1160,39 @@ class EmbeddingRequest(BaseModel):
 
 
 @dataclass
+class EmbeddedNode(JSONWizard):
+    ident: str
+    content: str
+    embedding: list[float]
+    metadata: dict[str, Any]
+
+    @classmethod
+    def from_node(cls, node: BaseNode) -> Self | NoReturn:
+        if node.embedding is None:
+            error("Cannot construct EmbeddedNode from node with no embedding")
+        return cls(
+            ident=node.id_,
+            content=node.get_content(),
+            embedding=node.embedding,
+            metadata=node.metadata,
+        )
+
+    def to_node(self) -> Node:
+        node = Node()
+        node.node_id = self.ident
+        node.set_content(self.content)
+        node.embedding = self.embedding
+        node.metadata = self.metadata
+        return node
+
+
+@dataclass
+class EmbeddedFile(JSONFileWizard):
+    file_path: Path
+    embedded_nodes: list[EmbeddedNode]
+
+
+@dataclass
 class RAGWorkflow:
     logger: logging.Logger
     config: Config
@@ -1400,6 +1436,7 @@ class RAGWorkflow:
         self,
         documents: Iterable[Document],
         embed_llm: BaseEmbedding,
+        num_workers: int | None = None,
         verbose: bool = False,
     ) -> Sequence[BaseNode]:
         transformations: list[TransformComponent] = [
@@ -1429,9 +1466,11 @@ class RAGWorkflow:
         pipeline: IngestionPipeline = IngestionPipeline(
             transformations=transformations,
             # cache=ingest_cache,
+            docstore=SimpleDocumentStore(),
         )
         return pipeline.run(
             documents=documents,
+            num_workers=num_workers,
             show_progress=verbose,
         )
 
@@ -1476,28 +1515,100 @@ class RAGWorkflow:
 
         return vector_index, keyword_index
 
+    def __handle_one_document(
+        self,
+        input_file: Path,
+        embed_llm: BaseEmbedding,
+        num_workers: int | None = None,
+        verbose: bool = False,
+    ) -> EmbeddedFile:
+        cache_file = cache_dir() / Path(str(input_file).replace("/", "!") + ".json")
+        if cache_file.is_file():
+            # jww (2025-06-13): Check whether the file is out of date or no
+            # longer matches the content.
+            f = EmbeddedFile.from_json_file(  # pyright: ignore[reportUnknownMemberType]
+                str(cache_file)
+            )
+            if isinstance(f, EmbeddedFile):
+                return f
+            else:
+                error("Cache file should define a single EmbeddedFile object")
+        else:
+            documents = self.__read_documents(
+                input_files=[input_file],
+                num_workers=num_workers,
+                verbose=verbose,
+            )
+            nodes = self.__process_documents(
+                documents=documents,
+                embed_llm=embed_llm,
+                num_workers=num_workers,
+                verbose=verbose,
+            )
+            entry = EmbeddedFile(
+                file_path=input_file,
+                embedded_nodes=[EmbeddedNode.from_node(node) for node in nodes],
+            )
+            entry.to_json_file(cache_file)  # pyright: ignore[reportUnknownMemberType]
+            return entry
+
+    def __handle_documents_individually(
+        self,
+        input_files: list[Path],
+        embed_llm: BaseEmbedding,
+        num_workers: int | None = None,
+        verbose: bool = False,
+    ) -> dict[Path, EmbeddedFile]:
+        return {
+            path: self.__handle_one_document(
+                path,
+                embed_llm=embed_llm,
+                num_workers=num_workers,
+                verbose=verbose,
+            )
+            for path in input_files
+        }
+
     def __ingest_documents(
         self,
         embed_llm: BaseEmbedding,
         storage_context: StorageContext,
         input_files: list[Path],
         num_workers: int | None = None,
+        individually: bool = True,
         verbose: bool = False,
     ) -> tuple[
         VectorStoreIndex,
         BaseKeywordTableIndex | None,
     ]:
-        documents = self.__read_documents(
-            num_workers=num_workers,
-            input_files=input_files,
-            verbose=verbose,
-        )
+        if individually:
+            entries: dict[Path, EmbeddedFile] = self.__handle_documents_individually(
+                input_files,
+                embed_llm,
+                num_workers,
+                verbose,
+            )
+            nodes = list(
+                itertools.chain.from_iterable(
+                    [
+                        [node.to_node() for node in entry.embedded_nodes]
+                        for entry in entries.values()
+                    ]
+                )
+            )
+        else:
+            documents = self.__read_documents(
+                input_files=input_files,
+                num_workers=num_workers,
+                verbose=verbose,
+            )
 
-        nodes = self.__process_documents(
-            documents,
-            embed_llm=embed_llm,
-            verbose=verbose,
-        )
+            nodes = self.__process_documents(
+                documents=documents,
+                embed_llm=embed_llm,
+                num_workers=num_workers,
+                verbose=verbose,
+            )
 
         vector_index, keyword_index = self.__build_vector_index(
             embed_llm=embed_llm,
@@ -1528,7 +1639,7 @@ class RAGWorkflow:
         self,
         input_files: list[Path],
     ) -> Path:
-        return cache_dir(self.__determine_fingerprint(input_files))
+        return cache_dir() / self.__determine_fingerprint(input_files)
 
     def __load_storage_context(
         self,
@@ -1624,10 +1735,6 @@ class RAGWorkflow:
             persist_dir = self.__persist_dir(input_files)
             persisted = os.path.isdir(persist_dir)
 
-        storage_context = self.__load_storage_context(
-            persist_dir=persist_dir,
-        )
-
         if self.config.retrieval.embedding is not None:
             self.logger.info("Load embedding model")
             embed_llm = self.__load_embedding(
@@ -1653,7 +1760,13 @@ class RAGWorkflow:
         else:
             self.logger.info("There are no input files")
 
-        if index_files:
+        storage_context = self.__load_storage_context(
+            persist_dir=persist_dir,
+        )
+
+        individually: bool = self.config.retrieval.embed_individually
+
+        if index_files or individually:
             if input_files is None:
                 error("Cannot create vector index without input files")
 
@@ -1663,13 +1776,16 @@ class RAGWorkflow:
                 embed_llm=embed_llm,
                 storage_context=storage_context,
                 input_files=input_files,
+                individually=individually,
                 verbose=verbose,
             )
-            self.logger.info("Save indices")
-            self.__save_indices(
-                storage_context,
-                persist_dir=persist_dir,
-            )
+
+            if not individually:
+                self.logger.info("Save indices")
+                self.__save_indices(
+                    storage_context,
+                    persist_dir=persist_dir,
+                )
         else:
             if self.config.retrieval.vector_store is not None or persisted:
                 try:
