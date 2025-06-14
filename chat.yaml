@@ -1,98 +1,192 @@
+# RAG Configuration
 query:
+  # Primary LLM for querying. Choose one of the types below:
   llm: &llm
+    # --- OpenAILikeConfig ---
     type: OpenAILikeConfig
-    model: "Qwen3-235B-A22B"
-    api_base: "http://localhost:8080/v1"
-    # api_base: "http://192.168.50.5:8080/v1"
-    context_window: 131072
-    temperature: 0.6
-    max_tokens: 8192
-    timeout: 7200
+    model: "Qwen3-235B-A22B"             # Model name to use
+    api_base: "http://localhost:8080/v1" # API endpoint
+    context_window: 131072               # Maximum context window size
+    temperature: 0.6                     # Sampling temperature for generation
+    max_tokens: 8192                     # Max output tokens
+    timeout: 7200                        # API timeout in seconds
 
+    # --- Alternative LLM Configurations ---
+    # type: OllamaConfig
+    # model: "llama3"
+    # base_url: "http://localhost:11434"
+    # keep_alive: "5m"            # How long to keep model loaded (Ollama specific)
+
+    # type: LlamaCPPConfig
+    # model_url: "https://example.com/model.gguf"  # Model download URL
+    # model_path: "models/llama3.gguf"             # Local model path
+    # verbose: true                                # Verbose output for debugging
+
+    # type: PerplexityConfig
+    # model: "pplx-xxl"
+    # api_base: "https://api.perplexity.ai"
+
+    # type: OpenRouterConfig
+    # model: "meta-llama/llama-3-70b"
+
+    # type: LMStudioConfig
+    # model_name: "lmstudio-ai/Qwen3-235B-A22B"
+    # base_url: "http://localhost:1234/v1"
+
+    # type: MLXLLMConfig
+    # model_name: "mlx-community/Qwen3-235B"
+
+  # Query engine configuration. Choose one engine type:
   engine:
-    # type: SimpleQueryEngineConfig
+    # --- SimpleQueryEngineConfig ---
+    # type: SimpleQueryEngineConfig    # Stateless Q&A engine
 
+    # --- RetrieverQueryEngineConfig ---
     type: RetrieverQueryEngineConfig
-    response_mode: compact_accumulate
+    response_mode: compact_accumulate  # Options: 'default', 'compact',
+                                       # 'compact_accumulate', 'refine'
 
+    # --- CitationQueryEngineConfig ---
     # type: CitationQueryEngineConfig
-    # chunk_size: 512
-    # chunk_overlap: 20
+    # chunk_size: 512                  # Content chunk size for citation
+    # chunk_overlap: 20                # Overlap between chunks
 
+    # --- RetryQueryEngineConfig ---
     # type: RetryQueryEngineConfig
     # evaluator:
     #   type: RelevancyEvaluatorConfig
-    #   llm: *llm
+    #   llm: *llm                      # LLM for evaluating responses
     # engine:
     #   type: SimpleQueryEngineConfig
 
+    # --- RetrySourceQueryEngineConfig ---
     # type: RetrySourceQueryEngineConfig
     # evaluator:
     #   type: GuidelineConfig
     #   llm: *llm
+    #   guidelines: "Ensure response contains proper citations"
     # engine:
     #   type: SimpleQueryEngineConfig
 
 chat:
+  # Primary LLM for chat. Can match query.llm or be different.
   llm: *llm
-  # default_user: "user1"
-  # summarize: False
+
+  default_user: "user"                 # Default user identifier
+  summarize: false                     # Summarize long chat histories
+  keep_history: true                   # Persist chat history between sessions
+
   engine:
+    # --- SimpleContextChatEngineConfig ---
     type: SimpleContextChatEngineConfig
-    context_window: 32768
+    context_window: 32768              # Max tokens for context window
+
+    # --- CondensePlusContextChatEngineConfig ---
     # type: CondensePlusContextChatEngineConfig
-    # skip_condense: false
+    # skip_condense: false             # Whether to skip condensing user message
+
+    # --- ContextChatEngineConfig ---
+    # type: ContextChatEngineConfig
 
 retrieval:
-  top_k: 20
-  sparse_top_k: 5
+  # Document retrieval configuration
+  top_k: 20                       # Number of nodes to retrieve
+  sparse_top_k: 5                # Number of sparse nodes for hybrid search
 
+  # Fusion retriever for multi-strategy search
   # fusion:
+  #   type: FusionRetrieverConfig
+  #   num_queries: 3              # Number of query transformations
+  #   mode: "relative_score"      # Fusion mode: 'relative_score' or 'reciprocal_rank'
   #   llm: *llm
 
+  # Vector store configuration (Postgres or local)
   # vector_store:
-  #   connection: "postgresql+psycopg2://postgres@localhost:5432/vector_db"
-  #   hybrid_search: true
+  #   type: PostgresVectorStoreConfig
+  #   connection: "postgresql://user:pass@localhost:5432/db"
+  #   hybrid_search: true         # Enable hybrid search
+  #   dimensions: 4096            # Embedding vector dimensions
+  #   hnsw_m: 16                 # HNSW graph connections
+  #   hnsw_ef_construction: 64   # HNSW index quality
+  #   hnsw_ef_search: 40         # Search quality parameter
+  #   hnsw_dist_method: "vector_l2_ops"  # Distance calculation method
 
+  # Embedding model configuration. Choose one:
   embedding:
-    # type: BGEM3EmbeddingConfig
-
+    # --- OpenAILikeEmbeddingConfig ---
     type: OpenAILikeEmbeddingConfig
-    # model_name: "bge-m3"
-    # dimensions: 1024
-    model_name: "Qwen3-Embedding-8B"
-    dimensions: 4096
-    # model_name: "nomic-embed-text-v2-moe"
-    # dimensions: 1024
-    # model_name: "sentence-transformers/all-MiniLM-L6-v2"
-    # dimensions: 1024
-    api_base: "http://localhost:8080/v1"
+    model_name: "Qwen3-Embedding-8B"  # Model identifier
+    dimensions: 4096                  # Embedding dimensions
+    api_base: "http://localhost:8080/v1"  # API endpoint
 
+    # --- HuggingFaceEmbeddingConfig ---
     # type: HuggingFaceEmbeddingConfig
-    # model_name: "BAAI/bge-base-en-v1.5"
+    # model_name: "BAAI/bge-base-en-v1.5" # Huggingface model name
+    # max_length: 512                     # Max tokens per batch
+    # normalize: true                     # Normalize vectors
 
+    # --- OllamaEmbeddingConfig ---
+    # type: OllamaEmbeddingConfig
+    # model_name: "nomic-embed-text"      # Ollama model name
+
+    # --- LlamaCPPEmbeddingConfig ---
+    # type: LlamaCPPEmbeddingConfig
+    # model_path: "models/bge.gguf"       # Local model path
+    # n_gpu_layers: 99                    # Layers to offload to GPU
+    # verbose: true                       # Verbose output for debugging
+
+    # --- OpenAIEmbeddingConfig ---
+    # type: OpenAIEmbeddingConfig
+    # mode: "text_search"                 # Embedding mode: 'text_search' or 'text_embedding'
+    # model: "text-embedding-ada-002"     # Model type
+
+  # Text splitting strategy. Choose one:
   splitter:
     type: SentenceSplitterConfig
-    chunk_size: 512
-    chunk_overlap: 20
+    chunk_size: 512               # Characters per chunk
+    chunk_overlap: 20             # Overlap between chunks
+    include_metadata: true        # Preserve metadata in chunks
 
+    # --- Alternative Splitter Configs ---
+    # type: SentenceWindowSplitterConfig
+    # window_size: 5               # Number of sentences to include
+    # window_metadata_key: "window"  # Where to store window content
+    # original_text_metadata_key: "original"  # Where to store original text
+
+    # type: SemanticSplitterConfig
+    # embedding: *embedding        # Reference to embedding model
+    # buffer_size: 200             # Tokens to consider for splitting
+    # breakpoint_percentile_threshold: 95  # Semantic breakpoint threshold
+
+    # type: JSONNodeParserConfig
+    # include_metadata: true
+    # include_prev_next_rel: true
+
+    # type: CodeSplitterConfig
+    # language: "python"           # Programming language
+    # chunk_lines: 50             # Lines per chunk
+    # chunk_lines_overlap: 15     # Overlapping lines
+
+  # Node metadata extractors. Multiple can be used:
   extractors: []
     # - type: KeywordExtractorConfig
-    #   keywords: 5
-    #   llm:
-    #     <<: *llm
-    #     max_tokens: 100
+    #   keywords: 5                 # Number of keywords to extract
+    #   llm: *llm
+    #   # extractor_name: "keywords" # Custom name for the extractor
+
     # - type: SummaryExtractorConfig
-    #   summaries:
-    #     - "self"
-    #   llm: *llm
-    # - type: TitleExtractorConfig
-    #   nodes: 5
-    #   llm: *llm
-    # - type: QuestionsAnsweredExtractorConfig
-    #   questions: 3
+    #   summaries: ["self", "query"]  # Types of summaries to extract
     #   llm: *llm
 
+    # - type: TitleExtractorConfig
+    #   nodes: 5                    # Number of title candidates
+    #   llm: *llm
+
+    # - type: QuestionsAnsweredExtractorConfig
+    #   questions: 3               # Number of questions to extract
+    #   llm: *llm
+
+  # Keyword index configuration (for keyword-based search)
   # keywords:
-  #   collect: true
-  #   llm: *llm
+  #   collect: true                 # Whether to build keyword index
+  #   llm: *llm                   # LLM for keyword extraction
