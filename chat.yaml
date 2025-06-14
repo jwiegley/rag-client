@@ -39,23 +39,23 @@ query:
   # Query engine configuration. Choose one engine type:
   engine:
     # --- SimpleQueryEngineConfig ---
-    # type: SimpleQueryEngineConfig    # Stateless Q&A engine
+    # type: SimpleQueryEngineConfig       # Stateless Q&A engine
 
     # --- RetrieverQueryEngineConfig ---
     type: RetrieverQueryEngineConfig
-    response_mode: compact_accumulate  # Options: 'default', 'compact',
-                                       # 'compact_accumulate', 'refine'
+    response_mode: compact_accumulate     # Options: 'default', 'compact',
+                                          # 'compact_accumulate', 'refine'
 
     # --- CitationQueryEngineConfig ---
     # type: CitationQueryEngineConfig
-    # chunk_size: 512                  # Content chunk size for citation
-    # chunk_overlap: 20                # Overlap between chunks
+    # chunk_size: 512                     # Content chunk size for citation
+    # chunk_overlap: 20                   # Overlap between chunks
 
     # --- RetryQueryEngineConfig ---
     # type: RetryQueryEngineConfig
     # evaluator:
     #   type: RelevancyEvaluatorConfig
-    #   llm: *llm                      # LLM for evaluating responses
+    #   llm: *llm                         # LLM for evaluating responses
     # engine:
     #   type: SimpleQueryEngineConfig
 
@@ -72,51 +72,57 @@ chat:
   # Primary LLM for chat. Can match query.llm or be different.
   llm: *llm
 
-  default_user: "user"                 # Default user identifier
-  summarize: false                     # Summarize long chat histories
-  keep_history: true                   # Persist chat history between sessions
+  default_user: "user"                    # Default user identifier
+  summarize: false                        # Summarize long chat histories
+  keep_history: true                      # Persist chat history between sessions
 
   engine:
     # --- SimpleContextChatEngineConfig ---
     type: SimpleContextChatEngineConfig
-    context_window: 32768              # Max tokens for context window
+    context_window: 32768                 # Max tokens for context window
 
     # --- CondensePlusContextChatEngineConfig ---
     # type: CondensePlusContextChatEngineConfig
-    # skip_condense: false             # Whether to skip condensing user message
+    # skip_condense: false                # Whether to skip condensing user message
 
     # --- ContextChatEngineConfig ---
     # type: ContextChatEngineConfig
 
 retrieval:
   # Document retrieval configuration
-  top_k: 20                       # Number of nodes to retrieve
-  sparse_top_k: 5                # Number of sparse nodes for hybrid search
+  top_k: 20                               # Number of nodes to retrieve
+  sparse_top_k: 5                         # Number of sparse nodes for hybrid search
 
   # Fusion retriever for multi-strategy search
   # fusion:
   #   type: FusionRetrieverConfig
-  #   num_queries: 3              # Number of query transformations
-  #   mode: "relative_score"      # Fusion mode: 'relative_score' or 'reciprocal_rank'
+  #   num_queries: 3                      # Number of query transformations
+  #   mode: "relative_score"              # Fusion mode: 'relative_score' or 'reciprocal_rank'
   #   llm: *llm
 
   # Vector store configuration (Postgres or local)
   # vector_store:
   #   type: PostgresVectorStoreConfig
   #   connection: "postgresql://user:pass@localhost:5432/db"
-  #   hybrid_search: true         # Enable hybrid search
-  #   dimensions: 4096            # Embedding vector dimensions
-  #   hnsw_m: 16                 # HNSW graph connections
-  #   hnsw_ef_construction: 64   # HNSW index quality
-  #   hnsw_ef_search: 40         # Search quality parameter
-  #   hnsw_dist_method: "vector_l2_ops"  # Distance calculation method
+  #   hybrid_search: true                 # Enable hybrid search
+  #   dimensions: 4096                    # Embedding vector dimensions
+  #   hnsw_m: 16                          # HNSW graph connections
+  #   hnsw_ef_construction: 64            # HNSW index quality
+  #   hnsw_ef_search: 40                  # Search quality parameter
+  #   hnsw_dist_method: "vector_l2_ops"   # Distance calculation method
 
   # Embedding model configuration. Choose one:
   embedding:
     # --- OpenAILikeEmbeddingConfig ---
     type: OpenAILikeEmbeddingConfig
-    model_name: "Qwen3-Embedding-8B"  # Model identifier
-    dimensions: 4096                  # Embedding dimensions
+    # model_name: "bge-m3"                # Model identifier
+    # dimensions: 1024                    # Embedding dimensions
+    # model_name: "Qwen3-Embedding-8B"
+    # dimensions: 4096
+    model_name: "nomic-embed-text-v2-moe"
+    dimensions: 768
+    # model_name: "sentence-transformers/all-MiniLM-L6-v2"
+    # dimensions: 384
     api_base: "http://localhost:8080/v1"  # API endpoint
 
     # --- HuggingFaceEmbeddingConfig ---
@@ -143,50 +149,50 @@ retrieval:
   # Text splitting strategy. Choose one:
   splitter:
     type: SentenceSplitterConfig
-    chunk_size: 512               # Characters per chunk
-    chunk_overlap: 20             # Overlap between chunks
-    include_metadata: true        # Preserve metadata in chunks
+    chunk_size: 512                       # Characters per chunk
+    chunk_overlap: 20                     # Overlap between chunks
+    include_metadata: true                # Preserve metadata in chunks
 
     # --- Alternative Splitter Configs ---
     # type: SentenceWindowSplitterConfig
-    # window_size: 5               # Number of sentences to include
-    # window_metadata_key: "window"  # Where to store window content
-    # original_text_metadata_key: "original"  # Where to store original text
+    # window_size: 5                      # Number of sentences to include
+    # window_metadata_key: "window"       # Where to store window content
+    # original_text_metadata_key: "original" # Where to store original text
 
     # type: SemanticSplitterConfig
-    # embedding: *embedding        # Reference to embedding model
-    # buffer_size: 200             # Tokens to consider for splitting
-    # breakpoint_percentile_threshold: 95  # Semantic breakpoint threshold
+    # embedding: *embedding               # Reference to embedding model
+    # buffer_size: 200                    # Tokens to consider for splitting
+    # breakpoint_percentile_threshold: 95 # Semantic breakpoint threshold
 
     # type: JSONNodeParserConfig
     # include_metadata: true
     # include_prev_next_rel: true
 
     # type: CodeSplitterConfig
-    # language: "python"           # Programming language
-    # chunk_lines: 50             # Lines per chunk
-    # chunk_lines_overlap: 15     # Overlapping lines
+    # language: "python"                  # Programming language
+    # chunk_lines: 50                     # Lines per chunk
+    # chunk_lines_overlap: 15             # Overlapping lines
 
   # Node metadata extractors. Multiple can be used:
   extractors: []
     # - type: KeywordExtractorConfig
-    #   keywords: 5                 # Number of keywords to extract
+    #   keywords: 5                       # Number of keywords to extract
     #   llm: *llm
-    #   # extractor_name: "keywords" # Custom name for the extractor
+    #   # extractor_name: "keywords"      # Custom name for the extractor
 
     # - type: SummaryExtractorConfig
-    #   summaries: ["self", "query"]  # Types of summaries to extract
+    #   summaries: ["self", "query"]      # Types of summaries to extract
     #   llm: *llm
 
     # - type: TitleExtractorConfig
-    #   nodes: 5                    # Number of title candidates
+    #   nodes: 5                          # Number of title candidates
     #   llm: *llm
 
     # - type: QuestionsAnsweredExtractorConfig
-    #   questions: 3               # Number of questions to extract
+    #   questions: 3                      # Number of questions to extract
     #   llm: *llm
 
   # Keyword index configuration (for keyword-based search)
   # keywords:
-  #   collect: true                 # Whether to build keyword index
-  #   llm: *llm                   # LLM for keyword extraction
+  #   collect: true                       # Whether to build keyword index
+  #   llm: *llm                           # LLM for keyword extraction
