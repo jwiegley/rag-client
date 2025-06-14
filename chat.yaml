@@ -58,9 +58,14 @@ retrieval:
     # type: BGEM3EmbeddingConfig
 
     type: OpenAILikeEmbeddingConfig
-    model_name: "bge-m3"
+    # model_name: "bge-m3"
+    # dimensions: 1024
+    model_name: "Qwen3-Embedding-8B"
+    dimensions: 4096
+    # model_name: "nomic-embed-text-v2-moe"
+    # dimensions: 1024
     # model_name: "sentence-transformers/all-MiniLM-L6-v2"
-    dimensions: 1024
+    # dimensions: 1024
     api_base: "http://localhost:8080/v1"
 
     # type: HuggingFaceEmbeddingConfig
