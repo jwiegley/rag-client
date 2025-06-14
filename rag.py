@@ -65,9 +65,14 @@ from llama_index.core.chat_engine.types import (
 from llama_index.core.data_structs.data_structs import IndexDict
 from llama_index.core.embeddings import BaseEmbedding
 
-# from llama_index.core.evaluation import GuidelineEvaluator, RelevancyEvaluator
-# from llama_index.core.evaluation.guideline import DEFAULT_GUIDELINES
+from llama_index.core.evaluation import (
+    BaseEvaluator,
+    GuidelineEvaluator,
+    RelevancyEvaluator,
+)
+from llama_index.core.evaluation.guideline import DEFAULT_GUIDELINES
 from llama_index.core.extractors import (
+    BaseExtractor,
     KeywordExtractor,
     QuestionsAnsweredExtractor,
     SummaryExtractor,
@@ -91,8 +96,9 @@ from llama_index.core.query_engine import (
     CitationQueryEngine,
     CustomQueryEngine,
     RetrieverQueryEngine,
-    # RetryQueryEngine,
-    # RetrySourceQueryEngine,
+    # MultiStepQueryEngine,
+    RetryQueryEngine,
+    RetrySourceQueryEngine,
 )
 from llama_index.core.readers.base import BaseReader
 from llama_index.core.response_synthesizers import (
@@ -624,23 +630,63 @@ ExtractorConfig: TypeAlias = (
 
 
 @dataclass
+class RelevancyEvaluatorConfig(YAMLWizard):
+    llm: LLMConfig
+
+
+@dataclass
+class GuidelineConfig(YAMLWizard):
+    llm: LLMConfig
+    guidelines: str = DEFAULT_GUIDELINES
+
+
+EvaluatorConfig: TypeAlias = RelevancyEvaluatorConfig | GuidelineConfig
+
+
+@dataclass
 class CitationQueryEngineConfig(YAMLWizard):
     chunk_size: int = 512
     chunk_overlap: int = 20
 
+
 @dataclass
 class RetrieverQueryEngineConfig(YAMLWizard):
     response_mode: ResponseMode = ResponseMode.REFINE
+
 
 @dataclass
 class SimpleQueryEngineConfig(YAMLWizard):
     pass
 
 
+BaseQueryEngineConfig: TypeAlias = (
+    SimpleQueryEngineConfig | CitationQueryEngineConfig | RetrieverQueryEngineConfig
+)
+
+
+@dataclass
+class MultiStepQueryEngineConfig(YAMLWizard):
+    engine: BaseQueryEngineConfig
+
+
+@dataclass
+class RetrySourceQueryEngineConfig(YAMLWizard):
+    llm: LLMConfig
+    evaluator: EvaluatorConfig
+    engine: BaseQueryEngineConfig
+
+
+@dataclass
+class RetryQueryEngineConfig(YAMLWizard):
+    evaluator: EvaluatorConfig
+    engine: BaseQueryEngineConfig
+
+
 QueryEngineConfig: TypeAlias = (
-    SimpleQueryEngineConfig
-    | CitationQueryEngineConfig
-    | RetrieverQueryEngineConfig
+    BaseQueryEngineConfig
+    | MultiStepQueryEngineConfig
+    | RetrySourceQueryEngineConfig
+    | RetryQueryEngineConfig
 )
 
 
@@ -778,12 +824,22 @@ class OrgReader(BaseReader):
         return Document(text=text, extra_info=extra_info)
 
     @no_type_check
+    def load_data_from_node(self, node: OrgNode) -> list[Document]:
+        documents: list[Document] = []
+        # jww (2025-06-13): Traverse the org hierarchy here, so that the
+        # documents are presented as a tree.
+        extra_info = {}  # jww (2025-06-13): NYI
+        for node in list(node):
+            if node.level <= self.split_depth:
+                documents.append(self.node_to_document(node, extra_info))
+        return documents
+
+    @no_type_check
     def load_data(self, file, extra_info):
         """Parse file into different documents based on root depth."""
         from orgparse import load
 
         org_content = load(file)
-        documents: list[Document] = []
 
         extra_info = extra_info or {}
         extra_info["filename"] = org_content.env.filename
@@ -793,11 +849,7 @@ class OrgReader(BaseReader):
         # documents and skip the rest. This means at a split_depth of 2, we
         # make documents from nodes at levels 0 (whole file), 1, and 2. The
         # text will be present in multiple documents!
-        for node in list(org_content):
-            if node.level <= self.split_depth:
-                documents.append(self.node_to_document(node, extra_info))
-
-        return documents
+        return self.load_data_from_node(org_content)
 
 
 # Embeddings
@@ -1313,7 +1365,7 @@ class RAGWorkflow:
         cls,
         config: ExtractorConfig,
         verbose: bool = False,
-    ) -> TransformComponent | None:
+    ) -> BaseExtractor:
         match config:
             case KeywordExtractorConfig():
                 llm = RAGWorkflow.realize_llm(config.llm, verbose=verbose)
@@ -1344,9 +1396,10 @@ class RAGWorkflow:
                     show_progress=verbose,
                 )
 
-    def __split_documents(
+    def __process_documents(
         self,
         documents: Iterable[Document],
+        embed_llm: BaseEmbedding,
         verbose: bool = False,
     ) -> Sequence[BaseNode]:
         transformations: list[TransformComponent] = [
@@ -1356,15 +1409,17 @@ class RAGWorkflow:
             )
         ]
 
-        extractors = [
-            self.__load_extractor(
-                entry,
-                verbose=verbose,
-            )
-            for entry in self.config.retrieval.extractors or []
-        ]
+        transformations.extend(
+            [
+                self.__load_extractor(
+                    entry,
+                    verbose=verbose,
+                )
+                for entry in self.config.retrieval.extractors or []
+            ]
+        )
 
-        transformations.extend([x for x in extractors if x is not None])
+        transformations.append(embed_llm)
 
         # ingest_cache = IngestionCache(
         #     cache=RedisCache.from_host_and_port(host="127.0.0.1", port=6379),
@@ -1380,7 +1435,7 @@ class RAGWorkflow:
             show_progress=verbose,
         )
 
-    def __populate_vector_store(
+    def __build_vector_index(
         self,
         embed_llm: BaseEmbedding,
         nodes: Sequence[BaseNode],
@@ -1438,12 +1493,13 @@ class RAGWorkflow:
             verbose=verbose,
         )
 
-        nodes = self.__split_documents(
+        nodes = self.__process_documents(
             documents,
+            embed_llm=embed_llm,
             verbose=verbose,
         )
 
-        vector_index, keyword_index = self.__populate_vector_store(
+        vector_index, keyword_index = self.__build_vector_index(
             embed_llm=embed_llm,
             nodes=nodes,
             storage_context=storage_context,
@@ -1732,59 +1788,116 @@ class QueryState:
         streaming: bool = False,
         verbose: bool = False,
     ):
-        match config.engine:
+        self.query_engine = self.__load_query_engine(
+            config.engine or SimpleQueryEngineConfig(),
+            llm,
+            retriever,
+            streaming,
+            verbose,
+        )
+
+    @classmethod
+    def __load_base_query_engine(
+        cls,
+        config: BaseQueryEngineConfig,
+        llm: LLM,
+        retriever: BaseRetriever | None = None,
+        streaming: bool = False,
+        verbose: bool = False,
+    ) -> BaseQueryEngine | NoReturn:
+        match config:
             case CitationQueryEngineConfig():
                 if retriever is None:
                     error("CitationQueryEngine requires a retriever")
-                self.query_engine = CitationQueryEngine(
+                return CitationQueryEngine(
                     retriever=retriever,
                     llm=llm,
-                    citation_chunk_size=config.engine.chunk_size,
-                    citation_chunk_overlap=config.engine.chunk_overlap,
+                    citation_chunk_size=config.chunk_size,
+                    citation_chunk_overlap=config.chunk_overlap,
                 )
 
             case RetrieverQueryEngineConfig():
                 if retriever is None:
                     error("RetrieverQueryEngine requires a retriever")
-                self.query_engine = RetrieverQueryEngine.from_args(
+                return RetrieverQueryEngine.from_args(
                     retriever=retriever,
                     llm=llm,
                     streaming=streaming,
-                    response_mode=config.engine.response_mode,
+                    response_mode=config.response_mode,
                     verbose=verbose,
                 )
 
-            case SimpleQueryEngineConfig() | None:
-                self.query_engine = SimpleQueryEngine(llm=llm)
+            case SimpleQueryEngineConfig():
+                return SimpleQueryEngine(llm=llm)
 
-        # # jww (2025-05-13): Add MultiStepQueryEngine
-        # if retriever is not None and config.show_citations:
-        # elif retriever is not None:
-        #     # jww (2025-05-12): restore
-        #     # if retries or source_retries:
-        #     #     relevancy_evaluator = RelevancyEvaluator(
-        #     #         llm=models.evaluator_llm or models.llm,
-        #     #     )
-        #     #     _guideline_evaluator = GuidelineEvaluator(
-        #     #         llm=models.evaluator_llm or models.llm,
-        #     #         guidelines=DEFAULT_GUIDELINES
-        #     #         + "\nThe response should not be overly long.\n"
-        #     #         + "The response should try to summarize where possible.\n",
-        #     #     )
-        #     #     if source_retries:
-        #     #         self.logger.info("Add retry source query engine")
-        #     #         query_engine = RetrySourceQueryEngine(
-        #     #             query_engine,
-        #     #             evaluator=relevancy_evaluator,
-        #     #             llm=models.llm,
-        #     #         )
-        #     #     else:
-        #     #         self.logger.info("Add retry query engine")
-        #     #         query_engine = RetryQueryEngine(
-        #     #             query_engine,
-        #     #             evaluator=relevancy_evaluator,
-        #     #         )
-        # else:
+    @classmethod
+    def __load_query_engine(
+        cls,
+        config: QueryEngineConfig,
+        llm: LLM,
+        retriever: BaseRetriever | None = None,
+        streaming: bool = False,
+        verbose: bool = False,
+    ) -> BaseQueryEngine | NoReturn:
+        match config:
+            case (
+                CitationQueryEngineConfig()
+                | RetrieverQueryEngineConfig()
+                | SimpleQueryEngineConfig()
+            ):
+                return cls.__load_base_query_engine(
+                    config,
+                    llm,
+                    retriever,
+                    streaming,
+                    verbose,
+                )
+
+            case MultiStepQueryEngineConfig():
+                error("MultiStepQueryEngineConfig not implemented yet")
+
+            case RetrySourceQueryEngineConfig():
+                query_engine = cls.__load_base_query_engine(
+                    config.engine, llm, retriever, streaming, verbose
+                )
+                if isinstance(query_engine, RetrieverQueryEngine):
+                    evaluator = cls.__load_evaluator(config.evaluator)
+                    return RetrySourceQueryEngine(
+                        query_engine,
+                        evaluator=evaluator,
+                        llm=RAGWorkflow.realize_llm(config.llm, verbose),
+                    )
+                else:
+                    error(
+                        "Base engine for RetrySourceQueryEngine must be RetrieverQueryEngine"
+                    )
+
+            case RetryQueryEngineConfig():
+                query_engine = cls.__load_base_query_engine(
+                    config.engine, llm, retriever, streaming, verbose
+                )
+                evaluator = cls.__load_evaluator(config.evaluator)
+                return RetryQueryEngine(
+                    query_engine,
+                    evaluator=evaluator,
+                )
+
+    @classmethod
+    def __load_evaluator(
+        cls,
+        config: EvaluatorConfig,
+        verbose: bool = False,
+    ) -> BaseEvaluator:
+        match config:
+            case RelevancyEvaluatorConfig():
+                return RelevancyEvaluator(
+                    llm=RAGWorkflow.realize_llm(config.llm, verbose),
+                )
+            case GuidelineConfig():
+                return GuidelineEvaluator(
+                    llm=RAGWorkflow.realize_llm(config.llm, verbose),
+                    guidelines=config.guidelines,
+                )
 
     def query(self, query: QueryType) -> RESPONSE_TYPE:
         return self.query_engine.query(query)
