@@ -8,7 +8,10 @@ query:
     temperature: 0.6
     max_tokens: 8192
     timeout: 7200
+
   engine:
+    # type: SimpleQueryEngineConfig
+
     type: RetrieverQueryEngineConfig
     response_mode: compact_accumulate
 
@@ -16,10 +19,19 @@ query:
     # chunk_size: 512
     # chunk_overlap: 20
 
-    # type: RetrySourceQueryEngineConfig
-    # source_retries: false
+    # type: RetryQueryEngineConfig
+    # evaluator:
+    #   type: RelevancyEvaluatorConfig
+    #   llm: *llm
+    # engine:
+    #   type: SimpleQueryEngineConfig
 
-    # type: SimpleQueryEngineConfig
+    # type: RetrySourceQueryEngineConfig
+    # evaluator:
+    #   type: GuidelineConfig
+    #   llm: *llm
+    # engine:
+    #   type: SimpleQueryEngineConfig
 
 chat:
   llm: *llm
@@ -43,11 +55,16 @@ retrieval:
   #   hybrid_search: true
 
   embedding:
-    type: BGEM3EmbeddingConfig
-  # embedding:
-  #   type: HuggingFaceEmbeddingConfig
-  #   model_name: "BAAI/bge-large-en-v1.5"
-  #   # model_name: "BAAI/bge-base-en-v1.5"
+    # type: BGEM3EmbeddingConfig
+
+    type: OpenAILikeEmbeddingConfig
+    model_name: "bge-m3"
+    # model_name: "sentence-transformers/all-MiniLM-L6-v2"
+    dimensions: 1024
+    api_base: "http://localhost:8080/v1"
+
+    # type: HuggingFaceEmbeddingConfig
+    # model_name: "BAAI/bge-base-en-v1.5"
 
   splitter:
     type: SentenceSplitterConfig

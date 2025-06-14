@@ -16,7 +16,6 @@ llama-index-vector-stores-postgres>=0.5.1
 # llama-index-vector-stores-milvus>=0.8.1
 llama-index-storage-docstore-postgres>=0.3.0
 llama-index-storage-index-store-postgres>=0.4.0
-llama-index-indices-managed-bge-m3>=0.4.0
 llama-parse>=0.6.20
 llama_cpp_python>=0.3.8
 tree-sitter-language-pack>=0.7.3
