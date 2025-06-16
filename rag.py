@@ -1807,6 +1807,8 @@ class RAGWorkflow:
         retrievers: list[BaseRetriever] = []
 
         if input_files is not None and embed_individually:
+            vi_nodes: list[BaseNode] = []
+            ki_nodes: list[BaseNode] = []
             for input_file in input_files:
                 vector_index, keyword_index = self.__ingest_files(
                     num_workers=num_workers,
@@ -1814,12 +1816,47 @@ class RAGWorkflow:
                     index_files=index_files,
                     verbose=verbose,
                 )
-                retriever = self.__retriever_from_index(
-                    vector_index, keyword_index, verbose
-                )
-                if retriever is not None:
-                    retrievers.append(retriever)
+                if vector_index is not None:
+                    d = vector_index.storage_context.vector_store.to_dict()
+                    embedding_dict = d['embedding_dict']
+                    items = vector_index.storage_context.docstore.docs.items()
+                    for doc_id, node in items:
+                        node.embedding = embedding_dict[doc_id]
+                        vi_nodes.append(node)
+                if keyword_index is not None:
+                    d = keyword_index.storage_context.vector_store.to_dict()
+                    embedding_dict = d['embedding_dict']
+                    items = keyword_index.storage_context.docstore.docs.items()
+                    for doc_id, node in items:
+                        node.embedding = embedding_dict[doc_id]
+                        ki_nodes.append(node)
+            vector_index = VectorStoreIndex(nodes=vi_nodes)
+            keyword_index = KeywordTableIndex(nodes=ki_nodes)
+
+            retriever = self.__retriever_from_index(
+                vector_index, keyword_index, verbose
+            )
+            if retriever is not None:
+                retrievers.append(retriever)
+
+            # for input_file in input_files:
+            #     vector_index, keyword_index = self.__ingest_files(
+            #         num_workers=num_workers,
+            #         input_files=[input_file],
+            #         index_files=index_files,
+            #         verbose=verbose,
+            #     )
+            #     retriever = self.__retriever_from_index(
+            #         vector_index, keyword_index, verbose
+            #     )
+            #     if retriever is not None:
+            #         retrievers.append(retriever)
         else:
+            # If there are no input files mentioned, this can only be the
+            # situation where we are expected to load a vector index directly
+            # from a database, such as Postgres, assuming that a collection
+            # had been embedded there earlier using the "index" command
+            # against some set of files.
             vector_index, keyword_index = self.__ingest_files(
                 num_workers=num_workers,
                 input_files=input_files,
@@ -1832,14 +1869,18 @@ class RAGWorkflow:
             if retriever is not None:
                 retrievers.append(retriever)
 
-        Settings.llm = None
-        return QueryFusionRetriever(
-            retrievers=retrievers,
-            similarity_top_k=self.config.retrieval.top_k,
-            num_queries=1,
-            use_async=False,
-            verbose=verbose,
-        )
+        match retrievers:
+            case [retriever]:
+                return retriever
+            case _:
+                Settings.llm = None
+                return QueryFusionRetriever(
+                    retrievers=retrievers,
+                    similarity_top_k=self.config.retrieval.top_k,
+                    num_queries=1,
+                    use_async=False,
+                    verbose=verbose,
+                )
 
     def retrieve_nodes(
         self, retriever: BaseRetriever, text: str
