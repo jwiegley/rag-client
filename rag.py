@@ -38,7 +38,6 @@ from llama_index.core import (
     KeywordTableIndex,
     PromptTemplate,
     QueryBundle,
-    Settings,
     SimpleDirectoryReader,
     SimpleKeywordTableIndex,
     StorageContext,
@@ -1649,6 +1648,55 @@ class RAGWorkflow:
 
         return vector_index, keyword_index
 
+    def __load_indices_from_disk(
+        self,
+        storage_context: StorageContext,
+        input_files: list[Path] | None,
+        embed_llm: BaseEmbedding,
+        persist_dir: Path | None = None,
+        num_workers: int | None = None,
+        verbose: bool = False,
+    ) -> tuple[
+        VectorStoreIndex | None,
+        BaseKeywordTableIndex | None,
+    ]:
+        if input_files is None:
+            error("Cannot create vector index without input files")
+
+        vector_index, keyword_index = self.__ingest_documents(
+            num_workers=num_workers,
+            embed_llm=embed_llm,
+            storage_context=storage_context,
+            input_files=input_files,
+            verbose=verbose,
+        )
+
+        self.__save_indices(
+            storage_context,
+            persist_dir=persist_dir,
+        )
+
+        return (vector_index, keyword_index)
+
+    def __load_indices_from_cache(
+        self,
+        storage_context: StorageContext,
+        embed_llm: BaseEmbedding,
+    ) -> tuple[
+        VectorStoreIndex | None,
+        BaseKeywordTableIndex | None,
+    ]:
+        try:
+            vector_index, keyword_index = self.__load_indices(
+                embed_llm=embed_llm,
+                storage_context=storage_context,
+            )
+        except ValueError:
+            vector_index = None
+            keyword_index = None
+
+        return (vector_index, keyword_index)
+
     def __ingest_files(
         self,
         input_files: list[Path] | None,
@@ -1661,7 +1709,6 @@ class RAGWorkflow:
         BaseKeywordTableIndex | None,
     ]:
         persist_dir: Path | None = None
-        persisted = False
 
         if input_files is None:
             pass
@@ -1669,41 +1716,29 @@ class RAGWorkflow:
             error("Cannot ingest files without an embedding model")
         else:
             persist_dir = self.__persist_dir(input_files)
-            persisted = os.path.isdir(persist_dir)
 
-        vector_index = None
-        keyword_index = None
         storage_context = self.__load_storage_context(
             persist_dir=persist_dir,
         )
 
-        if index_files:
-            if input_files is None:
-                error("Cannot create vector index without input files")
+        vector_index = None
+        keyword_index = None
 
-            vector_index, keyword_index = self.__ingest_documents(
-                num_workers=num_workers,
-                embed_llm=embed_llm,
-                storage_context=storage_context,
-                input_files=input_files,
-                verbose=verbose,
-            )
-
-            self.__save_indices(
+        if not index_files:
+            (vector_index, keyword_index) = self.__load_indices_from_cache(
                 storage_context,
-                persist_dir=persist_dir,
+                embed_llm,
             )
-        else:
-            if self.config.retrieval.vector_store is not None or persisted:
-                try:
-                    vector_index, keyword_index = self.__load_indices(
-                        embed_llm=embed_llm,
-                        storage_context=storage_context,
-                    )
-                except ValueError:
-                    self.logger.info("Could not load indices")
-            else:
-                error("Cannot load index from vector database or cache")
+
+        if input_files is not None and vector_index is None and keyword_index is None:
+            (vector_index, keyword_index) = self.__load_indices_from_disk(
+                storage_context,
+                input_files,
+                embed_llm,
+                persist_dir,
+                num_workers,
+                verbose,
+            )
 
         return (vector_index, keyword_index)
 
@@ -1721,7 +1756,6 @@ class RAGWorkflow:
                 )
                 and self.config.retrieval.fusion is not None
             ):
-                self.logger.info("Setup query fusion retriever")
                 vector_retriever = vector_index.as_retriever(
                     vector_store_query_mode="default",
                     similarity_top_k=self.config.retrieval.top_k,
@@ -1793,8 +1827,6 @@ class RAGWorkflow:
         index_files: bool = False,
         verbose: bool = False,
     ) -> BaseRetriever | None:
-        retrievers: list[BaseRetriever] = []
-
         if self.config.retrieval.embedding is not None:
             embed_llm = self.__load_embedding(
                 config=self.config.retrieval.embedding,
@@ -1806,6 +1838,7 @@ class RAGWorkflow:
         if input_files is not None and embed_individually:
             vi_nodes: list[BaseNode] = []
             ki_nodes: list[BaseNode] = []
+
             for input_file in input_files:
                 vector_index, keyword_index = self.__ingest_files(
                     num_workers=num_workers,
@@ -1818,6 +1851,7 @@ class RAGWorkflow:
                     self.__merge_nodes(vector_index.storage_context, vi_nodes)
                 if keyword_index is not None:
                     self.__merge_nodes(keyword_index.storage_context, ki_nodes)
+
             vector_index = VectorStoreIndex(
                 nodes=vi_nodes,
                 embed_model=embed_llm,
@@ -1832,22 +1866,6 @@ class RAGWorkflow:
             retriever = self.__retriever_from_index(
                 vector_index, keyword_index, verbose
             )
-            if retriever is not None:
-                retrievers.append(retriever)
-
-            # for input_file in input_files:
-            #     vector_index, keyword_index = self.__ingest_files(
-            #         num_workers=num_workers,
-            #         input_files=[input_file],
-            #         embed_llm=embed_llm,
-            #         index_files=index_files,
-            #         verbose=verbose,
-            #     )
-            #     retriever = self.__retriever_from_index(
-            #         vector_index, keyword_index, verbose
-            #     )
-            #     if retriever is not None:
-            #         retrievers.append(retriever)
         else:
             # If there are no input files mentioned, this can only be the
             # situation where we are expected to load a vector index directly
@@ -1864,21 +1882,8 @@ class RAGWorkflow:
             retriever = self.__retriever_from_index(
                 vector_index, keyword_index, verbose
             )
-            if retriever is not None:
-                retrievers.append(retriever)
 
-        match retrievers:
-            case [retriever]:
-                return retriever
-            case _:
-                Settings.llm = None
-                return QueryFusionRetriever(
-                    retrievers=retrievers,
-                    similarity_top_k=self.config.retrieval.top_k,
-                    num_queries=1,
-                    use_async=False,
-                    verbose=verbose,
-                )
+        return retriever
 
     def retrieve_nodes(
         self, retriever: BaseRetriever, text: str
