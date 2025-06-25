@@ -1746,6 +1746,8 @@ class RAGWorkflow:
         self,
         vector_index: VectorStoreIndex | None,
         keyword_index: BaseKeywordTableIndex | None,
+        top_k: int | None = None,
+        sparse_top_k: int | None = None,
         verbose: bool = False,
     ) -> BaseRetriever | None:
         if vector_index is not None:
@@ -1758,18 +1760,18 @@ class RAGWorkflow:
             ):
                 vector_retriever = vector_index.as_retriever(
                     vector_store_query_mode="default",
-                    similarity_top_k=self.config.retrieval.top_k,
+                    similarity_top_k=top_k or self.config.retrieval.top_k,
                     verbose=verbose,
                 )
                 text_retriever = vector_index.as_retriever(
                     vector_store_query_mode="sparse",
-                    similarity_top_k=self.config.retrieval.sparse_top_k,
+                    similarity_top_k=sparse_top_k or self.config.retrieval.sparse_top_k,
                     verbose=verbose,
                 )
                 llm = self.realize_llm(self.config.retrieval.fusion.llm)
                 vector_retriever = QueryFusionRetriever(
                     [vector_retriever, text_retriever],
-                    similarity_top_k=self.config.retrieval.top_k,
+                    similarity_top_k=top_k or self.config.retrieval.top_k,
                     num_queries=self.config.retrieval.fusion.num_queries,
                     mode=self.config.retrieval.fusion.mode,
                     llm=llm,
@@ -1778,7 +1780,7 @@ class RAGWorkflow:
             else:
                 self.logger.info("Load retriever from vector index")
                 vector_retriever = vector_index.as_retriever(
-                    similarity_top_k=self.config.retrieval.top_k,
+                    similarity_top_k=top_k or self.config.retrieval.top_k,
                     verbose=verbose,
                 )
         else:
@@ -1825,6 +1827,8 @@ class RAGWorkflow:
         num_workers: int | None = None,
         embed_individually: bool = False,
         index_files: bool = False,
+        top_k: int | None = None,
+        sparse_top_k: int | None = None,
         verbose: bool = False,
     ) -> BaseRetriever | None:
         if self.config.retrieval.embedding is not None:
@@ -1862,10 +1866,6 @@ class RAGWorkflow:
                 )
             else:
                 keyword_index = None
-
-            retriever = self.__retriever_from_index(
-                vector_index, keyword_index, verbose
-            )
         else:
             # If there are no input files mentioned, this can only be the
             # situation where we are expected to load a vector index directly
@@ -1879,9 +1879,14 @@ class RAGWorkflow:
                 index_files=index_files,
                 verbose=verbose,
             )
-            retriever = self.__retriever_from_index(
-                vector_index, keyword_index, verbose
-            )
+
+        retriever = self.__retriever_from_index(
+            vector_index,
+            keyword_index,
+            top_k=top_k,
+            sparse_top_k=sparse_top_k,
+            verbose=verbose,
+        )
 
         return retriever
 
@@ -2148,6 +2153,8 @@ def rag_initialize(
     num_workers: int | None = None,
     recursive: bool = False,
     index_files: bool = False,
+    top_k: int | None = None,
+    sparse_top_k: int | None = None,
     verbose: bool = False,
 ) -> tuple[RAGWorkflow, BaseRetriever | None]:
     config = RAGWorkflow.load_config(config_path)
@@ -2170,6 +2177,8 @@ def rag_initialize(
             input_files=input_files,
             embed_individually=config.retrieval.embed_individually,
             index_files=index_files,
+            top_k=top_k,
+            sparse_top_k=sparse_top_k,
             verbose=verbose,
         )
     else:

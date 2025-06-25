@@ -35,6 +35,8 @@ class Args(TypedArgs):
     port: int
     reload_server: bool
     config: str
+    top_k: int | None
+    sparse_top_k: int | None
     command: str
     args: list[str]
 
@@ -80,6 +82,10 @@ def parse_args(arguments: list[str] = sys.argv[1:]) -> Args:
         type=str,
         required=True,
         help="Yaml config file, to set argument defaults",
+    )
+    _ = parser.add_argument("--top-k", type=int, help="Top number of chunks to return")
+    _ = parser.add_argument(
+        "--sparse-top-k", type=int, help="Top number of chunks to return (sparse)"
     )
     _ = parser.add_argument("command")
     _ = parser.add_argument("args", nargs=argparse.REMAINDER)
@@ -323,6 +329,8 @@ def main(args: Args):
         num_workers=args.num_workers,
         recursive=args.recursive,
         index_files=args.command == "index",
+        top_k=args.top_k,
+        sparse_top_k=args.sparse_top_k,
         verbose=args.verbose or args.debug,
     )
 
