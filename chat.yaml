@@ -4,8 +4,8 @@ query:
   llm: &llm
     # --- OpenAILikeConfig ---
     type: OpenAILikeConfig
-    model: "Qwen3-235B-A22B"             # Model name to use
-    api_base: "http://192.168.50.5:8080/v1" # API endpoint
+    model: "hera/Qwen3-235B-A22B"        # Model name to use
+    api_base: "http://vulcan/litellm/v1" # API endpoint
     context_window: 131072               # Maximum context window size
     temperature: 0.6                     # Sampling temperature for generation
     max_tokens: 8192                     # Max output tokens
@@ -92,6 +92,7 @@ retrieval:
   # Document retrieval configuration
   top_k: 20                               # Number of nodes to retrieve
   sparse_top_k: 5                         # Number of sparse nodes for hybrid search
+  embed_individually: true
 
   # Fusion retriever for multi-strategy search
   # fusion:
@@ -115,15 +116,16 @@ retrieval:
   embedding:
     # --- OpenAILikeEmbeddingConfig ---
     type: OpenAILikeEmbeddingConfig
-    model_name: "bge-m3"                # Model identifier
-    dimensions: 1024                    # Embedding dimensions
+    model_name: "hera/bge-m3"           # Model identifier
+    # dimensions: 1024                    # Embedding dimensions
     # model_name: "Qwen3-Embedding-8B"
     # dimensions: 4096
     # model_name: "nomic-embed-text-v2-moe"
     # dimensions: 768
     # model_name: "sentence-transformers/all-MiniLM-L6-v2"
     # dimensions: 384
-    api_base: "http://192.168.50.5:8080/v1"  # API endpoint
+    api_base: "http://vulcan/litellm/v1"  # API endpoint
+    api_key_command: "pass vulcan | head -1"
 
     # --- HuggingFaceEmbeddingConfig ---
     # type: HuggingFaceEmbeddingConfig

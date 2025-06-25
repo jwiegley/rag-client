@@ -145,6 +145,8 @@
           isort                 # Sorts imports
           autoflake             # Removes unused imports
           pylint
+          cmake
+          pkg-config
         ];
       };
     });
