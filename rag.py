@@ -1273,6 +1273,13 @@ class RAGWorkflow:
                     show_progress=verbose,
                 )
             case OpenAIEmbeddingConfig():
+                if config.api_key_command is not None:
+                    config.api_key = subprocess.run(
+                        config.api_key_command,
+                        shell=True,
+                        text=True,
+                        capture_output=True,
+                    ).stdout.rstrip("\n")
                 return OpenAIEmbedding(
                     **asdict(config),
                     show_progress=verbose,
@@ -1286,8 +1293,8 @@ class RAGWorkflow:
                         capture_output=True,
                     ).stdout.rstrip("\n")
                 return OpenAILikeEmbedding(
-                    **asdict(config),
                     show_progress=verbose,
+                    **asdict(config),
                 )
 
     @classmethod
@@ -1338,6 +1345,8 @@ class RAGWorkflow:
         cls,
         input_files: list[Path],
     ) -> str:
+        # jww (2025-06-25): Include configuration details that might affect
+        # the persisted vector index.
         fingerprint = [collection_hash(input_files)]
         final_hash = "\n".join(fingerprint).encode("utf-8")
         final_base64 = base64.b64encode(final_hash).decode("utf-8")
