@@ -2,7 +2,6 @@
 query:
   # Primary LLM for querying. Choose one of the types below:
   llm: &llm
-    # --- OpenAILikeConfig ---
     type: OpenAILikeConfig
     model: "hera/Qwen3-235B-A22B"        # Model name to use
     api_base: "http://vulcan/litellm/v1" # API endpoint
@@ -14,7 +13,6 @@ query:
     default_headers:
       x-litellm-tags: rag-client
 
-    # --- Alternative LLM Configurations ---
     # type: OllamaConfig
     # model: "llama3"
     # base_url: "http://localhost:11434"
@@ -41,20 +39,16 @@ query:
 
   # Query engine configuration. Choose one engine type:
   engine:
-    # --- SimpleQueryEngineConfig ---
     # type: SimpleQueryEngineConfig       # Stateless Q&A engine
 
-    # --- RetrieverQueryEngineConfig ---
     type: RetrieverQueryEngineConfig
     response_mode: compact_accumulate     # Options: 'default', 'compact',
                                           # 'compact_accumulate', 'refine'
 
-    # --- CitationQueryEngineConfig ---
     # type: CitationQueryEngineConfig
     # chunk_size: 512                     # Content chunk size for citation
     # chunk_overlap: 20                   # Overlap between chunks
 
-    # --- RetryQueryEngineConfig ---
     # type: RetryQueryEngineConfig
     # evaluator:
     #   type: RelevancyEvaluatorConfig
@@ -62,7 +56,6 @@ query:
     # engine:
     #   type: SimpleQueryEngineConfig
 
-    # --- RetrySourceQueryEngineConfig ---
     # type: RetrySourceQueryEngineConfig
     # evaluator:
     #   type: GuidelineConfig
@@ -80,15 +73,12 @@ chat:
   keep_history: true                      # Persist chat history between sessions
 
   engine:
-    # --- SimpleContextChatEngineConfig ---
     type: SimpleContextChatEngineConfig
     context_window: 32768                 # Max tokens for context window
 
-    # --- CondensePlusContextChatEngineConfig ---
     # type: CondensePlusContextChatEngineConfig
     # skip_condense: false                # Whether to skip condensing user message
 
-    # --- ContextChatEngineConfig ---
     # type: ContextChatEngineConfig
 
 retrieval:
@@ -115,7 +105,6 @@ retrieval:
 
   # Embedding model configuration. Choose one:
   embedding:
-    # --- OpenAILikeEmbeddingConfig ---
     type: OpenAILikeEmbeddingConfig
     model_name: "hera/bge-m3"           # Model identifier
     # dimensions: 1024                    # Embedding dimensions
@@ -131,23 +120,19 @@ retrieval:
     default_headers:
       x-litellm-tags: rag-client
 
-    # --- HuggingFaceEmbeddingConfig ---
     # type: HuggingFaceEmbeddingConfig
     # model_name: "BAAI/bge-base-en-v1.5" # Huggingface model name
     # max_length: 512                     # Max tokens per batch
     # normalize: true                     # Normalize vectors
 
-    # --- OllamaEmbeddingConfig ---
     # type: OllamaEmbeddingConfig
     # model_name: "nomic-embed-text"      # Ollama model name
 
-    # --- LlamaCPPEmbeddingConfig ---
     # type: LlamaCPPEmbeddingConfig
     # model_path: "models/bge.gguf"       # Local model path
     # n_gpu_layers: 99                    # Layers to offload to GPU
     # verbose: true                       # Verbose output for debugging
 
-    # --- OpenAIEmbeddingConfig ---
     # type: OpenAIEmbeddingConfig
     # mode: "text_search"                 # Embedding mode: 'text_search' or 'text_embedding'
     # model: "text-embedding-ada-002"     # Model type
@@ -159,7 +144,6 @@ retrieval:
     chunk_overlap: 20                     # Overlap between chunks
     include_metadata: true                # Preserve metadata in chunks
 
-    # --- Alternative Splitter Configs ---
     # type: SentenceWindowSplitterConfig
     # window_size: 5                      # Number of sentences to include
     # window_metadata_key: "window"       # Where to store window content

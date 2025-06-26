@@ -51,30 +51,9 @@
         ];
 
         buildPhase = ''
-          # # Create virtual environment
-          # ${pythonPackage}/bin/python -m venv $out/venv
-
-          # # Activate it
-          # source $out/venv/bin/activate
-
-          # # Set environment for building
-          # export PATH=${pkgs.libpq.pg_config}/bin:$PATH
-          # export PATH=${pkgs.cmake}/bin:$PATH
-          # export PATH=${pkgs.pkg-config}/bin:$PATH
-          # export PATH=${pkgs.git}/bin:$PATH
-          # export LD_LIBRARY_PATH=${libPath}:$LD_LIBRARY_PATH
-          # export DYLD_LIBRARY_PATH=${libPath}:$DYLD_LIBRARY_PATH
-
-          # # Install dependencies
-          # pip --cache-dir=.pip install --upgrade pip
-          # pip --cache-dir=.pip install -r requirements.txt
-
-          # # Install the application itself
-          # pip --cache-dir=.pip install -e .
         '';
 
         installPhase = ''
-          # Create wrapper script
           mkdir -p $out/bin
           mkdir -p $out/share/lib/rag-client
 
@@ -94,7 +73,6 @@
             --add-flags "$out/share/lib/rag-client/main.py"
         '';
 
-        # Skip checks as we're using pip
         doCheck = false;
       };
 
