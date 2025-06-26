@@ -51,6 +51,7 @@ from llama_index.core.constants import (
     DEFAULT_EMBED_BATCH_SIZE,
     DEFAULT_NUM_OUTPUTS,
     DEFAULT_TEMPERATURE,
+    DEFAULT_SIMILARITY_TOP_K,
 )
 from llama_index.core.query_engine.custom import STR_OR_RESPONSE_TYPE
 from llama_index.core.base.embeddings.base import Embedding
@@ -794,8 +795,6 @@ class RetrievalConfig(YAMLWizard):
     splitter: SplitterConfig | None = None
     extractors: list[ExtractorConfig] | None = None
     vector_store: VectorStoreConfig | None = None
-    top_k: int = 3
-    sparse_top_k: int = 3
     fusion: FusionRetrieverConfig | None = None
 
 
@@ -1400,10 +1399,11 @@ class RAGWorkflow:
     def __determine_fingerprint(
         cls,
         input_files: list[Path],
+        config: RetrievalConfig,
     ) -> str:
         # jww (2025-06-25): Include configuration details that might affect
         # the persisted vector index.
-        fingerprint = [collection_hash(input_files)]
+        fingerprint = [collection_hash(input_files), repr(config)]
         final_hash = "\n".join(fingerprint).encode("utf-8")
         final_base64 = base64.b64encode(final_hash).decode("utf-8")
         return final_base64[0:32]
@@ -1592,7 +1592,9 @@ class RAGWorkflow:
         return vector_index, keyword_index
 
     def __persist_dir(self, input_files: list[Path]) -> Path:
-        return cache_dir() / self.__determine_fingerprint(input_files)
+        return cache_dir() / self.__determine_fingerprint(
+            input_files, self.config.retrieval
+        )
 
     def __load_storage_context(
         self,
@@ -1825,18 +1827,18 @@ class RAGWorkflow:
             ):
                 vector_retriever = vector_index.as_retriever(
                     vector_store_query_mode="default",
-                    similarity_top_k=top_k or self.config.retrieval.top_k,
+                    similarity_top_k=top_k,
                     verbose=verbose,
                 )
                 text_retriever = vector_index.as_retriever(
                     vector_store_query_mode="sparse",
-                    similarity_top_k=sparse_top_k or self.config.retrieval.sparse_top_k,
+                    similarity_top_k=sparse_top_k,
                     verbose=verbose,
                 )
                 llm = self.realize_llm(self.config.retrieval.fusion.llm)
                 vector_retriever = QueryFusionRetriever(
                     [vector_retriever, text_retriever],
-                    similarity_top_k=top_k or self.config.retrieval.top_k,
+                    similarity_top_k=top_k or DEFAULT_SIMILARITY_TOP_K,
                     num_queries=self.config.retrieval.fusion.num_queries,
                     mode=self.config.retrieval.fusion.mode,
                     llm=llm,
@@ -1845,7 +1847,7 @@ class RAGWorkflow:
             else:
                 self.logger.info("Load retriever from vector index")
                 vector_retriever = vector_index.as_retriever(
-                    similarity_top_k=top_k or self.config.retrieval.top_k,
+                    similarity_top_k=top_k,
                     verbose=verbose,
                 )
         else:

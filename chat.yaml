@@ -93,8 +93,6 @@ chat:
 
 retrieval:
   # Document retrieval configuration
-  top_k: 20                               # Number of nodes to retrieve
-  sparse_top_k: 5                         # Number of sparse nodes for hybrid search
   embed_individually: true
 
   # Fusion retriever for multi-strategy search
