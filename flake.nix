@@ -1,5 +1,5 @@
 {
-   description = "llama-index RAG tool";
+  description = "llama-index RAG tool";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
@@ -17,6 +17,7 @@
           pip
           setuptools
           wheel
+          virtualenv
         ]
       );
 
@@ -26,96 +27,69 @@
         zlib
         glib
         libpq
-        libpq.pg_config
         openssl
+        pkg-config
       ];
 
       libPath = pkgs.lib.makeLibraryPath sysLibs;
     in {
       inherit pkgs;
 
-      packages.default = with pkgs; python3Packages.buildPythonApplication {
+      packages.default = pkgs.stdenv.mkDerivation {
         pname = "rag-client";
         version = "1.0.0";
-        format = "setuptools";
 
         src = ./.;
 
-        entryPoints = "main:main";
-
-        # Skip Nix dependency checks
-        doCheck = false;
-        # pythonImportsCheck = [ "rag" ];
-        pythonImportsCheck = [ ];
-
-        nativeBuildInputs = [
+        nativeBuildInputs = with pkgs; [
           makeWrapper
-        ];
-
-        buildInputs = [
           pythonPackage
-          zlib
-          libpq
-          libpq.pg_config
-          openssl.dev
         ];
 
-        preBuild = ''
-          # Create temporary build environment
-          export BUILD_VENV=$TMPDIR/build_venv
-          ${pythonPackage}/bin/python -m venv $BUILD_VENV
-          source $BUILD_VENV/bin/activate
+        buildInputs = sysLibs ++ [
+          pkgs.libpq.pg_config
+        ];
 
-          export PATH=${libpq.pg_config}/bin:$PATH
+        buildPhase = ''
+          runHook preBuild
 
-          # Install dependencies using pip
+          # Create virtual environment
+          ${pythonPackage}/bin/python -m venv $out/venv
+
+          # Activate it
+          source $out/venv/bin/activate
+
+          # Set environment for building
+          export PATH=${pkgs.libpq.pg_config}/bin:$PATH
+          export LD_LIBRARY_PATH=${libPath}:$LD_LIBRARY_PATH
+
+          # Install dependencies
           pip install --upgrade pip
           pip install -r requirements.txt
+
+          # Install the application itself
+          pip install -e .
+
+          runHook postBuild
         '';
 
         installPhase = ''
-          # Create output directories
-          mkdir -p $out/lib $out/bin $out/venv
+          runHook preInstall
 
-          # Install application without dependencies
-          ${pythonPackage}/bin/python setup.py install --prefix=$out
+          # Create wrapper script
+          mkdir -p $out/bin
 
-          # Clone build venv to output directory
-          cp -r $BUILD_VENV $out/venv
+          makeWrapper $out/venv/bin/python $out/bin/rag-client \
+            --set LD_LIBRARY_PATH "${libPath}" \
+            --set DYLD_LIBRARY_PATH "${libPath}" \
+            --add-flags "-m" \
+            --add-flags "main"
 
-          cat > compileall <<EOF
-          import compileall
-          import sys
-          import pathlib
-          # Path to your venv's site-packages
-          site_packages = pathlib.Path("$out") \
-              / "venv" \
-              / "build_venv" \
-              / "lib" \
-              / "python${pythonPackage.pythonVersion}" \
-              / "site-packages"
-          compileall.compile_dir(site_packages, force=True)
-          EOF
-
-          source $out/venv/build_venv/bin/activate
-          ${pythonPackage}/bin/python compileall
-
-          # Wrap executables to use local virtual environment
-          cat > $out/bin/rag-client <<EOF
-          #!${pkgs.bash}/bin/bash
-          source $out/venv/build_venv/bin/activate
-          export LD_LIBRARY_PATH=${pythonPackage}/lib:${libPath}:$LD_LIBRARY_PATH
-          export DYLD_LIBRARY_PATH=${pythonPackage}/lib:${libPath}:$DYLD_LIBRARY_PATH
-          export PYTHONPATH="$out/venv/build_venv/lib/python${pythonPackage.pythonVersion}/site-packages:$out/lib/python${pythonPackage.pythonVersion}/site-packages"
-          export LD_LIBRARY_PATH=$out/venv/build_venv/lib/python${pythonPackage.pythonVersion}/site-packages/lib:$LD_LIBRARY_PATH
-          export DYLD_LIBRARY_PATH=$out/venv/build_venv/lib/python${pythonPackage.pythonVersion}/site-packages/lib:$DYLD_LIBRARY_PATH
-          egg=$out/lib/python${pythonPackage.pythonVersion}/site-packages/*.egg
-          $out/venv/build_venv/bin/python -c "import sys; \
-            sys.path.insert(0, '$egg'); \
-            from main import main, parse_args; \
-            main(parse_args())" "\$@"
-          EOF
+          runHook postInstall
         '';
+
+        # Skip checks as we're using pip
+        doCheck = false;
       };
 
       apps.default = {
@@ -124,19 +98,24 @@
       };
 
       devShells.default = with pkgs; mkShell {
-        buildInputs = [ python3 ] ++ sysLibs;
+        buildInputs = [ pythonPackage ] ++ sysLibs ++ [
+          libpq.pg_config
+        ];
 
         shellHook = ''
           # Create and activate virtual environment
           [ ! -d .venv ] && python -m venv .venv
           source .venv/bin/activate
-          # Update pip and install dependencies
-          pip install -U pip
-          [ -f requirements.txt ] && pip install -r requirements.txt
-          # Make sure we find the libraries
+
+          # Set environment
+          export PATH=${libpq.pg_config}/bin:$PATH
           export LD_LIBRARY_PATH=${libPath}:$LD_LIBRARY_PATH
           export DYLD_LIBRARY_PATH=${libPath}:$DYLD_LIBRARY_PATH
           export PYTHONPATH="$PWD:$PYTHONPATH"
+
+          # Update pip and install dependencies
+          pip install -U pip
+          [ -f requirements.txt ] && pip install -r requirements.txt
         '';
 
         nativeBuildInputs = [

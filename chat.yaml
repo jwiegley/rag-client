@@ -10,6 +10,9 @@ query:
     temperature: 0.6                     # Sampling temperature for generation
     max_tokens: 8192                     # Max output tokens
     timeout: 7200                        # API timeout in seconds
+    add_litellm_session_id: true
+    default_headers:
+      x-litellm-tags: rag-client
 
     # --- Alternative LLM Configurations ---
     # type: OllamaConfig
@@ -126,6 +129,9 @@ retrieval:
     # dimensions: 384
     api_base: "http://vulcan/litellm/v1"  # API endpoint
     api_key_command: "pass vulcan | head -1"
+    add_litellm_session_id: true
+    default_headers:
+      x-litellm-tags: rag-client
 
     # --- HuggingFaceEmbeddingConfig ---
     # type: HuggingFaceEmbeddingConfig

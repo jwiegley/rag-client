@@ -11,6 +11,7 @@ import psycopg2
 import llama_cpp
 import subprocess
 import chat
+import uuid
 
 from collections.abc import Iterable, Sequence
 from copy import deepcopy
@@ -142,12 +143,14 @@ from llama_index.embeddings.openai import (
     OpenAIEmbeddingModelType,
 )
 from llama_index.embeddings.openai_like import OpenAILikeEmbedding
+from llama_index.embeddings.litellm import LiteLLMEmbedding
 from llama_index.llms.llama_cpp import LlamaCPP
 from llama_index.llms.lmstudio import LMStudio
 from llama_index.llms.ollama import Ollama
 from llama_index.llms.openai.base import DEFAULT_OPENAI_MODEL
 from llama_index.llms.openai import OpenAI
 from llama_index.llms.openai_like import OpenAILike
+from llama_index.llms.litellm import LiteLLM
 from llama_index.llms.openrouter import OpenRouter
 from llama_index.llms.perplexity import Perplexity
 from llama_index.llms.mlx import MLXLLM
@@ -316,6 +319,24 @@ class OpenAILikeEmbeddingConfig(YAMLWizard):
     reuse_client: bool = True
     default_headers: dict[str, str] | None = None
     num_workers: int | None = None
+    add_litellm_session_id: bool = False
+
+
+@dataclass
+class LiteLLMEmbeddingConfig(YAMLWizard):
+    model_name: str
+    embed_batch_size: int = 10
+    dimensions: int | None = None
+    additional_kwargs: dict[str, Any] | None = None
+    api_key: str = "fake"
+    api_key_command: str | None = None
+    api_base: str | None = None
+    api_version: str | None = None
+    max_retries: int = 10
+    timeout: float = 60.0
+    reuse_client: bool = True
+    default_headers: dict[str, str] | None = None
+    num_workers: int | None = None
 
 
 @dataclass
@@ -377,6 +398,7 @@ EmbeddingConfig: TypeAlias = (
     | OllamaEmbeddingConfig
     | OpenAIEmbeddingConfig
     | OpenAILikeEmbeddingConfig
+    | LiteLLMEmbeddingConfig
     | LlamaCPPEmbeddingConfig
 )
 
@@ -392,6 +414,8 @@ def embedding_model(config: EmbeddingConfig) -> str:
         case OpenAIEmbeddingConfig():
             return config.model
         case OpenAILikeEmbeddingConfig():
+            return config.model_name
+        case LiteLLMEmbeddingConfig():
             return config.model_name
 
 
@@ -434,6 +458,14 @@ class OpenAIConfig(YAMLWizard):
 
 @dataclass
 class OpenAILikeConfig(OpenAIConfig):
+    context_window: int = DEFAULT_CONTEXT_WINDOW
+    is_chat_model: bool = False
+    is_function_calling_model: bool = False
+    add_litellm_session_id: bool = False
+
+
+@dataclass
+class LiteLLMConfig(OpenAIConfig):
     context_window: int = DEFAULT_CONTEXT_WINDOW
     is_chat_model: bool = False
     is_function_calling_model: bool = False
@@ -515,6 +547,7 @@ class MLXLLMConfig(YAMLWizard):
 LLMConfig: TypeAlias = (
     OllamaConfig
     | OpenAILikeConfig
+    | LiteLLMConfig
     | OpenAIConfig
     | LlamaCPPConfig
     | PerplexityConfig
@@ -529,6 +562,8 @@ def llm_model(config: LLMConfig) -> str:
         case OllamaConfig():
             return config.model
         case OpenAILikeConfig():
+            return config.model
+        case LiteLLMConfig():
             return config.model
         case OpenAIConfig():
             return config.model
@@ -1292,8 +1327,23 @@ class RAGWorkflow:
                         text=True,
                         capture_output=True,
                     ).stdout.rstrip("\n")
+                if config.add_litellm_session_id:
+                    config.additional_kwargs = {
+                        "extra_body": {"litellm_session_id": str(uuid.uuid1())}
+                    }
                 return OpenAILikeEmbedding(
                     show_progress=verbose,
+                    **asdict(config),
+                )
+            case LiteLLMEmbeddingConfig():
+                if config.api_key_command is not None:
+                    config.api_key = subprocess.run(
+                        config.api_key_command,
+                        shell=True,
+                        text=True,
+                        capture_output=True,
+                    ).stdout.rstrip("\n")
+                return LiteLLMEmbedding(
                     **asdict(config),
                 )
 
@@ -1307,7 +1357,13 @@ class RAGWorkflow:
             case OllamaConfig():
                 return Ollama(**asdict(config), show_progress=verbose)
             case OpenAILikeConfig():
+                if config.add_litellm_session_id:
+                    config.additional_kwargs = {
+                        "extra_body": {"litellm_session_id": str(uuid.uuid1())}
+                    }
                 return OpenAILike(**asdict(config))
+            case LiteLLMConfig():
+                return LiteLLM(**asdict(config))
             case OpenAIConfig():
                 return OpenAI(**asdict(config), show_progress=verbose)
             case LlamaCPPConfig():
