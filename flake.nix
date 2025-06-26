@@ -51,8 +51,6 @@
         ];
 
         buildPhase = ''
-          runHook preBuild
-
           # Create virtual environment
           ${pythonPackage}/bin/python -m venv $out/venv
 
@@ -61,21 +59,20 @@
 
           # Set environment for building
           export PATH=${pkgs.libpq.pg_config}/bin:$PATH
+          export PATH=${pkgs.cmake}/bin:$PATH
+          export PATH=${pkgs.pkg-config}/bin:$PATH
+          export PATH=${pkgs.git}/bin:$PATH
           export LD_LIBRARY_PATH=${libPath}:$LD_LIBRARY_PATH
 
           # Install dependencies
-          pip install --upgrade pip
-          pip install -r requirements.txt
+          pip --cache-dir=.pip install --upgrade pip
+          pip --cache-dir=.pip install -r requirements.txt
 
           # Install the application itself
-          pip install -e .
-
-          runHook postBuild
+          pip --cache-dir=.pip install -e .
         '';
 
         installPhase = ''
-          runHook preInstall
-
           # Create wrapper script
           mkdir -p $out/bin
 
@@ -84,8 +81,6 @@
             --set DYLD_LIBRARY_PATH "${libPath}" \
             --add-flags "-m" \
             --add-flags "main"
-
-          runHook postInstall
         '';
 
         # Skip checks as we're using pip
