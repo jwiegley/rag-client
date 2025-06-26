@@ -51,36 +51,47 @@
         ];
 
         buildPhase = ''
-          # Create virtual environment
-          ${pythonPackage}/bin/python -m venv $out/venv
+          # # Create virtual environment
+          # ${pythonPackage}/bin/python -m venv $out/venv
 
-          # Activate it
-          source $out/venv/bin/activate
+          # # Activate it
+          # source $out/venv/bin/activate
 
-          # Set environment for building
-          export PATH=${pkgs.libpq.pg_config}/bin:$PATH
-          export PATH=${pkgs.cmake}/bin:$PATH
-          export PATH=${pkgs.pkg-config}/bin:$PATH
-          export PATH=${pkgs.git}/bin:$PATH
-          export LD_LIBRARY_PATH=${libPath}:$LD_LIBRARY_PATH
+          # # Set environment for building
+          # export PATH=${pkgs.libpq.pg_config}/bin:$PATH
+          # export PATH=${pkgs.cmake}/bin:$PATH
+          # export PATH=${pkgs.pkg-config}/bin:$PATH
+          # export PATH=${pkgs.git}/bin:$PATH
+          # export LD_LIBRARY_PATH=${libPath}:$LD_LIBRARY_PATH
+          # export DYLD_LIBRARY_PATH=${libPath}:$DYLD_LIBRARY_PATH
 
-          # Install dependencies
-          pip --cache-dir=.pip install --upgrade pip
-          pip --cache-dir=.pip install -r requirements.txt
+          # # Install dependencies
+          # pip --cache-dir=.pip install --upgrade pip
+          # pip --cache-dir=.pip install -r requirements.txt
 
-          # Install the application itself
-          pip --cache-dir=.pip install -e .
+          # # Install the application itself
+          # pip --cache-dir=.pip install -e .
         '';
 
         installPhase = ''
           # Create wrapper script
           mkdir -p $out/bin
+          mkdir -p $out/share/lib/rag-client
 
-          makeWrapper $out/venv/bin/python $out/bin/rag-client \
+          cp -p *.py $out/share/lib/rag-client
+          cp -p requirements.txt $out/share/lib/rag-client
+
+          makeWrapper ${pkgs.uv}/bin/uv $out/bin/rag-client \
             --set LD_LIBRARY_PATH "${libPath}" \
             --set DYLD_LIBRARY_PATH "${libPath}" \
-            --add-flags "-m" \
-            --add-flags "main"
+            --set PATH "${pkgs.libpq.pg_config}/bin:${pkgs.cmake}/bin:${pkgs.pkg-config}/bin:${pkgs.git}/bin:$PATH"        \
+            --set NIX_SSL_CERT_FILE "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" \
+            --set SSL_CERT_FILE "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"     \
+            --add-flags "run" \
+            --add-flags "--no-config" \
+            --add-flags "--with-requirements" \
+            --add-flags "$out/share/lib/rag-client/requirements.txt" \
+            --add-flags "$out/share/lib/rag-client/main.py"
         '';
 
         # Skip checks as we're using pip
@@ -103,14 +114,13 @@
           source .venv/bin/activate
 
           # Set environment
-          export PATH=${libpq.pg_config}/bin:$PATH
           export LD_LIBRARY_PATH=${libPath}:$LD_LIBRARY_PATH
           export DYLD_LIBRARY_PATH=${libPath}:$DYLD_LIBRARY_PATH
           export PYTHONPATH="$PWD:$PYTHONPATH"
 
           # Update pip and install dependencies
-          pip install -U pip
-          [ -f requirements.txt ] && pip install -r requirements.txt
+          pip --cache-dir=.venv/pip install -U pip
+          pip --cache-dir=.venv/pip install -r requirements.txt
         '';
 
         nativeBuildInputs = [
@@ -121,6 +131,8 @@
           pylint
           cmake
           pkg-config
+          git
+          libpq.pg_config
         ];
       };
     });
