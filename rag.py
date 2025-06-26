@@ -196,10 +196,11 @@ def read_files(
     recursive: bool = False,
 ) -> list[Path] | NoReturn:
     if read_from == "-":
-        input_files = [Path(line.strip()) for line in sys.stdin if line.strip()]
+        input_files: list[str] = [line.strip() for line in sys.stdin if line.strip()]
         if not input_files:
             error("No filenames provided on standard input")
-        return input_files
+        all_files = [read_files(path, recursive) for path in input_files]
+        return [item for sublist in all_files for item in sublist]
     elif os.path.isdir(read_from):
         return list_files(Path(read_from), recursive)
     elif os.path.isfile(read_from):
