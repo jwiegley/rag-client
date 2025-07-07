@@ -322,6 +322,7 @@ class OpenAILikeEmbeddingConfig(YAMLWizard):
     default_headers: dict[str, str] | None = None
     num_workers: int | None = None
     add_litellm_session_id: bool = False
+    no_litellm_logging: bool = False
 
 
 @dataclass
@@ -464,6 +465,7 @@ class OpenAILikeConfig(OpenAIConfig):
     is_chat_model: bool = False
     is_function_calling_model: bool = False
     add_litellm_session_id: bool = False
+    no_litellm_logging: bool = False
 
 
 @dataclass
@@ -1286,11 +1288,12 @@ class RAGWorkflow:
         return docstore, index_store, vector_store
 
     @classmethod
-    def __load_embedding(
+    def __load_component(
         cls,
-        config: EmbeddingConfig,
+        config: EmbeddingConfig | LLMConfig,
         verbose: bool = False,
-    ) -> BaseEmbedding:
+        component_type: Literal["embedding", "llm"] = "embedding",
+    ) -> BaseEmbedding | LLM | NoReturn:
         match config:
             case HuggingFaceEmbeddingConfig():
                 return HuggingFaceEmbedding(
@@ -1327,10 +1330,22 @@ class RAGWorkflow:
                         text=True,
                         capture_output=True,
                     ).stdout.rstrip("\n")
+
+                extra_body = {}
                 if config.add_litellm_session_id:
-                    config.additional_kwargs = {
-                        "extra_body": {"litellm_session_id": str(uuid.uuid1())}
-                    }
+                    extra_body["litellm_session_id"] = str(uuid.uuid1())
+                if config.no_litellm_logging:
+                    extra_body["no-log"] = True
+
+                if config.additional_kwargs is None:
+                    config.additional_kwargs = {"extra_body": extra_body}
+                elif "extra_body" not in config.additional_kwargs:
+                    config.additional_kwargs["extra_body"] = extra_body
+                else:
+                    config.additional_kwargs["extra_body"] = (
+                        config.additional_kwargs["extra_body"] | extra_body
+                    )
+
                 return OpenAILikeEmbedding(
                     show_progress=verbose,
                     **asdict(config),
@@ -1346,21 +1361,23 @@ class RAGWorkflow:
                 return LiteLLMEmbedding(
                     **asdict(config),
                 )
-
-    @classmethod
-    def __load_llm(
-        cls,
-        config: LLMConfig,
-        verbose: bool = False,
-    ) -> LLM:
-        match config:
             case OllamaConfig():
                 return Ollama(**asdict(config), show_progress=verbose)
             case OpenAILikeConfig():
+                extra_body = {}
                 if config.add_litellm_session_id:
-                    config.additional_kwargs = {
-                        "extra_body": {"litellm_session_id": str(uuid.uuid1())}
-                    }
+                    extra_body["litellm_session_id"] = str(uuid.uuid1())
+                if config.no_litellm_logging:
+                    extra_body["no-log"] = True
+
+                if config.additional_kwargs is None:
+                    config.additional_kwargs = {"extra_body": extra_body}
+                elif "extra_body" not in config.additional_kwargs:
+                    config.additional_kwargs["extra_body"] = extra_body
+                else:
+                    config.additional_kwargs["extra_body"] = (
+                        config.additional_kwargs["extra_body"] | extra_body
+                    )
                 return OpenAILike(**asdict(config))
             case LiteLLMConfig():
                 return LiteLLM(**asdict(config))
@@ -1376,6 +1393,30 @@ class RAGWorkflow:
                 return LMStudio(**asdict(config))
             case MLXLLMConfig():
                 return MLXLLM(**asdict(config))
+
+    @classmethod
+    def __load_embedding(
+        cls,
+        config: EmbeddingConfig,
+        verbose: bool = False,
+    ) -> BaseEmbedding:
+        component = cls.__load_component(config=config, verbose=verbose, component_type="embedding")
+        if isinstance(component, BaseEmbedding):
+            return component
+        else:
+            error(f"Failed to load embedding: {config}")
+
+    @classmethod
+    def __load_llm(
+        cls,
+        config: LLMConfig,
+        verbose: bool = False,
+    ) -> LLM:
+        component = cls.__load_component(config=config, verbose=verbose, component_type="llm")
+        if isinstance(component, LLM):
+            return component
+        else:
+            error(f"Failed to load LLM: {config}")
 
     @classmethod
     def realize_llm(

@@ -83,7 +83,7 @@ chat:
 
 retrieval:
   # Document retrieval configuration
-  embed_individually: true
+  embed_individually: false
 
   # Fusion retriever for multi-strategy search
   # fusion:
@@ -106,16 +106,19 @@ retrieval:
   # Embedding model configuration. Choose one:
   embedding:
     type: OpenAILikeEmbeddingConfig
-    model_name: "hera/bge-m3"           # Model identifier
+    # model_name: "hera/bge-m3"           # Model identifier
     # dimensions: 1024                    # Embedding dimensions
     # model_name: "Qwen3-Embedding-8B"
     # dimensions: 4096
-    # model_name: "nomic-embed-text-v2-moe"
-    # dimensions: 768
+    model_name: "hera/nomic-embed-text-v2-moe"
+    dimensions: 768
     # model_name: "sentence-transformers/all-MiniLM-L6-v2"
     # dimensions: 384
     api_base: "http://vulcan/litellm/v1"  # API endpoint
     api_key_command: "pass vulcan | head -1"
+    # api_base: "http://localhost:8080/v1"  # API endpoint
+    # api_key: "fake"
+    no_litellm_logging: true
     add_litellm_session_id: true
     default_headers:
       x-litellm-tags: rag-client
