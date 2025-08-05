@@ -3,7 +3,7 @@ query:
   # Primary LLM for querying. Choose one of the types below:
   llm: &llm
     type: OpenAILikeConfig
-    model: "hera/Qwen3-235B-A22B"        # Model name to use
+    model: "hera/Kimi-K2-Instruct"       # Model name to use
     api_base: "http://vulcan/litellm/v1" # API endpoint
     context_window: 131072               # Maximum context window size
     temperature: 0.6                     # Sampling temperature for generation
@@ -106,12 +106,12 @@ retrieval:
   # Embedding model configuration. Choose one:
   embedding:
     type: OpenAILikeEmbeddingConfig
-    # model_name: "hera/bge-m3"           # Model identifier
+    model_name: "hera/bge-m3"           # Model identifier
     # dimensions: 1024                    # Embedding dimensions
     # model_name: "Qwen3-Embedding-8B"
     # dimensions: 4096
-    model_name: "hera/nomic-embed-text-v2-moe"
-    dimensions: 768
+    # model_name: "hera/nomic-embed-text-v2-moe"
+    # dimensions: 768
     # model_name: "sentence-transformers/all-MiniLM-L6-v2"
     # dimensions: 384
     api_base: "http://vulcan/litellm/v1"  # API endpoint
