@@ -972,56 +972,77 @@ class MailParser(BaseReader):
 
 @cache
 @no_type_check
-def get_text_from_org_node(current_node: OrgNode, format: str = "plain"):
-    """Extract text from org node. Skip properties"""
-    lines = []
-    if current_node.heading:
-        lines.append(current_node.get_heading(format=format))
+def get_text_from_org_node_body_only(current_node: OrgNode, format: str = "plain"):
+    """Extract only body text from org node, excluding heading and properties"""
     if current_node.body:
-        lines.extend(current_node.get_body(format=format).split("\n"))
-    for child in current_node.children:
-        lines.extend(get_text_from_org_node(child, format=format))
-    return lines
+        # Get the body and strip any property drawers
+        body = current_node.get_body(format=format)
+        # Remove property drawers that start with :PROPERTIES: and end with :END:
+        import re
+        body = re.sub(r':PROPERTIES:.*?:END:\s*', '', body, flags=re.DOTALL)
+        return body.strip()
+    return ""
 
 
 class OrgReader(BaseReader):
     """OrgReader
 
     Extract text from org files.
-    Add the :PROPERTIES: on text node as extra_info
+    Parse each org entry as a separate document containing only body text.
+    Store heading and properties as metadata.
     """
 
-    split_depth: int = 0
+    split_by_entry: bool = True  # Split each entry into separate document
+    include_empty: bool = False  # Whether to include entries with no body
     text_formatting: str = "plain"  # plain or raw, as supported by orgparse
 
     @no_type_check
-    def node_to_document(self, node: Node, extra_info):
-        """Convert org node to document."""
-        text = "\n".join(
-            get_text_from_org_node(
-                node,
-                format=self.text_formatting,
-            )
-        )
-        extra_info = deepcopy(extra_info or {})
+    def node_to_document(self, node: OrgNode, parent_extra_info):
+        """Convert org node to document with only body text."""
+        # Get only the body text, no heading or metadata
+        text = get_text_from_org_node_body_only(node, format=self.text_formatting)
+
+        # Skip empty documents unless configured to include them
+        if not text and not self.include_empty:
+            return None
+
+        # Build metadata from node properties and heading
+        extra_info = deepcopy(parent_extra_info or {})
+
+        # Add the heading as metadata (not in the text)
+        if node.heading:
+            extra_info["org_heading"] = node.get_heading(format="plain")
+            extra_info["org_level"] = node.level
+
+        # Add all properties as metadata
         for prop, value in node.properties.items():
-            extra_info["org_property_" + prop] = value
+            extra_info[f"org_property_{prop}"] = value
+
+        # Add tags if present
+        if hasattr(node, 'tags') and node.tags:
+            extra_info["org_tags"] = list(node.tags)
+
         return Document(text=text, extra_info=extra_info)
 
     @no_type_check
-    def load_data_from_node(self, node: OrgNode) -> list[Document]:
+    def load_data_from_node(self, node: OrgNode, parent_extra_info) -> list[Document]:
+        """Recursively process all nodes, creating one document per entry."""
         documents: list[Document] = []
-        # jww (2025-06-13): Traverse the org hierarchy here, so that the
-        # documents are presented as a tree.
-        extra_info = {}  # jww (2025-06-13): NYI
-        for node in list(node):
-            if node.level <= self.split_depth:
-                documents.append(self.node_to_document(node, extra_info))
+
+        # Process current node
+        doc = self.node_to_document(node, parent_extra_info)
+        if doc is not None:
+            documents.append(doc)
+
+        # Recursively process children
+        for child in node.children:
+            documents.extend(self.load_data_from_node(child, parent_extra_info))
+
         return documents
 
     @no_type_check
     def load_data(self, file, extra_info):
-        """Parse file into different documents based on root depth."""
+        """Parse file into separate documents for each org entry."""
         from orgparse import load
 
         org_content = load(file)
@@ -1029,12 +1050,12 @@ class OrgReader(BaseReader):
         extra_info = extra_info or {}
         extra_info["filename"] = org_content.env.filename
 
-        # In orgparse, list(org_content) ALL the nodes in the file So we use
-        # this to process the nodes below the split_depth as separate
-        # documents and skip the rest. This means at a split_depth of 2, we
-        # make documents from nodes at levels 0 (whole file), 1, and 2. The
-        # text will be present in multiple documents!
-        return self.load_data_from_node(org_content)
+        # Process all entries, creating one document per entry with only body text
+        documents = []
+        for node in org_content.children:
+            documents.extend(self.load_data_from_node(node, extra_info))
+
+        return documents
 
 
 # Embeddings
