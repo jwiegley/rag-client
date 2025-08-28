@@ -830,6 +830,146 @@ class Config(YAMLWizard):
 # Readers
 
 
+class MailParser(BaseReader):
+    """MailParser
+
+    Extract text from .eml email files.
+    Records only From, Date, Subject headers and plain text body.
+    Ignores other headers, HTML parts, and attachments.
+    """
+
+    def load_data(self, file, extra_info: dict[str, Any] | None = None) -> list[Document]:
+        """Parse .eml file and extract essential content for indexing."""
+        import email
+        from email import policy
+        from email.parser import BytesParser
+        from datetime import datetime
+
+        documents: list[Document] = []
+        extra_info = extra_info or {}
+
+        # Parse the email file
+        with open(file, 'rb') as f:
+            msg = BytesParser(policy=policy.default).parse(f)
+
+        # Extract essential headers
+        from_header = msg.get('From', '')
+        date_header = msg.get('Date', '')
+        subject_header = msg.get('Subject', '')
+
+        # Build metadata
+        doc_extra_info = deepcopy(extra_info)
+        doc_extra_info['email_from'] = from_header
+        doc_extra_info['email_date'] = date_header
+        doc_extra_info['email_subject'] = subject_header
+        doc_extra_info['filename'] = str(file)
+
+        # Try to parse date into a more usable format
+        if date_header:
+            try:
+                from email.utils import parsedate_to_datetime
+                parsed_date = parsedate_to_datetime(date_header)
+                doc_extra_info['email_date_parsed'] = parsed_date.isoformat()
+            except Exception:
+                # If parsing fails, keep the original string
+                pass
+
+        # Extract plain text body
+        text_parts = []
+
+        # Add subject as the first line of content (helps with context)
+        if subject_header:
+            text_parts.append(f"Subject: {subject_header}")
+            text_parts.append("")  # Empty line after subject
+
+        # Extract text body
+        text_body = self._extract_text_body(msg)
+        if text_body:
+            text_parts.append(text_body)
+
+        # Only create a document if we have content
+        if text_parts:
+            text = "\n".join(text_parts)
+            documents.append(Document(text=text, extra_info=doc_extra_info))
+
+        return documents
+
+    def _extract_text_body(self, msg) -> str:
+        """Extract plain text body from email message."""
+        text_parts = []
+
+        if msg.is_multipart():
+            # Walk through all parts
+            for part in msg.walk():
+                # Skip non-text parts and attachments
+                content_type = part.get_content_type()
+                content_disposition = str(part.get("Content-Disposition", ""))
+
+                # Skip attachments
+                if "attachment" in content_disposition:
+                    continue
+
+                # Process only plain text parts
+                if content_type == "text/plain":
+                    try:
+                        # Decode the text
+                        charset = part.get_content_charset() or 'utf-8'
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            text = payload.decode(charset, errors='replace')
+                            # Clean up the text
+                            text = self._clean_email_text(text)
+                            if text:
+                                text_parts.append(text)
+                    except Exception:
+                        # Skip parts that can't be decoded
+                        continue
+        else:
+            # Single part message
+            content_type = msg.get_content_type()
+            if content_type == "text/plain":
+                try:
+                    charset = msg.get_content_charset() or 'utf-8'
+                    payload = msg.get_payload(decode=True)
+                    if payload:
+                        text = payload.decode(charset, errors='replace')
+                        text = self._clean_email_text(text)
+                        if text:
+                            text_parts.append(text)
+                except Exception:
+                    pass
+
+        return "\n".join(text_parts)
+
+    def _clean_email_text(self, text: str) -> str:
+        """Clean email text by removing excessive whitespace and quoted content."""
+        if not text:
+            return ""
+
+        lines = text.split('\n')
+        cleaned_lines = []
+
+        for line in lines:
+            # Remove trailing whitespace
+            line = line.rstrip()
+
+            # Optional: Skip quoted lines (lines starting with >)
+            # Uncomment if you want to exclude quoted replies
+            # if line.startswith('>'):
+            #     continue
+
+            cleaned_lines.append(line)
+
+        # Join lines and remove excessive blank lines
+        text = '\n'.join(cleaned_lines)
+
+        # Replace multiple consecutive newlines with double newline
+        import re
+        text = re.sub(r'\n{3,}', '\n\n', text)
+
+        return text.strip()
+
+
 @cache
 @no_type_check
 def get_text_from_org_node(current_node: OrgNode, format: str = "plain"):
@@ -1460,6 +1600,7 @@ class RAGWorkflow:
     ) -> Iterable[Document]:
         file_extractor: dict[str, BaseReader] = {
             ".org": OrgReader(),
+            ".eml": MailParser(),
         }
         return SimpleDirectoryReader(
             input_files=input_files,
