@@ -1,0 +1,93 @@
+{
+	"meta": {
+		"generatedAt": "2025-08-29T18:09:20.355Z",
+		"tasksAnalyzed": 10,
+		"totalTasks": 10,
+		"analysisCount": 10,
+		"thresholdScore": 5,
+		"projectName": "Taskmaster",
+		"usedResearch": true
+	},
+	"complexityAnalysis": [
+		{
+			"taskId": 1,
+			"taskTitle": "Analyze and Document Current Architecture",
+			"complexityScore": 4,
+			"recommendedSubtasks": 8,
+			"expansionPrompt": "Break down the architecture analysis into specific documentation tasks: 1) Map all Python module dependencies and create import graph for main.py, rag.py, api.py, chat.py, 2) Document the 60+ configuration classes using YAMLWizard and their relationships, 3) Catalog all 36 llama-index dependencies and their usage patterns, 4) Document the RAGWorkflow dataclass and its core methods, 5) Map all provider implementations (embedding/LLM), 6) Identify code duplication between provider classes, 7) Document public API endpoints and CLI commands, 8) Create architectural diagram showing data flow",
+			"reasoning": "Medium complexity - codebase is ~3700 LOC across 5 main files with 60+ configuration classes and extensive llama-index integration. Well-structured but uses dataclass-wizard heavily. Analysis is straightforward but documenting all relationships will be time-consuming."
+		},
+		{
+			"taskId": 2,
+			"taskTitle": "Create Project Package Structure",
+			"complexityScore": 6,
+			"recommendedSubtasks": 10,
+			"expansionPrompt": "Implement the package restructuring in phases: 1) Create new package directory structure with all __init__.py files, 2) Extract and move configuration classes from rag.py to config/models.py (42 YAMLWizard classes), 3) Move embedding provider logic to embeddings/providers.py, 4) Move LLM provider logic to llm/providers.py, 5) Extract RAGWorkflow core logic to core/workflow.py, 6) Move storage-related code to storage modules, 7) Relocate API server code to api/server.py, 8) Move CLI command implementations to cli/commands.py, 9) Update all import statements across the codebase, 10) Verify all tests and commands still work",
+			"reasoning": "High complexity - requires moving 3700+ lines of code across multiple new modules while preserving functionality. The rag.py file alone is 2500+ lines and contains mixed concerns that need careful separation."
+		},
+		{
+			"taskId": 3,
+			"taskTitle": "Refactor Configuration Management",
+			"complexityScore": 7,
+			"recommendedSubtasks": 12,
+			"expansionPrompt": "Replace dataclass-wizard with Pydantic models: 1) Create base Pydantic models for core config types, 2) Convert 6 embedding config classes (HuggingFace, Ollama, OpenAI, etc.), 3) Convert 9 LLM config classes (Ollama, OpenAI, Perplexity, etc.), 4) Convert 5 chunking/splitting config classes, 5) Convert 4 extractor config classes, 6) Convert evaluator and query engine configs, 7) Implement proper validation rules and field constraints, 8) Create config loader with YAML support and validation, 9) Implement config merging and defaults logic, 10) Add comprehensive error messages for validation failures, 11) Migrate existing YAML files to new format, 12) Update all config instantiation code",
+			"reasoning": "High complexity - 42+ configuration classes need conversion from dataclass-wizard to Pydantic with proper validation. Requires careful handling of inheritance patterns and maintaining backward compatibility with existing YAML files."
+		},
+		{
+			"taskId": 4,
+			"taskTitle": "Implement Proper Error Handling",
+			"complexityScore": 5,
+			"recommendedSubtasks": 8,
+			"expansionPrompt": "Establish comprehensive error handling: 1) Create custom exception hierarchy in exceptions.py, 2) Replace generic exceptions in embedding provider instantiation, 3) Add error handling for LLM provider failures, 4) Implement proper database connection error handling with context managers, 5) Add error handling for document ingestion and parsing failures, 6) Handle API request errors with proper HTTP status codes, 7) Implement retry logic for transient failures, 8) Add error logging with appropriate context",
+			"reasoning": "Medium complexity - current code has minimal error handling. Need to add structured exceptions throughout ~3700 LOC while ensuring proper resource cleanup and informative error messages."
+		},
+		{
+			"taskId": 5,
+			"taskTitle": "Standardize Logging Implementation",
+			"complexityScore": 3,
+			"recommendedSubtasks": 6,
+			"expansionPrompt": "Implement structured logging across the codebase: 1) Create logging configuration module with setup_logging function, 2) Replace 37 print statements with appropriate log levels, 3) Add module-specific loggers to main.py, rag.py, api.py, chat.py, 4) Implement request/response logging for API endpoints, 5) Add performance logging for indexing and retrieval operations, 6) Configure log rotation and file output options",
+			"reasoning": "Low-medium complexity - straightforward replacement of print statements and adding proper logging. Current codebase has 37 print/logging statements that need standardization."
+		},
+		{
+			"taskId": 6,
+			"taskTitle": "Add Comprehensive Type Hints",
+			"complexityScore": 6,
+			"recommendedSubtasks": 10,
+			"expansionPrompt": "Add type hints systematically: 1) Define type aliases for common types (DocumentList, Embedding, etc.), 2) Add type hints to RAGWorkflow class and methods, 3) Type hint all 42 configuration classes and their fields, 4) Add types to embedding provider methods, 5) Type hint LLM provider interfaces, 6) Add types to API endpoint handlers and models, 7) Type hint CLI command functions and arguments, 8) Create Protocol classes for provider interfaces, 9) Add return type hints to all functions, 10) Run mypy in strict mode and fix all errors",
+			"reasoning": "Medium-high complexity - need to add type hints to 3700+ lines of code with complex llama-index types. Many functions use Any or have missing type information that needs proper typing."
+		},
+		{
+			"taskId": 7,
+			"taskTitle": "Refactor Provider Factory Pattern",
+			"complexityScore": 6,
+			"recommendedSubtasks": 9,
+			"expansionPrompt": "Implement factory pattern for providers: 1) Create base ProviderRegistry generic class, 2) Implement embedding provider registry with registration decorator, 3) Refactor 6 embedding providers to use factory pattern, 4) Implement LLM provider registry, 5) Refactor 9 LLM providers to use factory pattern, 6) Create unified provider creation interface, 7) Remove duplicate provider instantiation code, 8) Add provider discovery and listing capabilities, 9) Implement provider validation and error handling",
+			"reasoning": "Medium-high complexity - need to refactor 15+ provider implementations to use consistent factory pattern. Current code has significant duplication in provider instantiation logic."
+		},
+		{
+			"taskId": 8,
+			"taskTitle": "Optimize Import Structure",
+			"complexityScore": 2,
+			"recommendedSubtasks": 5,
+			"expansionPrompt": "Clean up and organize imports: 1) Install and configure isort with black profile, 2) Sort imports in all Python files according to PEP 8, 3) Remove unused imports identified by pylint, 4) Resolve any circular import issues after restructuring, 5) Create import guidelines documentation",
+			"reasoning": "Low complexity - mostly automated with isort. Current codebase has 117 import statements that need organizing. Main challenge is resolving any circular dependencies after restructuring."
+		},
+		{
+			"taskId": 9,
+			"taskTitle": "Enhance Documentation and Docstrings",
+			"complexityScore": 4,
+			"recommendedSubtasks": 7,
+			"expansionPrompt": "Add comprehensive documentation: 1) Write Google-style docstrings for RAGWorkflow class methods, 2) Document all public API endpoints with examples, 3) Add docstrings to CLI command functions, 4) Document configuration classes and their fields, 5) Create docstrings for provider implementations, 6) Set up Sphinx documentation generation, 7) Write usage examples for main workflows",
+			"reasoning": "Medium complexity - need to document ~60 classes and numerous functions. Current code lacks docstrings. Straightforward but time-consuming to write quality documentation."
+		},
+		{
+			"taskId": 10,
+			"taskTitle": "Final Testing and Validation",
+			"complexityScore": 5,
+			"recommendedSubtasks": 8,
+			"expansionPrompt": "Comprehensive testing and validation: 1) Create test suite for refactoring parity validation, 2) Test all CLI commands (index, search, query, chat, serve), 3) Validate API endpoint responses match original, 4) Test YAML configuration loading and compatibility, 5) Run pylint and achieve score > 8.0, 6) Run mypy in strict mode and fix all type errors, 7) Execute query-test.sh validation script, 8) Perform performance benchmarking to ensure no regression",
+			"reasoning": "Medium complexity - need to validate complete functional parity across all refactored components. Requires comprehensive testing of CLI, API, and configuration systems."
+		}
+	]
+}

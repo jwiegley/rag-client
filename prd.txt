@@ -1,0 +1,7 @@
+Ultrathink. Refactor the code in this project so that follows standard Python
+practices, and uses the best-in-class Python libraries for the problems it
+solves. Use the python-pro to help guide your reasoning. Note that no
+functionality should be removed in this refactoring, it should only be
+reorganized. I am not looking to change the behavior of the program, or add or
+remove anything. Anything that worked before the refactoring, should work
+after. See @CLAUDE.md for notes on how to build and test the application.

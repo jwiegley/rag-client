@@ -73,3 +73,7 @@ The project includes Nix flake support for reproducible development environments
 - `flake.nix`: Defines development shell and package build
 - `default.nix`: Package derivation
 - Provides isolated Python environment with system dependencies
+
+## Task Master AI Instructions
+**Import Task Master's development workflow commands and guidelines, treat as if import is in the main CLAUDE.md file.**
+@./.taskmaster/CLAUDE.md

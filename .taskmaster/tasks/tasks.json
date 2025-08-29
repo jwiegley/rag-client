@@ -1,0 +1,1106 @@
+{
+  "master": {
+    "tasks": [
+      {
+        "id": 1,
+        "title": "Analyze and Document Current Architecture",
+        "description": "Perform comprehensive analysis of existing codebase structure, dependencies, and patterns to establish baseline for refactoring",
+        "details": "Use tools to analyze the existing codebase structure:\n1. Map current module dependencies and identify circular imports\n2. Document existing class hierarchies and relationships\n3. Identify code duplication patterns across modules\n4. Catalog all third-party library usage and versions\n5. Document current configuration flow and data structures\n6. Create dependency graph for main.py, rag.py, api.py, chat.py\n7. Identify non-Pythonic patterns and anti-patterns\n8. Document all public APIs and their contracts",
+        "testStrategy": "Verify analysis completeness by:\n1. Ensure all Python files are documented\n2. Check dependency graph covers all imports\n3. Validate identified patterns against PEP 8 and PEP 20\n4. Cross-reference with existing test coverage",
+        "priority": "high",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Map Python Module Dependencies and Create Import Graph",
+            "description": "Analyze and document all import statements across main.py, rag.py, api.py, and chat.py to create comprehensive dependency graph",
+            "dependencies": [],
+            "details": "Use ast module to parse Python files and extract all imports. Create visual dependency graph using graphviz or networkx. Document circular dependencies if found. Generate both textual and visual representations of the import structure. Include analysis of import depth and module coupling metrics.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Document Configuration Classes and YAMLWizard Usage",
+            "description": "Catalog and document all 60+ configuration dataclasses that use YAMLWizard, including their inheritance relationships and usage patterns",
+            "dependencies": [],
+            "details": "Extract all classes inheriting from YAMLWizard. Document each configuration class with its attributes, default values, and validation rules. Create class hierarchy diagram showing inheritance relationships. Document YAML structure mapping to Python classes. Include examples of each configuration type from existing YAML files.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Catalog llama-index Dependencies and Usage Patterns",
+            "description": "Document all 36 llama-index dependencies, their versions, and specific usage patterns throughout the codebase",
+            "dependencies": [],
+            "details": "Parse requirements.txt for llama-index packages. Map each dependency to its usage locations in code. Document which llama-index components are used (VectorStoreIndex, Document, NodeParser, etc.). Create matrix showing feature-to-dependency mapping. Identify potential version conflicts or redundant dependencies.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 4,
+            "title": "Document RAGWorkflow Class Architecture",
+            "description": "Create comprehensive documentation of the RAGWorkflow dataclass including all methods, attributes, and interaction patterns",
+            "dependencies": [
+              "1.1"
+            ],
+            "details": "Document RAGWorkflow initialization parameters and defaults. Map all public and private methods with their signatures. Document the workflow lifecycle (index, search, query, chat). Create sequence diagrams for main operations. Document integration points with storage backends (ephemeral vs persistent).",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 5,
+            "title": "Map Provider Implementations for Embeddings and LLMs",
+            "description": "Document all embedding and LLM provider implementations including their configurations and initialization patterns",
+            "dependencies": [
+              "1.2"
+            ],
+            "details": "Identify all embedding providers (HuggingFace, OpenAI, Ollama, LiteLLM). Document LLM providers (OpenAI, Ollama, Perplexity, LMStudio, OpenRouter). Map provider-specific configuration requirements. Document initialization code patterns for each provider. Create compatibility matrix showing which providers work with which features.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 6,
+            "title": "Identify Code Duplication and Anti-patterns",
+            "description": "Analyze codebase for duplicated code blocks, non-Pythonic patterns, and architectural anti-patterns",
+            "dependencies": [
+              "1.4",
+              "1.5"
+            ],
+            "details": "Use tools like pylint and flake8 to identify code issues. Find duplicated code blocks across provider implementations. Document violations of PEP 8 and PEP 20 principles. Identify areas with high cyclomatic complexity. Document inconsistent error handling patterns. Create prioritized list of refactoring opportunities.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 7,
+            "title": "Document Public APIs and CLI Commands",
+            "description": "Create comprehensive documentation of all public API endpoints, CLI commands, and their contracts",
+            "dependencies": [
+              "1.1"
+            ],
+            "details": "Document FastAPI endpoints in api.py with request/response schemas. Map all CLI commands (index, search, query, chat, serve) with their arguments. Document expected input/output formats for each interface. Include example usage for each command and endpoint. Document error responses and status codes.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 8,
+            "title": "Create Architectural Diagrams and Data Flow Documentation",
+            "description": "Generate visual representations of system architecture including component diagrams and data flow through the RAG pipeline",
+            "dependencies": [
+              "1.1",
+              "1.2",
+              "1.3",
+              "1.4",
+              "1.5",
+              "1.6",
+              "1.7"
+            ],
+            "details": "Create high-level system architecture diagram. Document data flow from document ingestion through retrieval to response generation. Create component interaction diagrams. Document storage layer interactions (cache vs database). Include sequence diagrams for main workflows. Generate UML class diagrams for core components.",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Create Project Package Structure",
+        "description": "Establish proper Python package structure with logical module organization following best practices",
+        "details": "Restructure project into proper Python package:\n```python\nrag_client/\n├── __init__.py\n├── core/\n│   ├── __init__.py\n│   ├── workflow.py  # RAGWorkflow class\n│   ├── retrieval.py  # Retriever implementations\n│   └── indexing.py  # Index management\n├── config/\n│   ├── __init__.py\n│   ├── models.py  # Config dataclasses\n│   └── loader.py  # YAML loading logic\n├── embeddings/\n│   ├── __init__.py\n│   └── providers.py  # Embedding provider implementations\n├── llm/\n│   ├── __init__.py\n│   └── providers.py  # LLM provider implementations\n├── storage/\n│   ├── __init__.py\n│   ├── ephemeral.py\n│   └── postgres.py\n├── api/\n│   ├── __init__.py\n│   └── server.py  # FastAPI implementation\n├── cli/\n│   ├── __init__.py\n│   └── commands.py  # CLI command implementations\n└── utils/\n    ├── __init__.py\n    └── helpers.py\n```\nMove existing code to appropriate modules without changing functionality",
+        "testStrategy": "Validate restructuring by:\n1. Run existing test suite to ensure no breakage\n2. Verify all imports resolve correctly\n3. Check that CLI commands work identically\n4. Ensure API endpoints respond as before",
+        "priority": "high",
+        "dependencies": [
+          1
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create base package directory structure",
+            "description": "Create the rag_client package directory with all subdirectories and __init__.py files",
+            "dependencies": [],
+            "details": "Create the complete directory structure:\n- rag_client/ (main package)\n- rag_client/core/, config/, embeddings/, llm/, storage/, api/, cli/, utils/\n- Add empty __init__.py files to all directories to make them Python packages\n- Ensure proper permissions and structure",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Extract and move configuration models",
+            "description": "Move all 42 YAMLWizard configuration classes from rag.py to config/models.py",
+            "dependencies": [
+              "2.1"
+            ],
+            "details": "Extract configuration classes from rag.py:\n- Move all YAMLWizard dataclasses (RAGConfig, EmbeddingConfig, LLMConfig, etc.)\n- Move related imports (YAMLWizard, dataclass, Optional, etc.)\n- Preserve class hierarchy and relationships\n- Keep all default values and validation logic intact",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Create configuration loader module",
+            "description": "Implement YAML loading logic in config/loader.py",
+            "dependencies": [
+              "2.2"
+            ],
+            "details": "Create loader functionality:\n- Move load_config() function from rag.py\n- Implement config file resolution logic\n- Add validation and error handling for missing/invalid configs\n- Ensure backward compatibility with existing YAML files",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 4,
+            "title": "Move embedding provider implementations",
+            "description": "Extract all embedding provider logic to embeddings/providers.py",
+            "dependencies": [
+              "2.1"
+            ],
+            "details": "Move embedding provider code:\n- Extract get_embedding_model() function\n- Move all provider-specific logic (HuggingFace, OpenAI, Ollama, LiteLLM, etc.)\n- Preserve provider configuration handling\n- Maintain compatibility with existing provider settings",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 5,
+            "title": "Move LLM provider implementations",
+            "description": "Extract all LLM provider logic to llm/providers.py",
+            "dependencies": [
+              "2.1"
+            ],
+            "details": "Move LLM provider code:\n- Extract get_llm() function and related logic\n- Move provider-specific implementations (OpenAI, Ollama, Perplexity, etc.)\n- Preserve API key handling and base URL configuration\n- Maintain all provider-specific parameters",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 6,
+            "title": "Extract RAGWorkflow to core module",
+            "description": "Move RAGWorkflow class and related core logic to core/workflow.py",
+            "dependencies": [
+              "2.2",
+              "2.3",
+              "2.4",
+              "2.5"
+            ],
+            "details": "Extract core workflow:\n- Move entire RAGWorkflow class (500+ lines)\n- Move related helper methods and utilities\n- Extract retrieval logic to core/retrieval.py\n- Move indexing logic to core/indexing.py\n- Preserve all workflow methods and functionality",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 7,
+            "title": "Organize storage modules",
+            "description": "Move storage-related code to appropriate storage submodules",
+            "dependencies": [
+              "2.1",
+              "2.6"
+            ],
+            "details": "Organize storage implementations:\n- Move ephemeral storage logic to storage/ephemeral.py\n- Move Postgres/pgvector code to storage/postgres.py\n- Extract vector store initialization and management\n- Preserve database connection handling and error recovery",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 8,
+            "title": "Relocate API server implementation",
+            "description": "Move FastAPI server code from api.py to api/server.py",
+            "dependencies": [
+              "2.1",
+              "2.6"
+            ],
+            "details": "Move API implementation:\n- Transfer entire api.py content to api/server.py\n- Preserve all endpoint definitions and request/response models\n- Maintain OpenAI compatibility layer\n- Keep streaming response handling intact",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 9,
+            "title": "Move CLI command implementations",
+            "description": "Extract CLI command logic from main.py to cli/commands.py",
+            "dependencies": [
+              "2.1",
+              "2.6",
+              "2.8"
+            ],
+            "details": "Organize CLI commands:\n- Move command functions (index, search, query, chat, serve)\n- Keep argument parsing in main.py\n- Create command dispatcher in cli/commands.py\n- Preserve all command-line options and behavior",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 10,
+            "title": "Update imports and verify functionality",
+            "description": "Update all import statements across the codebase and verify everything works",
+            "dependencies": [
+              "2.2",
+              "2.3",
+              "2.4",
+              "2.5",
+              "2.6",
+              "2.7",
+              "2.8",
+              "2.9"
+            ],
+            "details": "Final integration:\n- Update imports in main.py to use new package structure\n- Fix all cross-module imports\n- Update relative imports within modules\n- Run query-test.sh to verify functionality\n- Test all CLI commands\n- Verify API server starts correctly\n- Ensure no circular import issues",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Refactor Configuration Management",
+        "description": "Consolidate and standardize configuration handling using Pydantic models and proper validation",
+        "details": "Replace dataclass-wizard with Pydantic for configuration:\n```python\nfrom pydantic import BaseModel, Field, validator\nfrom typing import Optional, Union, Literal\n\nclass EmbeddingConfig(BaseModel):\n    provider: Literal['huggingface', 'openai', 'ollama']\n    model: str\n    api_key: Optional[str] = None\n    base_url: Optional[str] = None\n    \n    class Config:\n        extra = 'forbid'\n        \nclass ChunkingConfig(BaseModel):\n    strategy: Literal['sentence', 'semantic', 'code']\n    chunk_size: int = Field(default=512, ge=100, le=4096)\n    chunk_overlap: int = Field(default=20, ge=0)\n    \nclass RAGConfig(BaseModel):\n    embedding: EmbeddingConfig\n    llm: LLMConfig\n    chunking: ChunkingConfig\n    storage: StorageConfig\n    retrieval: RetrievalConfig\n```\nImplement YAML loading with proper validation and error messages",
+        "testStrategy": "Test configuration refactoring:\n1. Verify all existing YAML configs load correctly\n2. Test validation catches invalid configurations\n3. Ensure default values apply correctly\n4. Validate config merging and override behavior",
+        "priority": "high",
+        "dependencies": [
+          2
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create base Pydantic configuration models",
+            "description": "Define the foundational Pydantic BaseModel classes with common configuration patterns, validators, and Config settings that will be inherited by all specific configuration models",
+            "dependencies": [],
+            "details": "Create rag_client/config/base.py with BaseConfig class including common validators for API keys, URLs, model names. Define Config class with extra='forbid', validate_assignment=True, and use_enum_values=True. Implement common field types like SecretStr for API keys and HttpUrl for endpoints.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Convert HuggingFace embedding configuration",
+            "description": "Migrate HuggingFaceEmbeddingConfig from dataclass-wizard to Pydantic with proper field validation and type constraints",
+            "dependencies": [
+              "3.1"
+            ],
+            "details": "Convert existing HuggingFace embedding configuration including model_name, trust_remote_code, tokenizer_name, embed_batch_size, and device fields. Add validators for model existence, batch size limits (1-1000), and device validation (cuda/cpu/mps).",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Convert OpenAI and Ollama embedding configurations",
+            "description": "Migrate OpenAI and Ollama embedding configurations to Pydantic models with API key validation and base URL handling",
+            "dependencies": [
+              "3.1"
+            ],
+            "details": "Convert OpenAIEmbeddingConfig with api_key as SecretStr, model validation against known models list, and dimensions field. Convert OllamaEmbeddingConfig with base_url as HttpUrl, model_name validation, and request_timeout constraints.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 4,
+            "title": "Convert remaining embedding providers",
+            "description": "Migrate LiteLLM, Voyage, and Cohere embedding configurations to Pydantic models",
+            "dependencies": [
+              "3.1"
+            ],
+            "details": "Convert LiteLLMEmbeddingConfig, VoyageEmbeddingConfig, and CohereEmbeddingConfig classes. Implement provider-specific validators for model names, API endpoints, and authentication tokens. Ensure backward compatibility with existing YAML structures.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 5,
+            "title": "Convert core LLM configurations",
+            "description": "Migrate Ollama, OpenAI, and Perplexity LLM configurations to Pydantic with temperature, max_tokens, and streaming validation",
+            "dependencies": [
+              "3.1"
+            ],
+            "details": "Convert OllamaLLMConfig, OpenAILLMConfig, and PerplexityLLMConfig with validators for temperature (0.0-2.0), max_tokens (1-context_limit), top_p (0.0-1.0), and response format validation. Include system prompt handling and streaming configuration.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 6,
+            "title": "Convert specialized LLM providers",
+            "description": "Migrate LMStudio, OpenRouter, Groq, TogetherAI, DeepSeek, and Anthropic LLM configurations",
+            "dependencies": [
+              "3.1",
+              "3.5"
+            ],
+            "details": "Convert remaining 6 LLM provider configurations with provider-specific validation rules. Handle special fields like OpenRouter's route selection, Groq's speed optimization flags, and Anthropic's Claude-specific parameters. Maintain compatibility with existing provider initialization code.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 7,
+            "title": "Convert chunking and splitting configurations",
+            "description": "Migrate all 5 chunking strategy configurations including sentence, semantic, code, markdown, and hybrid splitters",
+            "dependencies": [
+              "3.1"
+            ],
+            "details": "Convert SentenceSplitterConfig, SemanticSplitterConfig, CodeSplitterConfig, MarkdownSplitterConfig, and HybridSplitterConfig. Implement validators for chunk_size (100-4096), chunk_overlap (0-chunk_size/2), and strategy-specific parameters like language detection for code splitter.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 8,
+            "title": "Convert extractor configurations",
+            "description": "Migrate 4 extractor configurations for entity, keyword, summary, and QA extraction",
+            "dependencies": [
+              "3.1"
+            ],
+            "details": "Convert EntityExtractorConfig, KeywordExtractorConfig, SummaryExtractorConfig, and QAExtractorConfig classes. Add validators for extraction parameters like max_entities, keyword_count limits, summary_length constraints, and QA generation settings.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 9,
+            "title": "Implement YAML configuration loader",
+            "description": "Create robust YAML loader with Pydantic validation, environment variable substitution, and comprehensive error reporting",
+            "dependencies": [
+              "3.1",
+              "3.2",
+              "3.3",
+              "3.4",
+              "3.5",
+              "3.6",
+              "3.7",
+              "3.8"
+            ],
+            "details": "Implement ConfigLoader class in rag_client/config/loader.py with load_yaml(), validate_config(), and merge_configs() methods. Support ${ENV_VAR} substitution, !include directives for modular configs, and detailed validation error messages showing exact YAML line numbers and field paths.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 10,
+            "title": "Create configuration migration utilities",
+            "description": "Develop utilities to automatically migrate existing YAML files from dataclass-wizard format to new Pydantic structure",
+            "dependencies": [
+              "3.9"
+            ],
+            "details": "Create migration script that reads old YAML format, transforms field names and structures as needed, validates against new Pydantic models, and writes updated YAML. Include dry-run mode, backup creation, and migration report generation. Handle special cases like nested configs and conditional fields.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 11,
+            "title": "Update configuration instantiation code",
+            "description": "Refactor all code that instantiates configuration objects to use new Pydantic models and validation",
+            "dependencies": [
+              "3.9",
+              "3.10"
+            ],
+            "details": "Update main.py, rag.py, api.py, and all provider initialization code to use new Pydantic configs. Replace dataclass_wizard.fromdict() calls with Pydantic model validation. Update config access patterns from dict-style to attribute access. Ensure proper error handling for validation failures.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 12,
+            "title": "Add configuration validation tests",
+            "description": "Create comprehensive test suite for all Pydantic configuration models and validation logic",
+            "dependencies": [
+              "3.11"
+            ],
+            "details": "Write pytest tests for each configuration model testing valid/invalid inputs, field validation rules, default value application, and config merging. Test YAML loading with malformed files, missing required fields, and type mismatches. Verify error messages are clear and actionable. Test environment variable substitution and include directives.",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Implement Proper Error Handling",
+        "description": "Establish consistent error handling patterns with custom exceptions and proper error propagation",
+        "details": "Create custom exception hierarchy and consistent error handling:\n```python\n# rag_client/exceptions.py\nclass RAGClientError(Exception):\n    \"\"\"Base exception for all RAG client errors\"\"\"\n    pass\n\nclass ConfigurationError(RAGClientError):\n    \"\"\"Configuration-related errors\"\"\"\n    pass\n\nclass IndexingError(RAGClientError):\n    \"\"\"Document indexing errors\"\"\"\n    pass\n\nclass RetrievalError(RAGClientError):\n    \"\"\"Query retrieval errors\"\"\"\n    pass\n\nclass StorageError(RAGClientError):\n    \"\"\"Storage backend errors\"\"\"\n    pass\n\n# Implement context managers for resource management\nfrom contextlib import contextmanager\n\n@contextmanager\ndef postgres_connection(config: PostgresConfig):\n    conn = None\n    try:\n        conn = psycopg2.connect(**config.dict())\n        yield conn\n    except psycopg2.Error as e:\n        raise StorageError(f\"Database error: {e}\")\n    finally:\n        if conn:\n            conn.close()\n```\nReplace all generic exceptions with specific ones",
+        "testStrategy": "Validate error handling:\n1. Test each exception type is raised appropriately\n2. Verify error messages are informative\n3. Check resource cleanup in error conditions\n4. Test error propagation through call stack",
+        "priority": "medium",
+        "dependencies": [
+          2
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create Custom Exception Hierarchy",
+            "description": "Design and implement the base exception classes in exceptions.py with proper inheritance structure",
+            "dependencies": [],
+            "details": "Create rag_client/exceptions.py with RAGClientError as base class and specialized exceptions: ConfigurationError, IndexingError, RetrievalError, StorageError, ProviderError, DocumentProcessingError. Each exception should have meaningful __str__ and __repr__ methods and support optional error codes and context data.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Replace Generic Exceptions in Embedding Providers",
+            "description": "Update all embedding provider implementations to use custom exceptions instead of generic ones",
+            "dependencies": [
+              "4.1"
+            ],
+            "details": "Refactor get_embeddings() in rag.py to catch provider-specific exceptions and re-raise as ProviderError with context. Update HuggingFace, OpenAI, Ollama, and LiteLLM embedding provider instantiation to handle configuration errors, API errors, and model loading failures with appropriate custom exceptions.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Add Error Handling for LLM Provider Failures",
+            "description": "Implement comprehensive error handling for all LLM provider operations",
+            "dependencies": [
+              "4.1"
+            ],
+            "details": "Update get_llm() function to handle provider initialization failures. Add error handling for API timeouts, rate limits, invalid responses, and model availability issues. Wrap LLM completion calls with try-except blocks that provide meaningful error messages including the provider name, model, and failure reason.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 4,
+            "title": "Implement Database Connection Error Handling",
+            "description": "Create context managers and error handling for Postgres database operations",
+            "dependencies": [
+              "4.1"
+            ],
+            "details": "Implement postgres_connection context manager with proper resource cleanup. Add connection pooling error handling, transaction rollback on failures, and handle pgvector-specific errors. Create database health check mechanism with informative error messages for connection failures, missing extensions, and schema issues.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 5,
+            "title": "Handle Document Ingestion and Parsing Failures",
+            "description": "Add robust error handling for document processing pipeline",
+            "dependencies": [
+              "4.1"
+            ],
+            "details": "Implement error handling in ingest_documents() for file not found, permission errors, unsupported formats, and corrupt files. Add granular error handling for PDF parsing, org-mode parsing, and tree-sitter failures. Create fallback strategies for partial document failures and implement document validation before processing.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 6,
+            "title": "Update API Error Responses with HTTP Status Codes",
+            "description": "Standardize API error responses in api.py with proper HTTP status codes",
+            "dependencies": [
+              "4.1",
+              "4.2",
+              "4.3",
+              "4.4",
+              "4.5"
+            ],
+            "details": "Create error response models using Pydantic for consistent API error format. Map custom exceptions to appropriate HTTP status codes (400 for ConfigurationError, 500 for StorageError, etc.). Implement global exception handler in FastAPI that catches all RAGClientError subclasses and returns structured error responses with correlation IDs.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 7,
+            "title": "Implement Retry Logic for Transient Failures",
+            "description": "Add intelligent retry mechanisms for recoverable errors",
+            "dependencies": [
+              "4.2",
+              "4.3",
+              "4.4"
+            ],
+            "details": "Implement exponential backoff retry decorator for API calls, database operations, and embedding generation. Configure retry policies per operation type with max attempts, backoff factors, and jitter. Add circuit breaker pattern for persistent failures. Include retry attempt information in error messages and logs.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 8,
+            "title": "Add Contextual Error Logging",
+            "description": "Implement comprehensive error logging with appropriate context throughout the application",
+            "dependencies": [
+              "4.1",
+              "4.2",
+              "4.3",
+              "4.4",
+              "4.5",
+              "4.6",
+              "4.7"
+            ],
+            "details": "Add structured logging for all exception handlers with request IDs, user context, and operation details. Implement error aggregation for batch operations. Create error reporting utilities that capture stack traces, input parameters, and system state. Ensure sensitive data is sanitized in error logs while maintaining debugging capability.",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Standardize Logging Implementation",
+        "description": "Implement structured logging with proper log levels and consistent formatting across all modules",
+        "details": "Set up structured logging using Python's logging module:\n```python\n# rag_client/utils/logging.py\nimport logging\nimport sys\nfrom typing import Optional\n\ndef setup_logging(\n    level: str = \"INFO\",\n    log_file: Optional[str] = None,\n    format_string: Optional[str] = None\n) -> None:\n    \"\"\"Configure application-wide logging\"\"\"\n    \n    if format_string is None:\n        format_string = (\n            '%(asctime)s - %(name)s - %(levelname)s - '\n            '%(filename)s:%(lineno)d - %(message)s'\n        )\n    \n    handlers = [logging.StreamHandler(sys.stdout)]\n    if log_file:\n        handlers.append(logging.FileHandler(log_file))\n    \n    logging.basicConfig(\n        level=getattr(logging, level.upper()),\n        format=format_string,\n        handlers=handlers\n    )\n\n# Use module-specific loggers\nlogger = logging.getLogger(__name__)\n\n# Replace print statements with appropriate log levels\nlogger.debug(\"Detailed debug information\")\nlogger.info(\"General information\")\nlogger.warning(\"Warning messages\")\nlogger.error(\"Error messages\")\n```\nRemove all print statements and replace with appropriate logging",
+        "testStrategy": "Test logging implementation:\n1. Verify log levels work correctly\n2. Check log output format consistency\n3. Test file logging when configured\n4. Ensure no print statements remain",
+        "priority": "medium",
+        "dependencies": [
+          2
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create logging configuration module",
+            "description": "Set up the logging utility module with setup_logging function and configuration options",
+            "dependencies": [],
+            "details": "Create rag_client/utils/logging.py with setup_logging function that configures application-wide logging. Include support for console and file handlers, customizable format strings, and different log levels (DEBUG, INFO, WARNING, ERROR, CRITICAL). Add log rotation support using RotatingFileHandler for production use.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Replace print statements in main.py and CLI handling",
+            "description": "Convert all print statements to appropriate logging calls in main.py and command handling code",
+            "dependencies": [
+              "5.1"
+            ],
+            "details": "Replace approximately 10-12 print statements in main.py with logger.info() for normal output, logger.debug() for verbose mode output, and logger.error() for error messages. Initialize module logger at top of file with logger = logging.getLogger(__name__). Ensure CLI output remains user-friendly while adding structured logging.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Implement logging in core RAG workflow modules",
+            "description": "Add structured logging to rag.py including indexing and retrieval operations",
+            "dependencies": [
+              "5.1"
+            ],
+            "details": "Replace print statements in rag.py (approximately 15-18 occurrences) with appropriate log levels. Add performance logging for indexing operations (document count, processing time), retrieval operations (query time, result count), and embedding generation. Use logger.debug() for detailed workflow steps, logger.info() for major operations, and logger.warning() for potential issues.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 4,
+            "title": "Add API request/response logging",
+            "description": "Implement comprehensive logging for FastAPI endpoints in api.py",
+            "dependencies": [
+              "5.1"
+            ],
+            "details": "Add request logging middleware to log incoming requests (method, path, headers). Log response status codes and processing times. Add structured logging for chat completions, embeddings endpoints, and error responses. Use logger.info() for successful requests, logger.warning() for client errors (4xx), and logger.error() for server errors (5xx).",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 5,
+            "title": "Configure logging in chat.py and supporting modules",
+            "description": "Add module-specific loggers to chat.py and any remaining modules with print statements",
+            "dependencies": [
+              "5.1"
+            ],
+            "details": "Replace remaining print statements (approximately 7-9) in chat.py and supporting modules. Add debug logging for configuration loading, chat session management, and context retrieval. Ensure sensitive information like API keys are never logged. Add appropriate log levels for different chat operations.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 6,
+            "title": "Add logging configuration to YAML files and test logging setup",
+            "description": "Integrate logging configuration into existing YAML config files and verify all logging works correctly",
+            "dependencies": [
+              "5.1",
+              "5.2",
+              "5.3",
+              "5.4",
+              "5.5"
+            ],
+            "details": "Add logging section to configuration YAML files with options for log level, log file path, and format. Update configuration parser to handle logging settings. Test that all 37 print statements have been replaced, verify log output format consistency, test file logging when configured, and ensure no print statements remain in the codebase. Run the application in various modes to confirm logging works correctly.",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Add Comprehensive Type Hints",
+        "description": "Add complete type hints to all functions, methods, and class attributes following PEP 484",
+        "details": "Add type hints throughout the codebase:\n```python\nfrom typing import (\n    List, Dict, Optional, Union, Tuple, Any,\n    Protocol, TypeVar, Generic, Callable\n)\nfrom typing_extensions import TypeAlias, Literal\n\n# Define type aliases for clarity\nDocumentList: TypeAlias = List[Document]\nEmbedding: TypeAlias = List[float]\nNodeID: TypeAlias = str\n\n# Use protocols for duck typing\nclass Retriever(Protocol):\n    def retrieve(self, query: str, top_k: int = 10) -> List[NodeWithScore]:\n        ...\n\n# Add return type hints\ndef index_documents(\n    documents: DocumentList,\n    config: IndexConfig,\n    storage: Optional[StorageBackend] = None\n) -> VectorStoreIndex:\n    \"\"\"Index documents with specified configuration.\n    \n    Args:\n        documents: List of documents to index\n        config: Indexing configuration\n        storage: Optional storage backend\n        \n    Returns:\n        Created vector store index\n        \n    Raises:\n        IndexingError: If indexing fails\n    \"\"\"\n    pass\n```\nRun mypy to validate type correctness",
+        "testStrategy": "Validate type hints:\n1. Run mypy in strict mode\n2. Ensure no type errors reported\n3. Check IDE type inference works\n4. Verify runtime behavior unchanged",
+        "priority": "medium",
+        "dependencies": [
+          2,
+          3
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Define Core Type Aliases and Import Structure",
+            "description": "Create a central types module with common type aliases (DocumentList, Embedding, NodeID) and organize typing imports",
+            "dependencies": [],
+            "details": "Create types.py module with TypeAlias definitions for frequently used types throughout the codebase. Import typing, typing_extensions, and llama-index types. Define aliases like DocumentList, Embedding, NodeID, ConfigDict, etc.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Add Type Hints to RAGWorkflow Class",
+            "description": "Type hint all methods, attributes, and return values in the RAGWorkflow class in rag.py",
+            "dependencies": [
+              "6.1"
+            ],
+            "details": "Add complete type hints to RAGWorkflow including __init__ parameters, instance attributes, all public and private methods. Focus on index_documents, search, query, and chat methods with proper return types.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Type Hint Configuration Classes",
+            "description": "Add type hints to all 42 configuration dataclasses in chat.py and related config structures",
+            "dependencies": [
+              "6.1"
+            ],
+            "details": "Type hint all fields in configuration dataclasses including ChatConfig, LLMConfig, EmbeddingConfig, DatabaseConfig, ChunkingConfig, and their nested structures. Use Optional, Union, and Literal types where appropriate.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 4,
+            "title": "Create Protocol Classes for Provider Interfaces",
+            "description": "Define Protocol classes for embedding providers, LLM providers, and storage backends to establish clear interfaces",
+            "dependencies": [
+              "6.1"
+            ],
+            "details": "Create protocols like EmbeddingProvider, LLMProvider, StorageBackend, Retriever using typing.Protocol. Define expected method signatures for each provider type to enable duck typing.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 5,
+            "title": "Type Hint Embedding Provider Methods",
+            "description": "Add type hints to all embedding provider implementations (HuggingFace, OpenAI, Ollama, LiteLLM)",
+            "dependencies": [
+              "6.4"
+            ],
+            "details": "Type hint get_embedding_provider function and all provider-specific methods. Include proper return types for embedding generation methods returning List[float] or numpy arrays.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 6,
+            "title": "Type Hint LLM Provider Interfaces",
+            "description": "Add type hints to all LLM provider implementations and the get_llm function",
+            "dependencies": [
+              "6.4"
+            ],
+            "details": "Type hint get_llm function and provider-specific implementations for OpenAI, Ollama, Perplexity, LMStudio, OpenRouter. Include proper types for response objects and streaming callbacks.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 7,
+            "title": "Add Types to API Endpoint Handlers",
+            "description": "Type hint all FastAPI endpoint handlers and Pydantic models in api.py",
+            "dependencies": [
+              "6.1",
+              "6.2"
+            ],
+            "details": "Add type hints to serve_api function, all route handlers (/v1/chat/completions, /v1/embeddings, etc.), request/response models, and middleware functions. Ensure FastAPI can properly validate types.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 8,
+            "title": "Type Hint CLI Command Functions",
+            "description": "Add type hints to all CLI command functions in main.py and argument parsing",
+            "dependencies": [
+              "6.1",
+              "6.2"
+            ],
+            "details": "Type hint main function, all command handlers (cmd_index, cmd_search, cmd_query, cmd_chat, cmd_serve), and argparse namespace objects. Include proper types for command-line arguments.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 9,
+            "title": "Add Return Type Hints and Docstring Types",
+            "description": "Ensure all functions have explicit return type hints and update docstrings with type information",
+            "dependencies": [
+              "6.2",
+              "6.3",
+              "6.5",
+              "6.6",
+              "6.7",
+              "6.8"
+            ],
+            "details": "Review all functions to add -> None, -> str, -> List[Document], etc. return types. Update existing docstrings to include Args and Returns sections with type information matching the hints.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 10,
+            "title": "Run mypy Strict Mode and Fix All Errors",
+            "description": "Configure mypy.ini for strict mode, run type checking, and resolve all type errors",
+            "dependencies": [
+              "6.9"
+            ],
+            "details": "Create mypy.ini with strict settings (no_implicit_optional, warn_return_any, warn_unused_ignores). Run mypy on entire codebase, fix all errors including Any types, missing imports, and incompatible types. Verify IDE type inference works correctly.",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Refactor Provider Factory Pattern",
+        "description": "Implement factory pattern for embedding and LLM provider instantiation to reduce code duplication",
+        "details": "Create provider factories using registry pattern:\n```python\n# rag_client/providers/base.py\nfrom abc import ABC, abstractmethod\nfrom typing import Dict, Type, TypeVar\n\nT = TypeVar('T')\n\nclass ProviderRegistry(Generic[T]):\n    \"\"\"Generic provider registry for factory pattern\"\"\"\n    \n    def __init__(self):\n        self._providers: Dict[str, Type[T]] = {}\n    \n    def register(self, name: str, provider_class: Type[T]) -> None:\n        self._providers[name.lower()] = provider_class\n    \n    def create(self, name: str, **kwargs) -> T:\n        provider_class = self._providers.get(name.lower())\n        if not provider_class:\n            raise ValueError(f\"Unknown provider: {name}\")\n        return provider_class(**kwargs)\n\n# rag_client/embeddings/factory.py\nembedding_registry = ProviderRegistry[BaseEmbedding]()\n\n@embedding_registry.register('huggingface')\nclass HuggingFaceEmbeddingProvider(BaseEmbedding):\n    def __init__(self, model: str, **kwargs):\n        self.embedding = HuggingFaceEmbedding(model_name=model, **kwargs)\n\n@embedding_registry.register('openai')\nclass OpenAIEmbeddingProvider(BaseEmbedding):\n    def __init__(self, model: str, api_key: str, **kwargs):\n        self.embedding = OpenAIEmbedding(model=model, api_key=api_key, **kwargs)\n\ndef create_embedding_provider(config: EmbeddingConfig) -> BaseEmbedding:\n    return embedding_registry.create(config.provider, **config.dict())\n```\nApply same pattern for LLM providers",
+        "testStrategy": "Test factory implementation:\n1. Verify all providers instantiate correctly\n2. Test unknown provider raises appropriate error\n3. Check configuration passes through correctly\n4. Validate provider behavior unchanged",
+        "priority": "medium",
+        "dependencies": [
+          3,
+          4
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create Base Provider Registry Infrastructure",
+            "description": "Implement the generic ProviderRegistry class with registration and creation methods",
+            "dependencies": [],
+            "details": "Create rag_client/providers/base.py with ProviderRegistry[T] generic class. Implement register() method to store provider classes in internal dictionary, create() method to instantiate providers with kwargs, and list() method to return available provider names. Include proper type hints using TypeVar and Generic.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Design Embedding Provider Base Interface",
+            "description": "Define base embedding provider interface and registration decorator",
+            "dependencies": [
+              "7.1"
+            ],
+            "details": "Create BaseEmbeddingProvider abstract class with standardized interface. Implement registration decorator @register_embedding('provider_name') that automatically adds providers to registry. Define common methods like get_embedding_model() and validate_config().",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Refactor HuggingFace and OpenAI Embedding Providers",
+            "description": "Convert HuggingFace and OpenAI embedding providers to use factory pattern",
+            "dependencies": [
+              "7.2"
+            ],
+            "details": "Refactor existing HuggingFaceEmbedding and OpenAIEmbedding classes to inherit from BaseEmbeddingProvider. Apply @register_embedding decorator. Ensure __init__ methods accept standardized config parameters. Maintain backward compatibility with existing functionality.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 4,
+            "title": "Refactor Remaining Embedding Providers",
+            "description": "Convert Ollama, LiteLLM, and other embedding providers to factory pattern",
+            "dependencies": [
+              "7.2",
+              "7.3"
+            ],
+            "details": "Apply factory pattern to OllamaEmbedding, LiteLLMEmbedding, FastEmbedEmbedding, and TogetherEmbedding providers. Ensure consistent parameter handling across all providers. Update import statements and module structure as needed.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 5,
+            "title": "Design LLM Provider Base Interface",
+            "description": "Define base LLM provider interface and registration system",
+            "dependencies": [
+              "7.1"
+            ],
+            "details": "Create BaseLLMProvider abstract class with standardized interface for LLM operations. Implement @register_llm decorator for automatic registration. Define common methods like get_llm_model(), validate_credentials(), and handle_response().",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 6,
+            "title": "Refactor Core LLM Providers",
+            "description": "Convert OpenAI, Ollama, and Perplexity LLM providers to factory pattern",
+            "dependencies": [
+              "7.5"
+            ],
+            "details": "Refactor OpenAI, Ollama, and Perplexity LLM providers to inherit from BaseLLMProvider. Apply @register_llm decorator. Standardize initialization parameters and ensure API key handling is consistent. Maintain all existing functionality.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 7,
+            "title": "Refactor Additional LLM Providers",
+            "description": "Convert remaining LLM providers including LMStudio, OpenRouter, and others",
+            "dependencies": [
+              "7.5",
+              "7.6"
+            ],
+            "details": "Apply factory pattern to LMStudio, OpenRouter, Together, Groq, Anthropic, and any other LLM providers. Ensure consistent error handling and configuration validation across all providers. Update documentation for each provider's specific requirements.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 8,
+            "title": "Create Unified Provider Creation Interface",
+            "description": "Implement high-level factory methods for creating providers from configuration",
+            "dependencies": [
+              "7.4",
+              "7.7"
+            ],
+            "details": "Create create_embedding_provider(config: EmbeddingConfig) and create_llm_provider(config: LLMConfig) functions in rag_client/providers/factory.py. Implement provider discovery with get_available_providers() method. Add provider capability querying with get_provider_info() returning supported features.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 9,
+            "title": "Update Integration Points and Error Handling",
+            "description": "Remove duplicate code and implement comprehensive error handling",
+            "dependencies": [
+              "7.8"
+            ],
+            "details": "Update all files that instantiate providers (rag.py, api.py, main.py) to use new factory methods. Remove duplicate provider instantiation code. Implement ProviderNotFoundError, InvalidProviderConfigError, and ProviderInitializationError custom exceptions. Add validation for required provider-specific parameters. Create unit tests for factory pattern implementation.",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Optimize Import Structure",
+        "description": "Clean up imports, remove unused dependencies, and establish clear import hierarchy",
+        "details": "Organize imports following PEP 8 guidelines:\n```python\n# Standard library imports (alphabetical)\nimport json\nimport logging\nimport os\nfrom pathlib import Path\nfrom typing import List, Optional\n\n# Third-party imports (alphabetical by package)\nimport numpy as np\nimport psycopg2\nfrom fastapi import FastAPI, HTTPException\nfrom llama_index.core import VectorStoreIndex\nfrom pydantic import BaseModel\n\n# Local application imports (alphabetical)\nfrom rag_client.config import RAGConfig\nfrom rag_client.core import RAGWorkflow\nfrom rag_client.exceptions import ConfigurationError\n```\nUse isort for automatic import sorting:\n```bash\npip install isort\nisort . --profile black --line-length 88\n```\nRemove all unused imports and resolve circular dependencies",
+        "testStrategy": "Validate import optimization:\n1. Run isort to check import order\n2. Use pylint to find unused imports\n3. Test for circular import errors\n4. Verify all functionality works",
+        "priority": "low",
+        "dependencies": [
+          2,
+          7
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Install and Configure isort",
+            "description": "Set up isort with black profile for automatic import sorting",
+            "dependencies": [],
+            "details": "Install isort package and configure it with black-compatible settings. Create .isort.cfg or pyproject.toml configuration with profile=black and line-length=88. Test configuration on a sample file to ensure proper sorting order.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Run isort on All Python Files",
+            "description": "Execute isort to automatically sort and organize imports across the entire codebase",
+            "dependencies": [
+              "8.1"
+            ],
+            "details": "Run 'isort . --profile black --line-length 88' to sort all 117 import statements. Review the changes to ensure imports are properly grouped into standard library, third-party, and local imports. Verify that relative imports are preserved where necessary.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Remove Unused Imports",
+            "description": "Identify and remove all unused import statements using pylint",
+            "dependencies": [
+              "8.2"
+            ],
+            "details": "Run pylint with --disable=all --enable=W0611 to find unused imports. Review each flagged import to confirm it's truly unused (not used in type hints or string references). Remove confirmed unused imports and verify no functionality breaks.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 4,
+            "title": "Resolve Circular Import Dependencies",
+            "description": "Identify and fix any circular import issues introduced by the restructuring",
+            "dependencies": [
+              "8.3"
+            ],
+            "details": "Test all modules for circular import errors by importing each module individually. For any circular dependencies found, refactor by: moving shared code to a common module, using late imports within functions, or restructuring module dependencies. Document any significant architectural changes made.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 5,
+            "title": "Create Import Guidelines Documentation",
+            "description": "Document import conventions and guidelines for future development",
+            "dependencies": [
+              "8.4"
+            ],
+            "details": "Create a CONTRIBUTING.md section or separate document outlining import conventions: PEP 8 ordering rules, isort configuration usage, how to handle circular imports, and examples of proper import structure. Include pre-commit hook setup instructions for automatic import sorting.",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Enhance Documentation and Docstrings",
+        "description": "Add comprehensive docstrings to all modules, classes, and functions following Google style guide",
+        "details": "Add Google-style docstrings throughout:\n```python\ndef process_documents(\n    documents: List[Document],\n    config: ProcessingConfig,\n    callback: Optional[Callable[[int, int], None]] = None\n) -> ProcessedDocuments:\n    \"\"\"Process documents for indexing.\n    \n    Processes raw documents through chunking, embedding, and metadata\n    extraction pipeline according to configuration.\n    \n    Args:\n        documents: List of documents to process.\n        config: Processing configuration including chunk settings.\n        callback: Optional progress callback receiving (current, total).\n    \n    Returns:\n        ProcessedDocuments containing chunks and metadata.\n    \n    Raises:\n        ProcessingError: If document processing fails.\n        ConfigurationError: If config is invalid.\n    \n    Example:\n        >>> docs = load_documents(\"./data\")\n        >>> config = ProcessingConfig(chunk_size=512)\n        >>> processed = process_documents(docs, config)\n        >>> print(f\"Created {len(processed.chunks)} chunks\")\n    \n    Note:\n        Large documents may require significant memory.\n        Consider using batch processing for large document sets.\n    \"\"\"\n```\nGenerate API documentation using Sphinx",
+        "testStrategy": "Validate documentation:\n1. Run pydocstyle to check docstring format\n2. Generate docs with Sphinx without errors\n3. Verify all public APIs documented\n4. Check examples in docstrings work",
+        "priority": "low",
+        "dependencies": [
+          6
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Document RAGWorkflow Class Methods",
+            "description": "Add comprehensive Google-style docstrings to all methods in the RAGWorkflow class",
+            "dependencies": [],
+            "details": "Document the core RAGWorkflow class in rag.py with detailed docstrings for each method including __init__, initialize_index, load_index, ingest_documents, search, query, and chat. Include parameter descriptions, return types, raised exceptions, and usage examples for each method.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Document Public API Endpoints",
+            "description": "Add docstrings and OpenAPI documentation to all API endpoints in api.py",
+            "dependencies": [],
+            "details": "Document all FastAPI endpoints including /v1/chat/completions, /v1/embeddings, and health check endpoints. Add detailed descriptions of request/response models, status codes, error conditions, and provide curl examples for each endpoint. Ensure OpenAPI schema generation includes comprehensive descriptions.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Document CLI Command Functions",
+            "description": "Add docstrings to all CLI command functions in main.py",
+            "dependencies": [],
+            "details": "Document the main entry point and all command functions (index_command, search_command, query_command, chat_command, serve_command). Include descriptions of command-line arguments, expected behavior, return values, and example invocations. Document the argument parsing setup and configuration loading logic.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 4,
+            "title": "Document Configuration Classes",
+            "description": "Add comprehensive docstrings to all configuration dataclasses and their fields",
+            "dependencies": [],
+            "details": "Document all dataclasses in chat.py and configuration-related modules including RAGConfig, EmbeddingConfig, LLMConfig, DatabaseConfig, and ChunkingConfig. Add field descriptions explaining valid values, defaults, and relationships between fields. Include examples of YAML configuration for each class.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 5,
+            "title": "Document Provider Implementations",
+            "description": "Add docstrings to all embedding and LLM provider implementation classes",
+            "dependencies": [],
+            "details": "Document provider implementations for HuggingFace, OpenAI, Ollama, LiteLLM, and other providers. Include setup requirements, configuration parameters, limitations, and usage examples. Document abstract base classes and interfaces that providers must implement.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 6,
+            "title": "Set Up Sphinx Documentation",
+            "description": "Configure and initialize Sphinx documentation generation framework",
+            "dependencies": [
+              "9.1",
+              "9.2",
+              "9.3",
+              "9.4",
+              "9.5"
+            ],
+            "details": "Install Sphinx and required extensions (autodoc, napoleon for Google-style docstrings, sphinx-rtd-theme). Create conf.py with project metadata, configure autodoc to extract docstrings, set up proper module paths, create index.rst with table of contents, and add Makefile for building docs. Configure to generate both HTML and PDF documentation.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 7,
+            "title": "Create Usage Examples and Tutorials",
+            "description": "Write comprehensive usage examples and workflow tutorials for the documentation",
+            "dependencies": [
+              "9.6"
+            ],
+            "details": "Create examples directory with Python scripts demonstrating: basic indexing workflow, different retrieval strategies, chat interactions, API usage with requests, configuration examples for different providers, batch processing patterns, and error handling. Add these examples to Sphinx documentation with explanatory text and expected outputs.",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "Final Testing and Validation",
+        "description": "Run comprehensive test suite and validate complete functional parity with original implementation",
+        "details": "Perform final validation of refactored codebase:\n```python\n# test_refactoring.py\nimport pytest\nimport subprocess\nimport json\nfrom pathlib import Path\n\nclass TestRefactoringParity:\n    \"\"\"Test suite to ensure functional parity\"\"\"\n    \n    def test_cli_commands(self):\n        \"\"\"Test all CLI commands work identically\"\"\"\n        commands = [\n            ['python', 'main.py', '--config', 'chat.yaml', 'index'],\n            ['python', 'main.py', '--config', 'chat.yaml', 'search', 'test'],\n            ['python', 'main.py', '--config', 'chat.yaml', 'query', 'test'],\n        ]\n        for cmd in commands:\n            result = subprocess.run(cmd, capture_output=True)\n            assert result.returncode == 0\n    \n    def test_api_endpoints(self):\n        \"\"\"Test API endpoints return identical responses\"\"\"\n        # Start server and test endpoints\n        pass\n    \n    def test_configuration_compatibility(self):\n        \"\"\"Test existing YAML configs work\"\"\"\n        configs = Path('.').glob('*.yaml')\n        for config_path in configs:\n            # Load and validate config\n            pass\n```\nRun linting and type checking:\n```bash\n# Run comprehensive checks\npylint rag_client/\nmypy rag_client/ --strict\nblack rag_client/ --check\nisort . --check-only\npytest tests/ -v --cov=rag_client\n```\nExecute query-test.sh to ensure functionality",
+        "testStrategy": "Final validation checklist:\n1. All existing tests pass\n2. query-test.sh executes successfully\n3. Linting passes (pylint score > 8.0)\n4. Type checking passes (mypy strict mode)\n5. Code formatting consistent (black)\n6. 100% backward compatibility verified\n7. Performance benchmarks show no regression",
+        "priority": "high",
+        "dependencies": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create Comprehensive Test Suite for CLI Commands",
+            "description": "Implement complete test coverage for all CLI commands (index, search, query, chat, serve) ensuring identical behavior to original implementation",
+            "dependencies": [],
+            "details": "Build TestRefactoringParity class with test methods for each CLI command. Use subprocess to execute commands with various configurations and arguments. Capture and validate output, return codes, and side effects. Test edge cases like missing config files, invalid arguments, and empty results.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Implement API Endpoint Testing",
+            "description": "Create test suite for all API endpoints to validate responses match original implementation exactly",
+            "dependencies": [],
+            "details": "Start API server programmatically and test all endpoints including /v1/chat/completions, /v1/embeddings, and health checks. Compare response structures, status codes, and headers. Use fixtures with known inputs/outputs from original implementation. Test error handling and edge cases.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Validate YAML Configuration Compatibility",
+            "description": "Test that all existing YAML configuration files work correctly with refactored code",
+            "dependencies": [],
+            "details": "Load and parse all existing YAML configs (chat.yaml, guidance.yaml, etc.). Validate schema compatibility, default value handling, and configuration merging. Test various provider configurations (OpenAI, Ollama, HuggingFace). Ensure backward compatibility with deprecated options.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 4,
+            "title": "Run Pylint and Achieve Target Score",
+            "description": "Execute pylint on entire refactored codebase and ensure score exceeds 8.0",
+            "dependencies": [
+              "10.1",
+              "10.2",
+              "10.3"
+            ],
+            "details": "Run pylint rag_client/ with appropriate configuration. Address all critical and error-level issues. Fix warning-level issues to reach score > 8.0. Document any disabled checks with justification. Create .pylintrc configuration file for consistent checking.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 5,
+            "title": "Execute MyPy Strict Mode Type Checking",
+            "description": "Run mypy in strict mode and resolve all type errors in the refactored codebase",
+            "dependencies": [
+              "10.1",
+              "10.2",
+              "10.3"
+            ],
+            "details": "Execute mypy rag_client/ --strict and fix all reported errors. Ensure proper type hints for all public APIs. Add type stubs for external dependencies if needed. Validate Protocol implementations and Generic types. Test type inference works correctly in IDEs.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 6,
+            "title": "Run query-test.sh Validation Script",
+            "description": "Execute the existing query-test.sh script to validate end-to-end functionality",
+            "dependencies": [
+              "10.1",
+              "10.2",
+              "10.3"
+            ],
+            "details": "Run bash query-test.sh --reset --verbose chat and ensure all tests pass. Validate indexing, searching, and querying operations work correctly. Check that chat mode functions properly with test data. Verify both ephemeral and persistent storage modes. Document any deviations from expected behavior.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 7,
+            "title": "Perform Performance Benchmarking",
+            "description": "Benchmark refactored code against original to ensure no performance regression",
+            "dependencies": [
+              "10.6"
+            ],
+            "details": "Create benchmark suite testing indexing speed, query latency, memory usage, and API response times. Compare results with baseline from original implementation. Profile hot paths and optimize if regression detected. Test with various document sizes and query complexities. Document performance characteristics.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 8,
+            "title": "Generate Final Validation Report",
+            "description": "Compile comprehensive validation report documenting all test results and confirming functional parity",
+            "dependencies": [
+              "10.4",
+              "10.5",
+              "10.6",
+              "10.7"
+            ],
+            "details": "Document test coverage percentages, pylint score, mypy results, and performance metrics. Include summary of all tests passed, any known limitations, and migration notes. Create checklist confirming backward compatibility, API parity, and configuration compatibility. Generate coverage report with pytest --cov=rag_client.",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
+      }
+    ],
+    "metadata": {
+      "created": "2025-08-29T08:58:58.267Z",
+      "updated": "2025-08-29T08:58:58.267Z",
+      "description": "Tasks for master context"
+    }
+  }
+}

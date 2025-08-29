@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./main.py --from ~/doc/guidance/universal-house-of-justice/messages/19981214_001.txt --config chat.yaml --verbose index)",
+      "Bash(python:*)",
+      "Bash(./main.py --config chat.yaml search \"Universal House\")",
+      "Bash(./main.py:*)",
+      "mcp__nixos__home_manager_search",
+      "mcp__nixos__home_manager_options_by_prefix",
+      "mcp__nixos__home_manager_info"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
