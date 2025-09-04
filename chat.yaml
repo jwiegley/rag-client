@@ -3,8 +3,9 @@ query:
   # Primary LLM for querying. Choose one of the types below:
   llm: &llm
     type: OpenAILikeConfig
-    model: "hera/Kimi-K2-Instruct"       # Model name to use
+    model: "hera/Qwen3-235B-A22B-Instruct-2507"       # Model name to use
     api_base: "http://vulcan/litellm/v1" # API endpoint
+    api_key_command: "pass vulcan | head -1"
     context_window: 131072               # Maximum context window size
     temperature: 0.6                     # Sampling temperature for generation
     max_tokens: 8192                     # Max output tokens

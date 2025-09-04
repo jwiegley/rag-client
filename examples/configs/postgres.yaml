@@ -1,0 +1,66 @@
+# PostgreSQL Vector Store Configuration
+# Production setup with persistent storage
+
+retrieval:
+  # HuggingFace Embeddings (free, local)
+  embedding:
+    provider: huggingface
+    model_name: BAAI/bge-base-en-v1.5
+    device: cuda
+    normalize: true
+    embed_batch_size: 32
+    cache_folder: ~/.cache/huggingface
+  
+  # LLM configuration (using Ollama)
+  llm:
+    provider: ollama
+    model: mixtral
+    base_url: http://localhost:11434
+    temperature: 0.7
+    max_tokens: 2048
+    num_ctx: 4096
+  
+  # PostgreSQL with pgvector
+  vector_store:
+    type: postgres
+    connection_string: postgresql://raguser:ragpass@localhost:5432/ragdb
+    table_name: document_embeddings
+    embed_dim: 768  # Must match embedding model dimension
+    hybrid_search: true
+    text_search_config: english
+  
+  # Document processing
+  splitter:
+    chunk_size: 512
+    chunk_overlap: 50
+    separator: " "
+    paragraph_separator: "\n\n"
+  
+  # Advanced retrieval
+  top_k: 10
+  sparse_top_k: 20
+  fusion: true
+  
+  # Metadata extractors
+  extractors:
+    - TitleExtractor
+    - KeywordExtractor
+    - SummaryExtractor
+
+query:
+  engine: query
+
+chat:
+  engine: condense_plus_context
+  buffer: 50
+  summary_buffer: 200
+  keep_history: true
+
+logging:
+  level: INFO
+  log_file: /var/log/rag/rag_client.log
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  rotate_logs: true
+  max_bytes: 52428800  # 50MB
+  backup_count: 10
+  console_output: false

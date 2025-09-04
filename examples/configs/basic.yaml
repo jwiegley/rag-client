@@ -1,0 +1,48 @@
+# Basic RAG Client Configuration
+# Uses local Ollama for both embeddings and LLM
+
+retrieval:
+  # Embedding configuration
+  embedding:
+    provider: ollama
+    model_name: nomic-embed-text
+    base_url: http://localhost:11434
+    embed_batch_size: 10
+  
+  # LLM configuration
+  llm:
+    provider: ollama
+    model: llama2
+    base_url: http://localhost:11434
+    temperature: 0.7
+    max_tokens: 1024
+  
+  # Vector store (ephemeral by default)
+  vector_store:
+    type: ephemeral
+  
+  # Text splitting configuration
+  splitter:
+    chunk_size: 512
+    chunk_overlap: 50
+    separator: " "
+    paragraph_separator: "\n\n"
+  
+  # Retrieval parameters
+  top_k: 5
+  sparse_top_k: 10
+
+# Query engine configuration
+query:
+  engine: query
+
+# Chat configuration
+chat:
+  engine: condense_plus_context
+  buffer: 10
+  keep_history: true
+
+# Logging configuration
+logging:
+  level: INFO
+  console_output: true

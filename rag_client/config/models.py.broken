@@ -1,0 +1,439 @@
+"""Configuration models for RAG client.
+
+This module contains all YAMLWizard configuration dataclasses used throughout
+the RAG client application.
+"""
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional, TypeAlias, Union
+
+import llama_cpp
+import llama_index.llms.lmstudio.base
+import llama_index.llms.mlx.base
+import llama_index.llms.ollama.base
+import llama_index.llms.openrouter.base
+from dataclass_wizard import YAMLWizard
+
+
+# Base class with Meta configuration for union type discrimination
+class TaggedYAMLWizard(YAMLWizard):
+    """Base class that uses 'type' field for union discrimination."""
+    
+    class Meta:
+        tag_key = 'type'
+from llama_index.core.constants import (
+    DEFAULT_CONTEXT_WINDOW,
+    DEFAULT_EMBED_BATCH_SIZE,
+    DEFAULT_NUM_OUTPUTS,
+    DEFAULT_SIMILARITY_TOP_K,
+    DEFAULT_TEMPERATURE,
+)
+from llama_index.core.evaluation.guideline import DEFAULT_GUIDELINES
+from llama_index.core.response_synthesizers import ResponseMode
+from llama_index.core.retrievers.fusion_retriever import FUSION_MODES
+from llama_index.embeddings.huggingface.base import (
+    DEFAULT_HUGGINGFACE_EMBEDDING_MODEL,
+)
+from llama_index.embeddings.openai import (
+    OpenAIEmbeddingMode,
+    OpenAIEmbeddingModelType,
+)
+from llama_index.llms.openai.base import DEFAULT_OPENAI_MODEL
+
+# Logging Configuration
+
+@dataclass
+class LoggingConfig(YAMLWizard):
+    """Configuration for application logging.
+    
+    Controls logging behavior throughout the RAG client application,
+    including log levels, output destinations, and rotation policies.
+    
+    Attributes:
+        level: Logging level. Controls verbosity of output.
+            Options: DEBUG, INFO, WARNING, ERROR, CRITICAL.
+            Default: INFO (general operational messages).
+        log_file: Optional path to log file. If None, logs to console only.
+            Example: "/var/log/rag-client.log"
+        format: Custom log format string. If None, uses default format.
+            Example: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        rotate_logs: If True, enables log rotation to prevent large files.
+        max_bytes: Maximum log file size before rotation (default: 10MB).
+            Only used when rotate_logs=True.
+        backup_count: Number of rotated log files to keep (default: 5).
+            Only used when rotate_logs=True.
+        console_output: If True, also outputs logs to console/stderr.
+    
+    Example YAML:
+        ```yaml
+        logging:
+          level: DEBUG
+          log_file: logs/rag.log
+          rotate_logs: true
+          max_bytes: 5242880  # 5MB
+          backup_count: 10
+          console_output: true
+        ```
+    """
+    level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    log_file: Optional[str] = None
+    format: Optional[str] = None
+    rotate_logs: bool = False
+    max_bytes: int = 10485760  # 10MB
+    backup_count: int = 5
+    console_output: bool = True
+
+
+# Embedding Configurations
+
+@dataclass
+class HuggingFaceEmbeddingConfig(TaggedYAMLWizard):
+
+
+@dataclass
+class RetrieverQueryEngineConfig(TaggedYAMLWizard):
+
+
+@dataclass
+class SimpleQueryEngineConfig(TaggedYAMLWizard):
+
+
+BaseQueryEngineConfig: TypeAlias = (
+    SimpleQueryEngineConfig | CitationQueryEngineConfig | RetrieverQueryEngineConfig
+)
+
+
+@dataclass
+class MultiStepQueryEngineConfig(TaggedYAMLWizard):
+
+
+@dataclass
+class RetrySourceQueryEngineConfig(TaggedYAMLWizard):
+
+
+@dataclass
+class RetryQueryEngineConfig(TaggedYAMLWizard):
+
+
+QueryEngineConfig: TypeAlias = (
+    BaseQueryEngineConfig
+    | MultiStepQueryEngineConfig
+    | RetrySourceQueryEngineConfig
+    | RetryQueryEngineConfig
+)
+
+
+# Chat Engine Configurations
+
+@dataclass
+class SimpleChatEngineConfig(TaggedYAMLWizard):
+    """Simple chat engine configuration."""
+    pass
+
+
+@dataclass
+class SimpleContextChatEngineConfig(TaggedYAMLWizard):
+    """Simple context chat engine configuration."""
+    context_window: int = DEFAULT_CONTEXT_WINDOW
+
+
+@dataclass
+class ContextChatEngineConfig(TaggedYAMLWizard):
+    """Context chat engine configuration."""
+    pass
+
+
+@dataclass
+class CondensePlusContextChatEngineConfig(TaggedYAMLWizard):
+    """Condense plus context chat engine configuration."""
+    skip_condense: bool = False
+
+
+ChatEngineConfig: TypeAlias = (
+    SimpleChatEngineConfig
+    | SimpleContextChatEngineConfig
+    | ContextChatEngineConfig
+    | CondensePlusContextChatEngineConfig
+)
+
+
+# Vector Store Configurations
+
+@dataclass
+class SimpleVectorStoreConfig(TaggedYAMLWizard):
+    """Simple vector store configuration."""
+    pass
+
+
+@dataclass
+class PostgresVectorStoreConfig(TaggedYAMLWizard):
+    """PostgreSQL vector store configuration."""
+    connection: str
+    hybrid_search: bool = False
+    dimensions: int = 512
+    hnsw_m: int = 16
+    hnsw_ef_construction: int = 64
+    hnsw_ef_search: int = 40
+    hnsw_dist_method: str = "vector_cosine_ops"
+
+
+VectorStoreConfig: TypeAlias = SimpleVectorStoreConfig | PostgresVectorStoreConfig
+
+
+# Retriever Configurations
+
+@dataclass
+class FusionRetrieverConfig(YAMLWizard):
+    """Fusion retriever configuration."""
+    llm: LLMConfig
+    num_queries: int = 1  # set this to 1 to disable query generation
+    mode: FUSION_MODES = FUSION_MODES.RELATIVE_SCORE
+
+
+# Main Configurations
+
+@dataclass
+class RetrievalConfig(YAMLWizard):
+    """Retrieval configuration.
+    
+    Defines the complete retrieval pipeline for document indexing and search.
+    Coordinates embedding generation, storage, chunking, and retrieval strategies.
+    
+    Attributes:
+        llm: Language model configuration for advanced retrieval features.
+            Used for query expansion, re-ranking, and extraction.
+        embedding: Embedding model configuration for vectorization.
+            Defines how text is converted to searchable vectors.
+        vector_store: Storage backend for embeddings and documents.
+            Options: SimpleVectorStore (memory), PostgresVectorStore (persistent).
+        splitter: Text splitting strategy for chunking documents.
+            If None, uses default SentenceSplitter.
+        extractors: List of metadata extractors to enrich documents.
+            Can extract keywords, summaries, titles, Q&A pairs.
+        keywords: Configuration for keyword-based (sparse) retrieval.
+            Enables hybrid search when combined with vector search.
+        top_k: Number of top results for vector similarity search.
+            Default: 2. Typical range: 3-20 depending on use case.
+        sparse_top_k: Number of results for keyword search.
+            Default: 10. Used in hybrid retrieval scenarios.
+        fusion: Configuration for combining multiple retrievers.
+            Enables advanced fusion strategies for better results.
+    
+    Example YAML:
+        ```yaml
+        retrieval:
+          llm:
+            type: ollama
+            model: llama2
+          embedding:
+            type: huggingface
+            model_name: BAAI/bge-small-en-v1.5
+          vector_store:
+            type: simple
+          splitter:
+            type: sentence
+            chunk_size: 512
+            chunk_overlap: 50
+          top_k: 5
+          keywords:
+            collect: true
+        ```
+    
+    Note:
+        - LLM is required even for basic retrieval (used for processing)
+        - Embedding model must match vector store dimensions
+        - Consider memory usage with large document sets
+    """
+    llm: LLMConfig
+    embedding: EmbeddingConfig
+    vector_store: VectorStoreConfig
+    splitter: Optional[SplitterConfig] = None
+    extractors: Optional[List[ExtractorConfig]] = None
+    keywords: Optional[KeywordsConfig] = None
+    top_k: int = DEFAULT_SIMILARITY_TOP_K
+    sparse_top_k: int = 10
+    fusion: Optional[FusionRetrieverConfig] = None
+
+
+@dataclass
+class QueryConfig(YAMLWizard):
+    """Query configuration.
+    
+    Configures the query processing engine for one-shot Q&A operations.
+    Defines how queries are processed, contextualized, and answered.
+    
+    Attributes:
+        engine: Query engine configuration defining processing strategy.
+            Options include:
+            - SimpleQueryEngine: Direct LLM responses without retrieval
+            - RetrieverQueryEngine: RAG with retrieval and synthesis
+            - CitationQueryEngine: Includes source citations
+            - RetryQueryEngine: Automatic retry on failures
+            If None, defaults to SimpleQueryEngine.
+        llm: Language model for generating responses.
+            Inherited from engine configuration.
+    
+    Example YAML:
+        ```yaml
+        query:
+          engine:
+            type: retriever
+            response_mode: compact
+          llm:
+            type: openai
+            model: gpt-3.5-turbo
+            temperature: 0.7
+        ```
+    
+    Query Engines:
+        - Simple: Direct LLM response, no retrieval
+        - Retriever: Retrieves context then generates
+        - Citation: Adds source references to responses
+        - Retry: Handles failures with automatic retries
+        - RetrySource: Retries with different sources
+    
+    Note:
+        - Query operations are stateless (no history)
+        - For conversational interactions, use ChatConfig
+        - Engine choice impacts response quality and latency
+    """
+    engine: Optional[QueryEngineConfig] = None
+
+
+@dataclass
+class ChatConfig(YAMLWizard):
+    """Chat configuration.
+    
+    Configures the conversational AI system with memory and context management.
+    Enables multi-turn conversations with optional RAG enhancement.
+    
+    Attributes:
+        engine: Chat engine configuration defining conversation strategy.
+            Options include:
+            - SimpleChatEngine: Basic chat without retrieval
+            - ContextChatEngine: RAG-enhanced with retrieval
+            - CondensePlusContextChatEngine: Condenses history + retrieval
+            If None, defaults to SimpleChatEngine.
+        buffer: Number of recent messages to keep in context.
+            Default: 10. Prevents context overflow.
+        summary_buffer: Number of messages before summarization.
+            If set, older messages are summarized to save tokens.
+            If None, no summarization (messages dropped after buffer).
+        keep_history: If True, persists chat history to disk.
+            History saved to ~/.config/rag-client/chat_store.json.
+        default_user: Default username for chat sessions.
+            Used for history tracking and personalization.
+    
+    Example YAML:
+        ```yaml
+        chat:
+          engine:
+            type: context
+            system_prompt: "You are a helpful assistant."
+          buffer: 20
+          summary_buffer: 50
+          keep_history: true
+          default_user: "user"
+          llm:
+            type: openai
+            model: gpt-4
+            temperature: 0.8
+        ```
+    
+    Chat Engines:
+        - Simple: Direct conversation, no retrieval
+        - Context: Retrieves relevant docs for each turn
+        - CondensePlusContext: Condenses chat + retrieves
+    
+    Note:
+        - Buffer management crucial for long conversations
+        - History persistence enables cross-session continuity
+        - Context engines significantly improve factual responses
+    """
+    engine: Optional[ChatEngineConfig] = None
+    buffer: int = 10
+    summary_buffer: Optional[int] = None
+    keep_history: bool = False
+
+
+@dataclass
+class Config(YAMLWizard):
+    """Main application configuration.
+    
+    Root configuration object that orchestrates all RAG client components.
+    Loaded from YAML files to configure the entire application behavior.
+    
+    Attributes:
+        retrieval: Configuration for document indexing and retrieval.
+            Required for all RAG operations. Defines embedding models,
+            storage backends, and retrieval strategies.
+        query: Configuration for one-shot Q&A operations.
+            Optional. If provided, enables query command functionality.
+        chat: Configuration for conversational interactions.
+            Optional. If provided, enables interactive chat mode.
+        logging: Application logging configuration.
+            Optional. Controls log levels, outputs, and rotation.
+    
+    Complete Example YAML:
+        ```yaml
+        # Retrieval configuration (required)
+        retrieval:
+          embedding:
+            type: huggingface
+            model_name: BAAI/bge-small-en-v1.5
+          llm:
+            type: ollama
+            model: llama2
+            base_url: http://localhost:11434
+          vector_store:
+            type: postgres
+            connection: postgresql://user:pass@localhost/ragdb
+            dimensions: 384
+          splitter:
+            type: sentence
+            chunk_size: 512
+            chunk_overlap: 50
+          top_k: 5
+        
+        # Query configuration (optional)
+        query:
+          engine:
+            type: retriever
+            response_mode: tree_summarize
+          llm:
+            type: openai
+            model: gpt-3.5-turbo
+        
+        # Chat configuration (optional)
+        chat:
+          engine:
+            type: context
+          buffer: 20
+          keep_history: true
+          llm:
+            type: openai
+            model: gpt-4
+        
+        # Logging configuration (optional)
+        logging:
+          level: INFO
+          log_file: logs/rag.log
+          rotate_logs: true
+        ```
+    
+    Usage:
+        ```python
+        config = Config.from_yaml_file("config.yaml")
+        workflow = RAGWorkflow(logger, config)
+        ```
+    
+    Note:
+        - At minimum, retrieval configuration is required
+        - Query and chat can use different LLMs for cost optimization
+        - YAML structure must match dataclass hierarchy exactly
+    """
+    retrieval: RetrievalConfig
+    query: Optional[QueryConfig] = None
+    chat: Optional[ChatConfig] = None
+    logging: Optional[LoggingConfig] = None

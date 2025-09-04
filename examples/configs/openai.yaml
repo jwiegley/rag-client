@@ -1,0 +1,48 @@
+# OpenAI API Configuration
+# Uses OpenAI for embeddings and chat completions
+
+retrieval:
+  # OpenAI Embeddings
+  embedding:
+    provider: openai
+    model: text-embedding-3-small
+    api_key: ${OPENAI_API_KEY}  # Set via environment variable
+    embed_batch_size: 100
+  
+  # OpenAI LLM
+  llm:
+    provider: openai
+    model: gpt-4-turbo-preview
+    api_key: ${OPENAI_API_KEY}
+    temperature: 0.7
+    max_tokens: 2048
+    top_p: 0.9
+  
+  # Vector store
+  vector_store:
+    type: ephemeral
+  
+  # Text splitting
+  splitter:
+    chunk_size: 1024
+    chunk_overlap: 100
+  
+  # Retrieval settings
+  top_k: 10
+  fusion: true
+
+query:
+  engine: query
+
+chat:
+  engine: condense_plus_context
+  buffer: 20
+  summary_buffer: 100
+  keep_history: true
+
+logging:
+  level: INFO
+  log_file: rag_openai.log
+  rotate_logs: true
+  max_bytes: 10485760  # 10MB
+  backup_count: 5

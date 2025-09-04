@@ -1196,8 +1196,81 @@ class CustomRetriever(BaseRetriever):
 # Workflows
 
 
-# PostgresDetails moved to rag_client.storage.postgres
-from rag_client.storage.postgres import PostgresDetails
+class PostgresDetails:
+    connection_string: str
+    database: str
+    host: str
+    password: str
+    port: int
+    user: str
+
+    def __init__(self, connection_string: str):
+        self.connection_string = connection_string
+        parsed = urlparse(self.connection_string)
+        self.database = parsed.path.lstrip("/")
+        self.host = parsed.hostname or "localhost"
+        self.password = parsed.password or ""
+        self.port = parsed.port or 5432
+        self.user = parsed.username or "postgres"
+
+    def unpickle_from_table[T](self, tablename: str, row_id: int) -> Any:
+        import pickle
+        import psycopg2
+
+        with psycopg2.connect(
+            database=self.database,
+            user=self.user,
+            password=self.password,
+            host=self.host,
+            port=self.port,
+        ) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT data FROM {tablename} WHERE id = %s",
+                    (row_id,),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return None
+
+                binary_data = row[0]
+                if isinstance(binary_data, memoryview):
+                    binary_data = binary_data.tobytes()
+                return pickle.loads(binary_data)
+
+    def pickle_to_table[U](self, tablename: str, row_id: int, data: object):
+        import pickle
+        import psycopg2
+
+        # Connect to PostgreSQL
+        with psycopg2.connect(
+            database=self.database,
+            user=self.user,
+            password=self.password,
+            host=self.host,
+            port=self.port,
+        ) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {tablename} (
+                        id SERIAL PRIMARY KEY,
+                        data BYTEA
+                    )
+                """
+                )
+
+                pickled = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
+
+                cur.execute(
+                    f"""
+                    INSERT INTO {tablename} (id, data)
+                    VALUES (%s, %s)
+                    ON CONFLICT (id)
+                    DO UPDATE SET data = EXCLUDED.data
+                """,
+                    (row_id, psycopg2.Binary(pickled)),
+                )
 
 
 class SimpleQueryEngine(CustomQueryEngine):
@@ -1323,6 +1396,767 @@ class EmbeddedFile(JSONFileWizard):
 
 # RAGWorkflow moved to rag_client.core.workflow
 from rag_client.core.workflow import RAGWorkflow
+
+
+@dataclass
+class QueryState:
+        config: PostgresVectorStoreConfig,
+        embedding_dimensions: int,
+    ) -> tuple[PostgresDocumentStore, PostgresIndexStore, PGVectorStore]:
+        docstore: PostgresDocumentStore = PostgresDocumentStore.from_uri(
+            uri=config.connection,
+            table_name="docstore",
+        )
+        index_store: PostgresIndexStore = PostgresIndexStore.from_uri(
+            uri=config.connection,
+            table_name="indexstore",
+        )
+
+        details: PostgresDetails = PostgresDetails(config.connection)
+
+        vector_store: PGVectorStore = PGVectorStore.from_params(
+            connection_string=config.connection,
+            database=details.database,
+            host=details.host,
+            password=details.password,
+            port=str(details.port),
+            user=details.user,
+            table_name="vectorstore",
+            embed_dim=embedding_dimensions,
+            hybrid_search=config.hybrid_search,
+            hnsw_kwargs={
+                "hnsw_m": config.hnsw_m,
+                "hnsw_ef_construction": config.hnsw_ef_construction,
+                "hnsw_ef_search": config.hnsw_ef_search,
+                "hnsw_dist_method": config.hnsw_dist_method,
+            },
+        )
+        return docstore, index_store, vector_store
+
+    @classmethod
+    def __load_component(
+        cls,
+        config: EmbeddingConfig | LLMConfig,
+        verbose: bool = False,
+        component_type: Literal["embedding", "llm"] = "embedding",
+    ) -> BaseEmbedding | LLM | NoReturn:
+        match config:
+            case HuggingFaceEmbeddingConfig():
+                return HuggingFaceEmbedding(
+                    **asdict(config),
+                    show_progress_bar=verbose,
+                )
+            case OllamaEmbeddingConfig():
+                return OllamaEmbedding(
+                    **asdict(config),
+                    show_progress=verbose,
+                )
+            case LlamaCPPEmbeddingConfig():
+                return LlamaCPPEmbedding(
+                    **asdict(config),
+                    show_progress=verbose,
+                )
+            case OpenAIEmbeddingConfig():
+                if config.api_key_command is not None:
+                    config.api_key = subprocess.run(
+                        config.api_key_command,
+                        shell=True,
+                        text=True,
+                        capture_output=True,
+                    ).stdout.rstrip("\n")
+                return OpenAIEmbedding(
+                    **asdict(config),
+                    show_progress=verbose,
+                )
+            case OpenAILikeEmbeddingConfig():
+                if config.api_key_command is not None:
+                    config.api_key = subprocess.run(
+                        config.api_key_command,
+                        shell=True,
+                        text=True,
+                        capture_output=True,
+                    ).stdout.rstrip("\n")
+
+                extra_body = {}
+                if config.add_litellm_session_id:
+                    extra_body["litellm_session_id"] = str(uuid.uuid1())
+                if config.no_litellm_logging:
+                    extra_body["no-log"] = True
+
+                if config.additional_kwargs is None:
+                    config.additional_kwargs = {"extra_body": extra_body}
+                elif "extra_body" not in config.additional_kwargs:
+                    config.additional_kwargs["extra_body"] = extra_body
+                else:
+                    config.additional_kwargs["extra_body"] = (
+                        config.additional_kwargs["extra_body"] | extra_body
+                    )
+
+                return OpenAILikeEmbedding(
+                    show_progress=verbose,
+                    **asdict(config),
+                )
+            case LiteLLMEmbeddingConfig():
+                if config.api_key_command is not None:
+                    config.api_key = subprocess.run(
+                        config.api_key_command,
+                        shell=True,
+                        text=True,
+                        capture_output=True,
+                    ).stdout.rstrip("\n")
+                return LiteLLMEmbedding(
+                    **asdict(config),
+                )
+            case OllamaConfig():
+                return Ollama(**asdict(config), show_progress=verbose)
+            case OpenAILikeConfig():
+                extra_body = {}
+                if config.add_litellm_session_id:
+                    extra_body["litellm_session_id"] = str(uuid.uuid1())
+                if config.no_litellm_logging:
+                    extra_body["no-log"] = True
+
+                if config.additional_kwargs is None:
+                    config.additional_kwargs = {"extra_body": extra_body}
+                elif "extra_body" not in config.additional_kwargs:
+                    config.additional_kwargs["extra_body"] = extra_body
+                else:
+                    config.additional_kwargs["extra_body"] = (
+                        config.additional_kwargs["extra_body"] | extra_body
+                    )
+                return OpenAILike(**asdict(config))
+            case LiteLLMConfig():
+                return LiteLLM(**asdict(config))
+            case OpenAIConfig():
+                return OpenAI(**asdict(config), show_progress=verbose)
+            case LlamaCPPConfig():
+                return LlamaCPP(**asdict(config))
+            case PerplexityConfig():
+                return Perplexity(**asdict(config), show_progress=verbose)
+            case OpenRouterConfig():
+                return OpenRouter(**asdict(config), show_progress=verbose)
+            case LMStudioConfig():
+                return LMStudio(**asdict(config))
+            case MLXLLMConfig():
+                return MLXLLM(**asdict(config))
+
+    @classmethod
+    def __load_embedding(
+        cls,
+        config: EmbeddingConfig,
+        verbose: bool = False,
+    ) -> BaseEmbedding:
+        component = cls.__load_component(config=config, verbose=verbose, component_type="embedding")
+        if isinstance(component, BaseEmbedding):
+            return component
+        else:
+            error(f"Failed to load embedding: {config}")
+
+    @classmethod
+    def __load_llm(
+        cls,
+        config: LLMConfig,
+        verbose: bool = False,
+    ) -> LLM:
+        component = cls.__load_component(config=config, verbose=verbose, component_type="llm")
+        if isinstance(component, LLM):
+            return component
+        else:
+            error(f"Failed to load LLM: {config}")
+
+    @classmethod
+    def realize_llm(
+        cls,
+        config: LLMConfig | None,
+        verbose: bool = False,
+    ) -> LLM | NoReturn:
+        llm = (
+            cls.__load_llm(
+                config=config,
+                verbose=verbose,
+            )
+            if config is not None
+            else None
+        )
+        if llm is None:
+            error(f"Failed to start LLM: {config}")
+        else:
+            return llm
+
+    @classmethod
+    def __determine_fingerprint(
+        cls,
+        input_files: list[Path],
+        config: RetrievalConfig,
+    ) -> str:
+        # jww (2025-06-25): Include configuration details that might affect
+        # the persisted vector index.
+        fingerprint = [collection_hash(input_files), repr(config)]
+        final_hash = "\n".join(fingerprint).encode("utf-8")
+        final_base64 = base64.b64encode(final_hash).decode("utf-8")
+        return final_base64[0:32]
+
+    @classmethod
+    def __read_documents(
+        cls,
+        input_files: list[Path],
+        num_workers: int | None = None,
+        recursive: bool = False,
+        verbose: bool = False,
+    ) -> Iterable[Document]:
+        file_extractor: dict[str, BaseReader] = {
+            ".org": OrgReader(),
+            ".eml": MailParser(),
+        }
+        return SimpleDirectoryReader(
+            input_files=input_files,
+            file_extractor=file_extractor,
+            recursive=recursive,
+        ).load_data(num_workers=num_workers, show_progress=verbose)
+
+    @classmethod
+    def __load_splitter(
+        cls,
+        splitter: SplitterConfig,
+        verbose: bool = False,
+    ) -> TransformComponent | NoReturn:
+        match splitter:
+            case SentenceSplitterConfig():
+                return SentenceSplitter(
+                    chunk_size=splitter.chunk_size,
+                    chunk_overlap=splitter.chunk_overlap,
+                    include_metadata=splitter.include_metadata,
+                )
+            case SentenceWindowSplitterConfig():
+                return SentenceWindowNodeParser.from_defaults(
+                    window_size=splitter.window_size,
+                    window_metadata_key=splitter.window_metadata_key,
+                    original_text_metadata_key=splitter.original_text_metadata_key,
+                )
+            case SemanticSplitterConfig():
+                if splitter.embedding is not None:
+                    embed_llm = RAGWorkflow.__load_embedding(
+                        splitter.embedding,
+                        verbose=verbose,
+                    )
+                else:
+                    error("Semantic splitter needs an embedding model")
+
+                return SemanticSplitterNodeParser(
+                    buffer_size=splitter.buffer_size,
+                    breakpoint_percentile_threshold=splitter.breakpoint_percentile_threshold,
+                    embed_model=embed_llm,
+                    include_metadata=splitter.include_metadata,
+                )
+            case JSONNodeParserConfig():
+                return JSONNodeParser(
+                    include_metadata=splitter.include_metadata,
+                    include_prev_next_rel=splitter.include_prev_next_rel,
+                )
+            case CodeSplitterConfig():
+                return CodeSplitter(
+                    language=splitter.language,
+                    chunk_lines=splitter.chunk_lines,
+                    chunk_lines_overlap=splitter.chunk_lines_overlap,
+                    max_chars=splitter.max_chars,
+                )
+
+    @classmethod
+    def __load_extractor(
+        cls,
+        config: ExtractorConfig,
+        verbose: bool = False,
+    ) -> BaseExtractor:
+        match config:
+            case KeywordExtractorConfig():
+                llm = RAGWorkflow.realize_llm(config.llm, verbose=verbose)
+                return KeywordExtractor(
+                    keywords=config.keywords,
+                    llm=llm,
+                    show_progress=verbose,
+                )
+            case SummaryExtractorConfig():
+                llm = RAGWorkflow.realize_llm(config.llm, verbose=verbose)
+                return SummaryExtractor(
+                    summaries=config.summaries or [],
+                    llm=llm,
+                    show_progress=verbose,
+                )
+            case TitleExtractorConfig():
+                llm = RAGWorkflow.realize_llm(config.llm, verbose=verbose)
+                return TitleExtractor(
+                    nodes=config.nodes,
+                    llm=llm,
+                    show_progress=verbose,
+                )
+            case QuestionsAnsweredExtractorConfig():
+                llm = RAGWorkflow.realize_llm(config.llm, verbose=verbose)
+                return QuestionsAnsweredExtractor(
+                    questions=config.questions,
+                    llm=llm,
+                    show_progress=verbose,
+                )
+
+    def __process_documents(
+        self,
+        documents: Iterable[Document],
+        embed_llm: BaseEmbedding,
+        num_workers: int | None = None,
+        verbose: bool = False,
+    ) -> Sequence[BaseNode]:
+        transformations: list[TransformComponent] = [
+            self.__load_splitter(
+                splitter=self.config.retrieval.splitter or SentenceSplitterConfig(),
+                verbose=verbose,
+            )
+        ]
+
+        transformations.extend(
+            [
+                self.__load_extractor(
+                    entry,
+                    verbose=verbose,
+                )
+                for entry in self.config.retrieval.extractors or []
+            ]
+        )
+
+        transformations.append(embed_llm)
+
+        # ingest_cache = IngestionCache(
+        #     cache=RedisCache.from_host_and_port(host="127.0.0.1", port=6379),
+        #     collection="my_test_cache",
+        # )
+
+        pipeline: IngestionPipeline = IngestionPipeline(
+            transformations=transformations,
+            # cache=ingest_cache,
+            docstore=SimpleDocumentStore(),
+        )
+        return pipeline.run(
+            documents=documents,
+            num_workers=num_workers,
+            show_progress=verbose,
+        )
+
+    def __build_vector_index(
+        self,
+        embed_llm: BaseEmbedding,
+        nodes: Sequence[BaseNode],
+        storage_context: StorageContext,
+        verbose: bool = False,
+    ) -> tuple[VectorStoreIndex, BaseKeywordTableIndex | None]:
+        index_structs = storage_context.index_store.index_structs()
+        for struct in index_structs:
+            storage_context.index_store.delete_index_struct(key=struct.index_id)
+
+        vector_index = VectorStoreIndex(
+            nodes,
+            storage_context=storage_context,
+            embed_model=embed_llm,
+            show_progress=verbose,
+        )
+
+        if (
+            self.config.retrieval.keywords is not None
+            and self.config.retrieval.keywords.collect
+        ):
+            if self.config.retrieval.keywords.llm is None:
+                keyword_index = SimpleKeywordTableIndex(
+                    nodes,
+                    storage_context=storage_context,
+                    show_progress=verbose,
+                )
+            else:
+                llm = self.realize_llm(self.config.retrieval.keywords.llm)
+                keyword_index = KeywordTableIndex(
+                    nodes,
+                    storage_context=storage_context,
+                    show_progress=verbose,
+                    llm=llm,
+                )
+        else:
+            keyword_index = None
+
+        return vector_index, keyword_index
+
+    def __persist_dir(self, input_files: list[Path]) -> Path:
+        return cache_dir() / self.__determine_fingerprint(
+            input_files, self.config.retrieval
+        )
+
+    def __load_storage_context(
+        self,
+        persist_dir: Path | None = None,
+    ) -> StorageContext:
+        if (
+            self.config.retrieval.vector_store is not None
+            and isinstance(
+                self.config.retrieval.vector_store, PostgresVectorStoreConfig
+            )
+            and self.config.retrieval.embedding is not None
+        ):
+            docstore, index_store, vector_store = self.__postgres_stores(
+                config=self.config.retrieval.vector_store,
+                embedding_dimensions=self.config.retrieval.vector_store.dimensions,
+            )
+        elif persist_dir is not None and os.path.isdir(persist_dir):
+            docstore = SimpleDocumentStore.from_persist_dir(str(persist_dir))
+            index_store = SimpleIndexStore.from_persist_dir(str(persist_dir))
+            vector_store = SimpleVectorStore.from_persist_dir(str(persist_dir))
+        else:
+            docstore = SimpleDocumentStore()
+            index_store = SimpleIndexStore()
+            vector_store = SimpleVectorStore()
+
+        return StorageContext.from_defaults(
+            docstore=docstore,
+            index_store=index_store,
+            vector_store=vector_store,
+            persist_dir=(
+                str(persist_dir) if persist_dir is not None else DEFAULT_PERSIST_DIR
+            ),
+        )
+
+    def __ingest_documents(
+        self,
+        embed_llm: BaseEmbedding,
+        storage_context: StorageContext,
+        input_files: list[Path],
+        num_workers: int | None = None,
+        verbose: bool = False,
+    ) -> tuple[
+        VectorStoreIndex,
+        BaseKeywordTableIndex | None,
+    ]:
+        documents = self.__read_documents(
+            input_files=input_files,
+            num_workers=num_workers,
+            verbose=verbose,
+        )
+
+        nodes = self.__process_documents(
+            documents=documents,
+            embed_llm=embed_llm,
+            num_workers=num_workers,
+            verbose=verbose,
+        )
+
+        vector_index, keyword_index = self.__build_vector_index(
+            embed_llm=embed_llm,
+            nodes=nodes,
+            storage_context=storage_context,
+            verbose=verbose,
+        )
+
+        vector_index.set_index_id("vector_index")
+        if keyword_index is not None:
+            keyword_index.set_index_id("keyword_index")
+
+        return vector_index, keyword_index
+
+    def __save_indices(
+        self,
+        storage_context: StorageContext,
+        persist_dir: Path | None,
+    ):
+        if self.config.retrieval.vector_store is not None:
+            pass
+        elif persist_dir is not None:
+            storage_context.persist(  # pyright: ignore[reportUnknownMemberType]
+                persist_dir=str(persist_dir)
+            )
+
+    def __load_indices(
+        self,
+        embed_llm: BaseEmbedding,
+        storage_context: StorageContext,
+    ) -> tuple[
+        VectorStoreIndex | None,
+        BaseKeywordTableIndex | None,
+    ]:
+        keyword_index = None
+
+        indices: list[BaseIndex[IndexDict]]
+        indices = load_indices_from_storage(  # pyright: ignore[reportUnknownVariableType]
+            storage_context=storage_context,
+            embed_model=embed_llm,
+            # This doesn't actually need an llm, but it tries to
+            # load one if it's None
+            llm=embed_llm,
+            index_ids=(
+                ["vector_index", "keyword_index"]
+                if self.config.retrieval.keywords is not None
+                and self.config.retrieval.keywords.collect
+                else ["vector_index"]
+            ),
+        )
+        if (
+            self.config.retrieval.keywords is not None
+            and self.config.retrieval.keywords.collect
+        ):
+            [vi, ki] = indices
+            vector_index = cast(VectorStoreIndex, vi)
+            keyword_index = cast(BaseKeywordTableIndex, ki)
+        else:
+            [vi] = indices
+            vector_index = cast(VectorStoreIndex, vi)
+
+        return vector_index, keyword_index
+
+    def __load_indices_from_disk(
+        self,
+        storage_context: StorageContext,
+        input_files: list[Path] | None,
+        embed_llm: BaseEmbedding,
+        persist_dir: Path | None = None,
+        num_workers: int | None = None,
+        verbose: bool = False,
+    ) -> tuple[
+        VectorStoreIndex | None,
+        BaseKeywordTableIndex | None,
+    ]:
+        if input_files is None:
+            error("Cannot create vector index without input files")
+
+        vector_index, keyword_index = self.__ingest_documents(
+            num_workers=num_workers,
+            embed_llm=embed_llm,
+            storage_context=storage_context,
+            input_files=input_files,
+            verbose=verbose,
+        )
+
+        self.__save_indices(
+            storage_context,
+            persist_dir=persist_dir,
+        )
+
+        return (vector_index, keyword_index)
+
+    def __load_indices_from_cache(
+        self,
+        storage_context: StorageContext,
+        embed_llm: BaseEmbedding,
+    ) -> tuple[
+        VectorStoreIndex | None,
+        BaseKeywordTableIndex | None,
+    ]:
+        try:
+            vector_index, keyword_index = self.__load_indices(
+                embed_llm=embed_llm,
+                storage_context=storage_context,
+            )
+        except ValueError:
+            vector_index = None
+            keyword_index = None
+
+        return (vector_index, keyword_index)
+
+    def __ingest_files(
+        self,
+        input_files: list[Path] | None,
+        embed_llm: BaseEmbedding,
+        index_files: bool = False,
+        num_workers: int | None = None,
+        verbose: bool = False,
+    ) -> tuple[
+        VectorStoreIndex | None,
+        BaseKeywordTableIndex | None,
+    ]:
+        persist_dir: Path | None = None
+
+        if input_files is None:
+            pass
+        elif self.config.retrieval.embedding is None:
+            error("Cannot ingest files without an embedding model")
+        else:
+            persist_dir = self.__persist_dir(input_files)
+
+        storage_context = self.__load_storage_context(
+            persist_dir=persist_dir,
+        )
+
+        vector_index = None
+        keyword_index = None
+
+        if not index_files:
+            (vector_index, keyword_index) = self.__load_indices_from_cache(
+                storage_context,
+                embed_llm,
+            )
+
+        if input_files is not None and vector_index is None and keyword_index is None:
+            (vector_index, keyword_index) = self.__load_indices_from_disk(
+                storage_context,
+                input_files,
+                embed_llm,
+                persist_dir,
+                num_workers,
+                verbose,
+            )
+
+        return (vector_index, keyword_index)
+
+    def __retriever_from_index(
+        self,
+        vector_index: VectorStoreIndex | None,
+        keyword_index: BaseKeywordTableIndex | None,
+        top_k: int | None = None,
+        sparse_top_k: int | None = None,
+        verbose: bool = False,
+    ) -> BaseRetriever | None:
+        if vector_index is not None:
+            if (
+                self.config.retrieval.vector_store is not None
+                and isinstance(
+                    self.config.retrieval.vector_store, PostgresVectorStoreConfig
+                )
+                and self.config.retrieval.fusion is not None
+            ):
+                vector_retriever = vector_index.as_retriever(
+                    vector_store_query_mode="default",
+                    similarity_top_k=top_k,
+                    verbose=verbose,
+                )
+                text_retriever = vector_index.as_retriever(
+                    vector_store_query_mode="sparse",
+                    similarity_top_k=sparse_top_k,
+                    verbose=verbose,
+                )
+                llm = self.realize_llm(self.config.retrieval.fusion.llm)
+                vector_retriever = QueryFusionRetriever(
+                    [vector_retriever, text_retriever],
+                    similarity_top_k=top_k or DEFAULT_SIMILARITY_TOP_K,
+                    num_queries=self.config.retrieval.fusion.num_queries,
+                    mode=self.config.retrieval.fusion.mode,
+                    llm=llm,
+                    verbose=verbose,
+                )
+            else:
+                self.logger.info("Load retriever from vector index")
+                vector_retriever = vector_index.as_retriever(
+                    similarity_top_k=top_k,
+                    verbose=verbose,
+                )
+        else:
+            self.logger.info("There is no vector index")
+            vector_retriever = None
+
+        if keyword_index is not None:
+            keyword_retriever = keyword_index.as_retriever(
+                verbose=verbose,
+            )
+        else:
+            keyword_retriever = None
+
+        if vector_retriever is not None:
+            if keyword_retriever is not None:
+                retriever = CustomRetriever(
+                    vector_retriever=vector_retriever,
+                    keyword_retriever=keyword_retriever,
+                    verbose=verbose,
+                )
+            else:
+                retriever = vector_retriever
+        else:
+            retriever = keyword_retriever
+
+        return retriever
+
+    @classmethod
+    def __merge_nodes(
+        cls,
+        storage_context: StorageContext,
+        nodes: list[BaseNode],
+    ):
+        d = storage_context.vector_store.to_dict()
+        embedding_dict = d["embedding_dict"]
+        items = storage_context.docstore.docs.items()
+        for doc_id, node in items:
+            node.embedding = embedding_dict[doc_id]
+            nodes.append(node)
+
+    def load_retriever(
+        self,
+        input_files: list[Path] | None,
+        num_workers: int | None = None,
+        embed_individually: bool = False,
+        index_files: bool = False,
+        top_k: int | None = None,
+        sparse_top_k: int | None = None,
+        verbose: bool = False,
+    ) -> BaseRetriever | None:
+        if self.config.retrieval.embedding is not None:
+            embed_llm = self.__load_embedding(
+                config=self.config.retrieval.embedding,
+                verbose=verbose,
+            )
+        else:
+            error("File ingestion requires an embedding model")
+
+        if input_files is not None and embed_individually:
+            vi_nodes: list[BaseNode] = []
+            ki_nodes: list[BaseNode] = []
+
+            for input_file in input_files:
+                vector_index, keyword_index = self.__ingest_files(
+                    num_workers=num_workers,
+                    input_files=[input_file],
+                    embed_llm=embed_llm,
+                    index_files=index_files,
+                    verbose=verbose,
+                )
+                if vector_index is not None:
+                    self.__merge_nodes(vector_index.storage_context, vi_nodes)
+                if keyword_index is not None:
+                    self.__merge_nodes(keyword_index.storage_context, ki_nodes)
+
+            vector_index = VectorStoreIndex(
+                nodes=vi_nodes,
+                embed_model=embed_llm,
+            )
+            if len(ki_nodes) > 0:
+                keyword_index = SimpleKeywordTableIndex(
+                    nodes=ki_nodes,
+                )
+            else:
+                keyword_index = None
+        else:
+            # If there are no input files mentioned, this can only be the
+            # situation where we are expected to load a vector index directly
+            # from a database, such as Postgres, assuming that a collection
+            # had been embedded there earlier using the "index" command
+            # against some set of files.
+            vector_index, keyword_index = self.__ingest_files(
+                num_workers=num_workers,
+                input_files=input_files,
+                embed_llm=embed_llm,
+                index_files=index_files,
+                verbose=verbose,
+            )
+
+        retriever = self.__retriever_from_index(
+            vector_index,
+            keyword_index,
+            top_k=top_k,
+            sparse_top_k=sparse_top_k,
+            verbose=verbose,
+        )
+
+        return retriever
+
+    def retrieve_nodes(
+        self, retriever: BaseRetriever, text: str
+    ) -> list[dict[str, Any]]:
+        nodes = retriever.retrieve(text)
+        return [
+            {
+                "text": node.text,
+                "metadata": node.metadata,
+            }
+            for node in nodes
+        ]
 
 
 @dataclass

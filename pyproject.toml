@@ -1,0 +1,139 @@
+[tool.isort]
+profile = "black"
+line_length = 88
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+split_on_trailing_comma = true
+skip_glob = ["*/migrations/*", "*/venv/*", "*/.venv/*"]
+known_first_party = ["rag_client"]
+known_third_party = [
+    "llama_index",
+    "pydantic",
+    "fastapi",
+    "uvicorn",
+    "dataclass_wizard",
+    "psycopg2",
+    "numpy",
+    "orgparse",
+    "yaml",
+    "typed_argparse",
+    "xdg_base_dirs",
+    "readline",
+]
+sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+default_section = "THIRDPARTY"
+
+[tool.black]
+line-length = 88
+target-version = ['py310', 'py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+check_untyped_defs = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "llama_index.*",
+    "dataclass_wizard.*",
+    "orgparse.*",
+    "psycopg2.*",
+    "typed_argparse.*",
+    "xdg_base_dirs.*",
+]
+ignore_missing_imports = true
+
+[tool.pylint]
+max-line-length = 88
+disable = [
+    "C0111",  # missing-docstring
+    "C0103",  # invalid-name
+    "R0903",  # too-few-public-methods
+    "R0913",  # too-many-arguments
+    "W0212",  # protected-access
+]
+
+[tool.pydocstyle]
+convention = "google"
+add-ignore = ["D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107"]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rag-client"
+version = "0.1.0"
+description = "A flexible Python tool for Retrieval-Augmented Generation"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "RAG Client Team", email = "team@example.com"},
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "llama-index>=0.9.0",
+    "pydantic>=2.0.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "dataclass-wizard>=0.22.0",
+    "psycopg2-binary>=2.9.0",
+    "numpy>=1.24.0",
+    "orgparse>=0.3.0",
+    "PyYAML>=6.0",
+    "typed-argparse>=0.3.0",
+    "xdg-base-dirs>=6.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.0.0",
+    "pylint>=2.17.0",
+    "pydocstyle>=6.3.0",
+    "sphinx>=6.0.0",
+    "sphinx-rtd-theme>=1.2.0",
+]
+
+[project.scripts]
+rag-client = "main:main"

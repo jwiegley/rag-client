@@ -19,7 +19,7 @@ from llama_index.core.storage.chat_store import SimpleChatStore
 from typed_argparse import TypedArgs
 from xdg_base_dirs import xdg_config_home
 
-from rag_client import (
+from rag import (
     ChatState,
     Config,
     QueryState,
@@ -27,15 +27,15 @@ from rag_client import (
     clean_special_tokens,
     error,
 )
-from rag_client.cli.commands import (
+from rag import (
     cmd_chat,
     cmd_index,
     cmd_query,
     cmd_search,
     cmd_serve,
 )
-from rag_client.exceptions import ConfigurationError, RAGClientError
-from rag_client.utils.logging import get_logger, setup_logging
+# from rag_client.exceptions import ConfigurationError, RAGClientError
+# from rag_client.utils.logging import get_logger, setup_logging
 
 
 # Define a class to hold the parsed arguments
@@ -111,7 +111,7 @@ def parse_args(arguments: List[str] = sys.argv[1:]) -> Args:
 
 
 # CLI commands moved to rag_client.cli.commands
-from rag_client.cli.commands import execute_command, rag_initialize
+from rag import execute_command, rag_initialize
 
 
 def main(args: Args) -> None:
@@ -164,7 +164,7 @@ def main(args: Args) -> None:
         match args.command:
             case "serve":
                 # Import and start the API server
-                from rag_client.cli.commands import cmd_serve
+                from rag import cmd_serve
 
                 # Set the API workflow (if api module is used)
                 # api.workflow = rag

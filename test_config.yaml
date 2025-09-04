@@ -1,0 +1,6 @@
+query:
+  llm:
+    model: "test-model"
+    api_base: "http://test"
+  engine:
+    response_mode: compact_accumulate
