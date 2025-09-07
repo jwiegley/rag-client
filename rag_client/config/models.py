@@ -10,7 +10,6 @@ from typing import Any, Dict, List, Literal, Optional, TypeAlias, Union, final
 
 import llama_cpp
 import llama_index.llms.lmstudio.base
-import llama_index.llms.mlx.base
 import llama_index.llms.ollama.base
 import llama_index.llms.openrouter.base
 from dataclass_wizard import JSONWizard, YAMLWizard
@@ -460,23 +459,6 @@ class LMStudioConfig(YAMLWizard):
     additional_kwargs: Dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
-class MLXLLMConfig(YAMLWizard):
-    """MLX LLM configuration."""
-    context_window: int = DEFAULT_CONTEXT_WINDOW
-    max_new_tokens: int = DEFAULT_NUM_OUTPUTS
-    # query_wrapper_prompt: Union[str, PromptTemplate] = "{query_str}"
-    model_name: str = llama_index.llms.mlx.base.DEFAULT_MLX_MODEL
-    model: Optional[Any] = None
-    tokenizer: Optional[Any] = None
-    tokenizer_kwargs: Optional[Dict[str, Any]] = None
-    tokenizer_outputs_to_remove: Optional[List[str]] = None
-    model_kwargs: Optional[Dict[str, Any]] = None
-    generate_kwargs: Optional[Dict[str, Any]] = None
-    system_prompt: str = ""
-    # output_parser: Optional[BaseOutputParser] = None
-
-
 LLMConfig: TypeAlias = (
     OllamaConfig
     | OpenAILikeConfig
@@ -486,7 +468,6 @@ LLMConfig: TypeAlias = (
     | PerplexityConfig
     | OpenRouterConfig
     | LMStudioConfig
-    | MLXLLMConfig
 )
 
 
@@ -516,8 +497,6 @@ def llm_model(config: LLMConfig) -> str:
         case OpenRouterConfig():
             return config.model
         case LMStudioConfig():
-            return config.model_name
-        case MLXLLMConfig():
             return config.model_name
 
 

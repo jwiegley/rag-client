@@ -12,7 +12,6 @@ llama-index-llms-litellm>=0.5.1
 llama-index-llms-perplexity>=0.3.3
 llama-index-llms-lmstudio>=0.3.0
 llama-index-llms-openrouter>=0.3.1
-llama-index-llms-mlx>=0.3.0
 llama-index-readers-file>=0.4.7
 llama-index-vector-stores-postgres>=0.5.1
 # llama-index-vector-stores-milvus>=0.8.1

@@ -297,7 +297,6 @@ class RAGWorkflow:
             - Perplexity (online models)
             - LMStudio (local models)
             - OpenRouter (multi-provider)
-            - MLX (Apple Silicon optimized)
         """
         llm = (
             cls.__load_llm(

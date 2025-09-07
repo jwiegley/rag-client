@@ -16,7 +16,6 @@ from llama_index.embeddings.openai_like import OpenAILikeEmbedding
 from llama_index.llms.litellm import LiteLLM
 from llama_index.llms.llama_cpp import LlamaCPP
 from llama_index.llms.lmstudio import LMStudio
-from llama_index.llms.mlx import MLXLLM
 from llama_index.llms.ollama import Ollama
 from llama_index.llms.openai import OpenAI
 from llama_index.llms.openai_like import OpenAILike
@@ -31,7 +30,6 @@ from ..config.models import (
     LlamaCPPConfig,
     LLMConfig,
     LMStudioConfig,
-    MLXLLMConfig,
     OllamaConfig,
     OllamaEmbeddingConfig,
     OpenAIConfig,
@@ -341,21 +339,6 @@ class LMStudioLLMProvider:
         return LMStudio(**asdict(config))
 
 
-@llm_registry.decorator("mlx", {
-    "description": "Apple MLX models",
-    "requires_gpu": False,
-    "supports_streaming": True,
-    "platform": "darwin",
-})
-class MLXLLMProvider:
-    """MLX LLM provider."""
-    
-    @staticmethod
-    def create(config: MLXLLMConfig, verbose: bool = False) -> LLM:
-        """Create MLX LLM instance."""
-        return MLXLLM(**asdict(config))
-
-
 # Factory functions
 
 def create_embedding_provider(
@@ -428,7 +411,6 @@ def create_llm_provider(
         PerplexityConfig: "perplexity",
         OpenRouterConfig: "openrouter",
         LMStudioConfig: "lmstudio",
-        MLXLLMConfig: "mlx",
     }
     
     config_type = type(config)

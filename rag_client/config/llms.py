@@ -634,46 +634,6 @@ class AnthropicLLMConfig(APIConfig, LLMBaseConfig):
         return v
 
 
-# MLX config for Apple Silicon Macs
-class MLXLLMConfig(LLMBaseConfig):
-    """Configuration for MLX models on Apple Silicon."""
-    
-    model_name: str = Field(
-        ...,
-        description="MLX model identifier or path"
-    )
-    temperature: float = Field(
-        default=DEFAULT_TEMPERATURE,
-        ge=0.0,
-        le=2.0,
-        description="Sampling temperature"
-    )
-    max_tokens: Optional[int] = Field(
-        default=100,
-        gt=0,
-        description="Maximum tokens to generate"
-    )
-    context_window: int = Field(
-        default=DEFAULT_CONTEXT_WINDOW,
-        gt=0,
-        description="Context window size"
-    )
-    top_p: float = Field(
-        default=1.0,
-        ge=0.0,
-        le=1.0,
-        description="Nucleus sampling parameter"
-    )
-    seed: Optional[int] = Field(
-        default=None,
-        description="Random seed"
-    )
-    system_prompt: Optional[str] = Field(
-        default=None,
-        description="System prompt to prepend"
-    )
-
-
 # Export all configuration classes
 __all__ = [
     'OpenAILLMConfig',
@@ -685,5 +645,4 @@ __all__ = [
     'TogetherAILLMConfig',
     'DeepSeekLLMConfig',
     'AnthropicLLMConfig',
-    'MLXLLMConfig',
 ]

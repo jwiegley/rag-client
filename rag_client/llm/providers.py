@@ -14,7 +14,6 @@ from llama_index.core.llms.llm import LLM
 from llama_index.llms.litellm import LiteLLM
 from llama_index.llms.llama_cpp import LlamaCPP
 from llama_index.llms.lmstudio import LMStudio
-from llama_index.llms.mlx import MLXLLM
 from llama_index.llms.ollama import Ollama
 from llama_index.llms.openai import OpenAI
 from llama_index.llms.openai_like import OpenAILike
@@ -26,7 +25,6 @@ from ..config.models import (
     LlamaCPPConfig,
     LLMConfig,
     LMStudioConfig,
-    MLXLLMConfig,
     OllamaConfig,
     OpenAIConfig,
     OpenAILikeConfig,
@@ -150,9 +148,6 @@ def get_llm(
             
         case LMStudioConfig():
             return LMStudio(**asdict(config))
-            
-        case MLXLLMConfig():
-            return MLXLLM(**asdict(config))
             
         case _:
             error(f"Unknown LLM configuration type: {config}")

@@ -35,9 +35,6 @@ query:
     # model_name: "lmstudio-ai/Qwen3-235B-A22B"
     # base_url: "http://localhost:1234/v1"
 
-    # type: MLXLLMConfig
-    # model_name: "mlx-community/Qwen3-235B"
-
   # Query engine configuration. Choose one engine type:
   engine:
     # type: SimpleQueryEngineConfig       # Stateless Q&A engine
