@@ -26,6 +26,49 @@
 pip install -r requirements.txt  # Includes llama-index, pgvector, sqlalchemy
 ```
 
+### Updating Dependencies
+
+Project uses two lock files:
+
+**flake.lock** (Nix dependencies):
+```bash
+nix flake update  # Run weekly/monthly
+```
+
+**requirements.lock** (Python dependencies):
+
+Update all packages latest versions:
+```bash
+uv pip compile requirements.txt -o requirements.lock --upgrade
+```
+
+Update specific package:
+```bash
+uv pip compile requirements.txt -o requirements.lock --upgrade-package llama-index-core
+```
+
+Add new package:
+```bash
+# 1. Add to requirements.txt
+echo "new-package>=1.0.0" >> requirements.txt
+
+# 2. Regenerate lock
+uv pip compile requirements.txt -o requirements.lock
+
+# 3. Enter dev shell (auto-syncs)
+nix develop
+```
+
+Monthly maintenance workflow:
+```bash
+nix flake update                                               # Update Nix
+uv pip compile requirements.txt -o requirements.lock --upgrade # Update Python
+nix develop                                                     # Test changes
+git add flake.lock requirements.lock && git commit -m "chore: update deps"
+```
+
+**Note**: `nix develop` auto-syncs Python dependencies when requirements.lock changes. No manual pip install needed.
+
 ## Modes of Operation
 
 ### 🌀 Ephemeral Mode (In-Memory)

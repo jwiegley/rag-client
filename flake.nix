@@ -87,21 +87,31 @@
         ];
 
         shellHook = ''
-          # Create and activate virtual environment
-          [ ! -d .venv ] && python -m venv .venv
-          source .venv/bin/activate
-
           # Set environment
           export LD_LIBRARY_PATH=${libPath}:$LD_LIBRARY_PATH
           export DYLD_LIBRARY_PATH=${libPath}:$DYLD_LIBRARY_PATH
           export PYTHONPATH="$PWD:$PYTHONPATH"
 
-          # Update pip and install dependencies
-          pip --cache-dir=.venv/pip install -U pip
-          pip --cache-dir=.venv/pip install -r requirements.txt
+          # Create virtual environment if needed
+          if [ ! -d .venv ]; then
+            echo "Creating virtual environment..."
+            python -m venv .venv
+          fi
+
+          # Activate virtual environment
+          source .venv/bin/activate
+
+          # Install/sync dependencies only if needed
+          # Check if .venv needs update (requirements.lock is newer or .venv is missing marker)
+          if [ ! -f .venv/.synced ] || [ requirements.lock -nt .venv/.synced ]; then
+            echo "Syncing dependencies with uv..."
+            uv pip sync requirements.lock
+            touch .venv/.synced
+          fi
         '';
 
         nativeBuildInputs = [
+          uv                    # Fast Python package installer
           black                 # Python code formatter
           basedpyright          # LSP server for Python
           isort                 # Sorts imports
