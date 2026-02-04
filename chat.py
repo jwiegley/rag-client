@@ -71,11 +71,8 @@ class SimpleContextChatEngine(BaseChatEngine):
         """
         self._retriever = retriever
         self._llm = llm or Settings.llm
-        self._memory = (
-            memory
-            or ChatMemoryBuffer.from_defaults(  # pyright: ignore[reportUnknownMemberType]
-                llm=self._llm,
-            )
+        self._memory = memory or ChatMemoryBuffer.from_defaults(  # pyright: ignore[reportUnknownMemberType]
+            llm=self._llm,
         )
         self._prefix_messages = prefix_messages or []
         self._node_postprocessors = node_postprocessors or []

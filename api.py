@@ -1,3 +1,26 @@
+"""
+DEPRECATED: This module is deprecated and will be removed in a future version.
+
+Please use rag_client.api.server instead:
+
+    # Old usage (deprecated)
+    from api import api
+
+    # New usage (recommended)
+    from rag_client.api.server import api
+
+See CLAUDE.md for the full package structure documentation.
+"""
+# ruff: noqa: E402, F403, F405
+
+import warnings
+
+warnings.warn(
+    "The 'api' module is deprecated. Use 'rag_client.api.server' instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 import asyncio
 import json
 import os
@@ -15,7 +38,6 @@ from llama_index.core.llms import ChatMessage
 from rag import *
 from rag_client.utils.logging import get_logger
 from rag_client.exceptions import (
-    RAGClientError,
     APIError,
     ProviderError,
     ValidationError,
@@ -27,31 +49,36 @@ logger = get_logger(__name__)
 
 api = FastAPI(title="OpenAI API Compatible Interface")
 
+
 # Add request/response logging middleware
 @api.middleware("http")
 async def log_requests(request: Request, call_next):
     start_time = time.time()
-    
+
     # Log request
     logger.info(f"Request: {request.method} {request.url.path}")
     logger.debug(f"Request headers: {dict(request.headers)}")
-    
+
     try:
         response = await call_next(request)
-        
+
         # Log response
         duration = time.time() - start_time
         logger.info(
             f"Response: {request.method} {request.url.path} - "
             f"Status: {response.status_code} - Duration: {duration:.3f}s"
         )
-        
+
         if response.status_code >= 400:
             if response.status_code < 500:
-                logger.warning(f"Client error {response.status_code} for {request.url.path}")
+                logger.warning(
+                    f"Client error {response.status_code} for {request.url.path}"
+                )
             else:
-                logger.error(f"Server error {response.status_code} for {request.url.path}")
-        
+                logger.error(
+                    f"Server error {response.status_code} for {request.url.path}"
+                )
+
         return response
     except Exception as e:
         duration = time.time() - start_time
@@ -60,6 +87,7 @@ async def log_requests(request: Request, call_next):
             f"Duration: {duration:.3f}s - Error: {e}"
         )
         raise
+
 
 api.add_middleware(
     CORSMiddleware,
@@ -89,11 +117,9 @@ def verify_api_key(authorization: str | None = None):
     # Simple API key validation - customize as needed
     expected_key = os.environ.get("API_KEY", "sk-test")
     if api_key != expected_key:
-        logger.warning(f"Invalid API key attempt")
+        logger.warning("Invalid API key attempt")
         raise APIError(
-            message="Invalid API key",
-            status_code=401,
-            endpoint="/v1/chat/completions"
+            message="Invalid API key", status_code=401, endpoint="/v1/chat/completions"
         )
 
     logger.debug("API key validated successfully")
@@ -111,8 +137,10 @@ async def create_chat_completion(
 ):
     try:
         logger.info(f"Processing chat completion request for model: {request.model}")
-        logger.debug(f"Request streaming: {request.stream}, messages count: {len(request.messages)}")
-        
+        logger.debug(
+            f"Request streaming: {request.stream}, messages count: {len(request.messages)}"
+        )
+
         # Convert messages to format your model can use
         messages = [
             ChatMessage(role=msg.role, content=msg.content) for msg in request.messages
@@ -128,7 +156,7 @@ async def create_chat_completion(
         # Process with your custom logic
         logger.debug("Processing non-streaming chat request")
         response_content = await chat_response(messages, request)
-        
+
         response_id = f"chatcmpl-{int(time.time())}"
         logger.info(f"Chat completion successful: {response_id}")
 
@@ -154,7 +182,7 @@ async def create_chat_completion(
                 "total_tokens": 150,  # Sum of prompt and completion tokens
             },
         }
-        
+
     except APIError:
         # Re-raise API errors as-is
         raise
@@ -169,7 +197,7 @@ async def create_chat_completion(
         raise HTTPException(
             status_code=429,
             detail="Rate limit exceeded",
-            headers={"Retry-After": str(e.context.get('retry_after', 60))}
+            headers={"Retry-After": str(e.context.get("retry_after", 60))},
         )
     except Exception as e:
         logger.exception(f"Unexpected error in chat completion: {e}")
@@ -274,15 +302,21 @@ async def list_models(
         "object": "list",
         "data": [
             {
-                "id": ((llm_model(workflow.config.chat.llm)
-                        if workflow is not None and
-                           workflow.config.chat is not None
-                        else None) or
-                       (embedding_model(workflow.config.retrieval.embedding)
-                        if workflow is not None and
-                           workflow.config.retrieval.embedding is not None
-                        else None) or
-                       "invalid") + "-RAG",
+                "id": (
+                    (
+                        llm_model(workflow.config.chat.llm)
+                        if workflow is not None and workflow.config.chat is not None
+                        else None
+                    )
+                    or (
+                        embedding_model(workflow.config.retrieval.embedding)
+                        if workflow is not None
+                        and workflow.config.retrieval.embedding is not None
+                        else None
+                    )
+                    or "invalid"
+                )
+                + "-RAG",
                 "object": "model",
                 "created": int(time.time()),
                 "owned_by": "your-organization",

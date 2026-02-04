@@ -1,26 +1,49 @@
 # pyright: reportMissingTypeStubs=false
 # pyright: reportExplicitAny=false
 # pyright: reportAny=false
+# ruff: noqa: E402, F403, F405
 
-import base64
+"""
+DEPRECATED: This module is deprecated and will be removed in a future version.
+
+Please migrate to the new package structure:
+
+    # Old imports (deprecated)
+    from rag import RAGWorkflow, Config, error
+
+    # New imports (recommended)
+    from rag_client import RAGWorkflow, Config, error
+    from rag_client.core.workflow import RAGWorkflow
+    from rag_client.core.models import QueryState, ChatState
+    from rag_client.config.models import Config
+    from rag_client.utils.helpers import error
+
+See CLAUDE.md for the full package structure documentation.
+"""
+
+import warnings
+
+warnings.warn(
+    "The 'rag' module is deprecated. Use 'rag_client' instead. "
+    "See CLAUDE.md for migration guide.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 import hashlib
 import logging
 import os
 import sys
 import psycopg2
 import llama_cpp
-import subprocess
 import chat
-import uuid
 
-from collections.abc import Iterable, Sequence
 from copy import deepcopy
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from dataclass_wizard import JSONFileWizard, JSONWizard, YAMLWizard
 from functools import cache
 from pathlib import Path
 from pydantic import BaseModel
-from urllib.parse import urlparse
 from orgparse.node import OrgNode
 from xdg_base_dirs import xdg_cache_home
 from typing import (
@@ -29,29 +52,21 @@ from typing import (
     NoReturn,
     Self,
     TypeAlias,
-    cast,
     final,
     no_type_check,
     override,
 )
 
 from llama_index.core import (
-    KeywordTableIndex,
     PromptTemplate,
     QueryBundle,
-    SimpleDirectoryReader,
-    SimpleKeywordTableIndex,
-    StorageContext,
-    VectorStoreIndex,
     get_response_synthesizer,  # pyright: ignore[reportUnknownVariableType]
-    load_indices_from_storage,  # pyright: ignore[reportUnknownVariableType]
 )
 from llama_index.core.constants import (
     DEFAULT_CONTEXT_WINDOW,
     DEFAULT_EMBED_BATCH_SIZE,
     DEFAULT_NUM_OUTPUTS,
     DEFAULT_TEMPERATURE,
-    DEFAULT_SIMILARITY_TOP_K,
 )
 from llama_index.core.query_engine.custom import STR_OR_RESPONSE_TYPE
 from llama_index.core.base.embeddings.base import Embedding
@@ -66,7 +81,6 @@ from llama_index.core.chat_engine.types import (
     BaseChatEngine,
     StreamingAgentChatResponse,
 )
-from llama_index.core.data_structs.data_structs import IndexDict
 from llama_index.core.embeddings import BaseEmbedding
 
 from llama_index.core.evaluation import (
@@ -75,26 +89,9 @@ from llama_index.core.evaluation import (
     RelevancyEvaluator,
 )
 from llama_index.core.evaluation.guideline import DEFAULT_GUIDELINES
-from llama_index.core.extractors import (
-    BaseExtractor,
-    KeywordExtractor,
-    QuestionsAnsweredExtractor,
-    SummaryExtractor,
-    TitleExtractor,
-)
-from llama_index.core.indices.base import BaseIndex
-from llama_index.core.indices.keyword_table.base import BaseKeywordTableIndex
-from llama_index.core.ingestion import IngestionPipeline
 from llama_index.core.llms import ChatMessage
 from llama_index.core.llms.llm import LLM
 from llama_index.core.memory import ChatMemoryBuffer, ChatSummaryMemoryBuffer
-from llama_index.core.node_parser import (
-    CodeSplitter,
-    JSONNodeParser,
-    SemanticSplitterNodeParser,
-    SentenceSplitter,
-    SentenceWindowNodeParser,
-)
 from llama_index.core.query_engine import (
     BaseQueryEngine,
     CitationQueryEngine,
@@ -109,7 +106,7 @@ from llama_index.core.response_synthesizers import (
     BaseSynthesizer,
     ResponseMode,
 )
-from llama_index.core.retrievers import BaseRetriever, QueryFusionRetriever
+from llama_index.core.retrievers import BaseRetriever
 from llama_index.core.retrievers.fusion_retriever import FUSION_MODES
 from llama_index.core.schema import (
     BaseNode,
@@ -117,13 +114,8 @@ from llama_index.core.schema import (
     Node,
     NodeWithScore,
     QueryType,
-    TransformComponent,
 )
 from llama_index.core.storage.chat_store import SimpleChatStore
-from llama_index.core.storage.docstore import SimpleDocumentStore
-from llama_index.core.storage.index_store import SimpleIndexStore
-from llama_index.core.storage.storage_context import DEFAULT_PERSIST_DIR
-from llama_index.core.vector_stores.simple import SimpleVectorStore
 
 # from llama_index.core.tools import FunctionTool
 
@@ -135,27 +127,11 @@ import llama_index.llms.lmstudio.base
 from llama_index.embeddings.huggingface.base import (
     DEFAULT_HUGGINGFACE_EMBEDDING_MODEL,
 )
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.embeddings.openai import (
-    OpenAIEmbedding,
     OpenAIEmbeddingMode,
     OpenAIEmbeddingModelType,
 )
-from llama_index.embeddings.openai_like import OpenAILikeEmbedding
-from llama_index.embeddings.litellm import LiteLLMEmbedding
-from llama_index.llms.llama_cpp import LlamaCPP
-from llama_index.llms.lmstudio import LMStudio
-from llama_index.llms.ollama import Ollama
 from llama_index.llms.openai.base import DEFAULT_OPENAI_MODEL
-from llama_index.llms.openai import OpenAI
-from llama_index.llms.openai_like import OpenAILike
-from llama_index.llms.litellm import LiteLLM
-from llama_index.llms.openrouter import OpenRouter
-from llama_index.llms.perplexity import Perplexity
-from llama_index.storage.docstore.postgres import PostgresDocumentStore
-from llama_index.storage.index_store.postgres import PostgresIndexStore
-from llama_index.vector_stores.postgres import PGVectorStore
 
 
 # Utility functions
@@ -817,38 +793,39 @@ class MailParser(BaseReader):
     Ignores other headers, HTML parts, and attachments.
     """
 
-    def load_data(self, file, extra_info: dict[str, Any] | None = None) -> list[Document]:
+    def load_data(
+        self, file, extra_info: dict[str, Any] | None = None
+    ) -> list[Document]:
         """Parse .eml file and extract essential content for indexing."""
-        import email
         from email import policy
         from email.parser import BytesParser
-        from datetime import datetime
 
         documents: list[Document] = []
         extra_info = extra_info or {}
 
         # Parse the email file
-        with open(file, 'rb') as f:
+        with open(file, "rb") as f:
             msg = BytesParser(policy=policy.default).parse(f)
 
         # Extract essential headers
-        from_header = msg.get('From', '')
-        date_header = msg.get('Date', '')
-        subject_header = msg.get('Subject', '')
+        from_header = msg.get("From", "")
+        date_header = msg.get("Date", "")
+        subject_header = msg.get("Subject", "")
 
         # Build metadata
         doc_extra_info = deepcopy(extra_info)
-        doc_extra_info['email_from'] = from_header
-        doc_extra_info['email_date'] = date_header
-        doc_extra_info['email_subject'] = subject_header
-        doc_extra_info['filename'] = str(file)
+        doc_extra_info["email_from"] = from_header
+        doc_extra_info["email_date"] = date_header
+        doc_extra_info["email_subject"] = subject_header
+        doc_extra_info["filename"] = str(file)
 
         # Try to parse date into a more usable format
         if date_header:
             try:
                 from email.utils import parsedate_to_datetime
+
                 parsed_date = parsedate_to_datetime(date_header)
-                doc_extra_info['email_date_parsed'] = parsed_date.isoformat()
+                doc_extra_info["email_date_parsed"] = parsed_date.isoformat()
             except Exception:
                 # If parsing fails, keep the original string
                 pass
@@ -892,10 +869,10 @@ class MailParser(BaseReader):
                 if content_type == "text/plain":
                     try:
                         # Decode the text
-                        charset = part.get_content_charset() or 'utf-8'
+                        charset = part.get_content_charset() or "utf-8"
                         payload = part.get_payload(decode=True)
                         if payload:
-                            text = payload.decode(charset, errors='replace')
+                            text = payload.decode(charset, errors="replace")
                             # Clean up the text
                             text = self._clean_email_text(text)
                             if text:
@@ -908,10 +885,10 @@ class MailParser(BaseReader):
             content_type = msg.get_content_type()
             if content_type == "text/plain":
                 try:
-                    charset = msg.get_content_charset() or 'utf-8'
+                    charset = msg.get_content_charset() or "utf-8"
                     payload = msg.get_payload(decode=True)
                     if payload:
-                        text = payload.decode(charset, errors='replace')
+                        text = payload.decode(charset, errors="replace")
                         text = self._clean_email_text(text)
                         if text:
                             text_parts.append(text)
@@ -925,7 +902,7 @@ class MailParser(BaseReader):
         if not text:
             return ""
 
-        lines = text.split('\n')
+        lines = text.split("\n")
         cleaned_lines = []
 
         for line in lines:
@@ -940,11 +917,12 @@ class MailParser(BaseReader):
             cleaned_lines.append(line)
 
         # Join lines and remove excessive blank lines
-        text = '\n'.join(cleaned_lines)
+        text = "\n".join(cleaned_lines)
 
         # Replace multiple consecutive newlines with double newline
         import re
-        text = re.sub(r'\n{3,}', '\n\n', text)
+
+        text = re.sub(r"\n{3,}", "\n\n", text)
 
         return text.strip()
 
@@ -958,7 +936,8 @@ def get_text_from_org_node_body_only(current_node: OrgNode, format: str = "plain
         body = current_node.get_body(format=format)
         # Remove property drawers that start with :PROPERTIES: and end with :END:
         import re
-        body = re.sub(r':PROPERTIES:.*?:END:\s*', '', body, flags=re.DOTALL)
+
+        body = re.sub(r":PROPERTIES:.*?:END:\s*", "", body, flags=re.DOTALL)
         return body.strip()
     return ""
 
@@ -998,7 +977,7 @@ class OrgReader(BaseReader):
             extra_info[f"org_property_{prop}"] = value
 
         # Add tags if present
-        if hasattr(node, 'tags') and node.tags:
+        if hasattr(node, "tags") and node.tags:
             extra_info["org_tags"] = list(node.tags)
 
         return Document(text=text, extra_info=extra_info)
@@ -1176,7 +1155,6 @@ class CustomRetriever(BaseRetriever):
 
 
 # PostgresDetails moved to rag_client.storage.postgres
-from rag_client.storage.postgres import PostgresDetails
 
 
 class SimpleQueryEngine(CustomQueryEngine):

@@ -1,8 +1,9 @@
 #!/usr/bin/env python
+# ruff: noqa: F403, F405
 
 import asyncio
 
-from rag import *
+from rag import *  # noqa: F403
 
 
 def test_foo():

@@ -21,25 +21,25 @@ from rag_client.utils.logging import setup_logging
 
 def main():
     """Main function demonstrating document indexing."""
-    
+
     # Setup logging
     setup_logging(level="INFO")
-    
+
     # Load configuration
     config_path = Path(__file__).parent / "configs" / "basic.yaml"
     config = load_config(str(config_path))
-    
+
     # Initialize workflow
     print("Initializing RAG workflow...")
     workflow = RAGWorkflow(config)
-    
+
     # Example documents directory (adjust to your needs)
     docs_dir = Path(__file__).parent / "sample_docs"
-    
+
     if not docs_dir.exists():
         print(f"Creating sample documents directory: {docs_dir}")
         docs_dir.mkdir(exist_ok=True)
-        
+
         # Create sample documents
         sample_doc1 = docs_dir / "introduction.txt"
         sample_doc1.write_text("""
@@ -55,7 +55,7 @@ def main():
         - Provides source attribution for generated content
         - Allows domain-specific knowledge integration
         """)
-        
+
         sample_doc2 = docs_dir / "implementation.md"
         sample_doc2.write_text("""
         # Implementing RAG Systems
@@ -76,39 +76,39 @@ def main():
         - Monitor and evaluate retrieval quality
         - Fine-tune prompts for your use case
         """)
-    
+
     # Index documents
     print(f"\nIndexing documents from: {docs_dir}")
     workflow.index_documents([str(docs_dir)])
     print("Indexing complete!")
-    
+
     # Example queries
     queries = [
         "What is RAG?",
         "What are the main components of a RAG system?",
         "How does RAG reduce hallucinations?",
-        "What are best practices for implementing RAG?"
+        "What are best practices for implementing RAG?",
     ]
-    
-    print("\n" + "="*50)
+
+    print("\n" + "=" * 50)
     print("Testing queries:")
-    print("="*50)
-    
+    print("=" * 50)
+
     for query in queries:
         print(f"\nQuery: {query}")
         print("-" * 40)
-        
+
         response = workflow.query(query)
         print(f"Response: {response}")
-        
+
         # Also show sources if available
-        if hasattr(response, 'source_nodes'):
+        if hasattr(response, "source_nodes"):
             print("\nSources:")
             for node in response.source_nodes[:2]:  # Show top 2 sources
                 print(f"  - Score: {node.score:.3f}")
                 print(f"    Text: {node.text[:100]}...")
-    
-    print("\n" + "="*50)
+
+    print("\n" + "=" * 50)
     print("Example complete!")
 
 

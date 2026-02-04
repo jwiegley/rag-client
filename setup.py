@@ -8,8 +8,8 @@ setup(
     py_modules=["main", "rag", "api"],
     # Create the rag-client executable
     entry_points={
-        'console_scripts': [
-            'rag-client=main:main',
+        "console_scripts": [
+            "rag-client=main:main",
         ],
     },
     # Add any dependencies your project needs

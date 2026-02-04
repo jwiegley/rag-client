@@ -2,40 +2,16 @@
 # pyright: reportUnknownVariableType=false
 
 import argparse
-import atexit
-import json
-import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, List, NoReturn, Optional
+from typing import List, Optional
 
-import readline
-from llama_index.core.base.response.schema import (
-    Response,
-    StreamingResponse,
-)
-from llama_index.core.storage.chat_store import SimpleChatStore
 from typed_argparse import TypedArgs
-from xdg_base_dirs import xdg_config_home
 
-from rag import (
-    ChatState,
-    Config,
-    QueryState,
-    RAGWorkflow,
-    clean_special_tokens,
-    error,
-)
-from rag import (
-    cmd_chat,
-    cmd_index,
-    cmd_query,
-    cmd_search,
-    cmd_serve,
-)
-# from rag_client.exceptions import ConfigurationError, RAGClientError
-# from rag_client.utils.logging import get_logger, setup_logging
+from rag_client.exceptions import ConfigurationError, RAGClientError
+from rag_client.utils.logging import get_logger, setup_logging
+from rag import execute_command, rag_initialize
 
 
 # Define a class to hold the parsed arguments
@@ -110,10 +86,6 @@ def parse_args(arguments: List[str] = sys.argv[1:]) -> Args:
     return Args.from_argparse(parser.parse_args())
 
 
-# CLI commands moved to rag_client.cli.commands
-from rag import execute_command, rag_initialize
-
-
 def main(args: Args) -> None:
     """
     The main entry point.
@@ -128,7 +100,7 @@ def main(args: Args) -> None:
         log_level = "INFO"
     else:
         log_level = "WARNING"
-    
+
     # Setup logging using our centralized configuration
     setup_logging(
         level=log_level,
@@ -137,9 +109,9 @@ def main(args: Args) -> None:
             "rag": log_level,
             "rag_client": log_level,
             "llama_index": "WARNING" if log_level != "DEBUG" else "DEBUG",
-        }
+        },
     )
-    
+
     # Get logger for this module
     logger = get_logger("rag")
 
@@ -158,7 +130,7 @@ def main(args: Args) -> None:
             verbose=args.verbose or args.debug,
         )
         logger.debug("RAG workflow initialized successfully")
-        
+
         # Handle different commands
         logger.info(f"Executing command: {args.command}")
         match args.command:
@@ -182,7 +154,7 @@ def main(args: Args) -> None:
             case _:
                 # Execute the command
                 execute_command(logger, rag, retriever, args)
-                
+
     except ConfigurationError as e:
         logger.error(f"Configuration error: {e}")
         sys.exit(1)
