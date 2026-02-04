@@ -117,6 +117,7 @@
           isort                 # Sorts imports
           autoflake             # Removes unused imports
           pylint
+          ruff
           cmake
           pkg-config
           git
