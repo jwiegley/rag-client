@@ -69,16 +69,6 @@ from ..config.models import (
 )
 from ..providers.factory import create_embedding_provider, create_llm_provider
 from ..storage.postgres import PostgresDetails
-from ..types import (
-    ConfigDict,
-    DocumentList,
-    EmbeddingProvider,
-    LLMProvider,
-    NodeList,
-    Retriever,
-    ScoredNodeList,
-    StorageBackend,
-)
 from ..utils.helpers import cache_dir, collection_hash, error
 from ..utils.readers import MailParser, OrgReader
 from .retrieval import CustomRetriever
@@ -89,17 +79,17 @@ DEFAULT_PERSIST_DIR = "./storage"
 @dataclass
 class RAGWorkflow:
     """Main RAG workflow orchestrator.
-    
+
     The RAGWorkflow class manages the complete Retrieval-Augmented Generation pipeline,
     including document ingestion, embedding generation, index creation, and retrieval.
     It supports multiple storage backends (ephemeral and persistent), various embedding
     and LLM providers, and flexible configuration options.
-    
+
     Attributes:
         logger: Logger instance for workflow logging and debugging.
         config: Configuration object containing all workflow settings including
             embedding models, LLMs, storage backends, and processing parameters.
-    
+
     Example:
         >>> from pathlib import Path
         >>> config = RAGWorkflow.load_config(Path("config.yaml"))
@@ -109,37 +99,38 @@ class RAGWorkflow:
         ...     verbose=True
         ... )
         >>> results = workflow.retrieve_nodes(retriever, "What is RAG?")
-    
+
     Note:
         The workflow supports both cached and fresh indexing. Use index_files=True
         to force re-indexing of documents even if a cache exists.
     """
+
     logger: logging.Logger
     config: Config
 
     @classmethod
     def load_config(cls, path: Path) -> Config:
         """Load configuration from YAML file.
-        
+
         Parses a YAML configuration file and creates a Config object with all
         necessary settings for the RAG workflow. The configuration file should
         define embedding models, LLMs, storage backends, and processing parameters.
-        
+
         Args:
             path: Path to the YAML configuration file. Must be a valid YAML
                 file containing a Config object definition.
-            
+
         Returns:
             Config object with all workflow settings loaded and validated.
-            
+
         Raises:
             SystemExit: If the config file doesn't exist, is invalid YAML,
                 or doesn't define a proper Config object.
-            
+
         Example:
             >>> config = RAGWorkflow.load_config(Path("config.yaml"))
             >>> workflow = RAGWorkflow(logger=get_logger(), config=config)
-        
+
         Config File Example:
             ```yaml
             retrieval:
@@ -174,11 +165,11 @@ class RAGWorkflow:
         embedding_dimensions: int,
     ) -> Tuple[PostgresDocumentStore, PostgresIndexStore, PGVectorStore]:
         """Initialize PostgreSQL storage components.
-        
+
         Args:
             config: PostgreSQL configuration
             embedding_dimensions: Dimensionality of embeddings
-            
+
         Returns:
             Tuple of (document store, index store, vector store)
         """
@@ -222,14 +213,14 @@ class RAGWorkflow:
         verbose: bool = False,
     ) -> BaseEmbedding:
         """Load an embedding model.
-        
+
         Args:
             config: Embedding configuration
             verbose: Whether to show progress
-            
+
         Returns:
             Initialized embedding model
-            
+
         Raises:
             SystemExit: If embedding fails to load
         """
@@ -245,14 +236,14 @@ class RAGWorkflow:
         verbose: bool = False,
     ) -> LLM:
         """Load an LLM model.
-        
+
         Args:
             config: LLM configuration
             verbose: Whether to show progress
-            
+
         Returns:
             Initialized LLM model
-            
+
         Raises:
             SystemExit: If LLM fails to load
         """
@@ -268,28 +259,28 @@ class RAGWorkflow:
         verbose: bool = False,
     ) -> Union[LLM, NoReturn]:
         """Realize an LLM from configuration.
-        
+
         Factory method that creates and initializes an LLM instance based on
         the provided configuration. Supports multiple providers including
         OpenAI, Ollama, LiteLLM, Perplexity, and others.
-        
+
         Args:
             config: Optional LLM configuration specifying provider and model.
                 If None, the method will exit with an error.
             verbose: If True, shows initialization progress and debug info.
-            
+
         Returns:
             Initialized LLM instance ready for text generation.
-            
+
         Raises:
             SystemExit: If config is None or LLM initialization fails.
-            
+
         Example:
             >>> from rag_client.config.models import OllamaConfig
             >>> config = OllamaConfig(model="llama2", base_url="http://localhost:11434")
             >>> llm = RAGWorkflow.realize_llm(config, verbose=True)
             >>> response = llm.complete("What is machine learning?")
-        
+
         Supported Providers:
             - OpenAI (GPT-3.5, GPT-4)
             - Ollama (local models)
@@ -318,11 +309,11 @@ class RAGWorkflow:
         config: RetrievalConfig,
     ) -> str:
         """Generate fingerprint for cache identification.
-        
+
         Args:
             input_files: List of input file paths
             config: Retrieval configuration
-            
+
         Returns:
             Base64-encoded fingerprint string (32 chars)
         """
@@ -342,13 +333,13 @@ class RAGWorkflow:
         verbose: bool = False,
     ) -> Iterable[Document]:
         """Read documents from input files.
-        
+
         Args:
             input_files: List of file paths to read
             num_workers: Number of workers for parallel processing
             recursive: Whether to recursively read directories
             verbose: Whether to show progress
-            
+
         Returns:
             Iterable of loaded Document objects
         """
@@ -369,14 +360,14 @@ class RAGWorkflow:
         verbose: bool = False,
     ) -> Union[TransformComponent, NoReturn]:
         """Load a text splitter component.
-        
+
         Args:
             splitter: Splitter configuration
             verbose: Whether to show progress
-            
+
         Returns:
             Initialized splitter component
-            
+
         Raises:
             SystemExit: If splitter requires missing embedding model
         """
@@ -428,11 +419,11 @@ class RAGWorkflow:
         verbose: bool = False,
     ) -> BaseExtractor:
         """Load a metadata extractor.
-        
+
         Args:
             config: Extractor configuration
             verbose: Whether to show progress
-            
+
         Returns:
             Initialized extractor
         """
@@ -474,13 +465,13 @@ class RAGWorkflow:
         verbose: bool = False,
     ) -> Sequence[BaseNode]:
         """Process documents through ingestion pipeline.
-        
+
         Args:
             documents: Input documents to process
             embed_llm: Embedding model for vectorization
             num_workers: Number of workers for parallel processing
             verbose: Whether to show progress
-            
+
         Returns:
             Sequence of processed nodes
         """
@@ -527,13 +518,13 @@ class RAGWorkflow:
         verbose: bool = False,
     ) -> Tuple[VectorStoreIndex, Optional[BaseKeywordTableIndex]]:
         """Build vector and keyword indices from nodes.
-        
+
         Args:
             embed_llm: Embedding model for vectorization
             nodes: Processed nodes to index
             storage_context: Storage context for persistence
             verbose: Whether to show progress
-            
+
         Returns:
             Tuple of (vector index, optional keyword index)
         """
@@ -573,10 +564,10 @@ class RAGWorkflow:
 
     def __persist_dir(self, input_files: List[Path]) -> Path:
         """Get persistence directory for cache.
-        
+
         Args:
             input_files: Input file paths
-            
+
         Returns:
             Path to persistence directory
         """
@@ -589,10 +580,10 @@ class RAGWorkflow:
         persist_dir: Optional[Path] = None,
     ) -> StorageContext:
         """Load or create storage context.
-        
+
         Args:
             persist_dir: Optional persistence directory
-            
+
         Returns:
             Initialized storage context
         """
@@ -634,14 +625,14 @@ class RAGWorkflow:
         verbose: bool = False,
     ) -> Tuple[VectorStoreIndex, Optional[BaseKeywordTableIndex]]:
         """Ingest documents and build indices.
-        
+
         Args:
             embed_llm: Embedding model
             storage_context: Storage context
             input_files: Files to ingest
             num_workers: Number of workers
             verbose: Whether to show progress
-            
+
         Returns:
             Tuple of (vector index, optional keyword index)
         """
@@ -677,7 +668,7 @@ class RAGWorkflow:
         persist_dir: Optional[Path],
     ) -> None:
         """Save indices to persistence.
-        
+
         Args:
             storage_context: Storage context to persist
             persist_dir: Directory to persist to
@@ -695,11 +686,11 @@ class RAGWorkflow:
         storage_context: StorageContext,
     ) -> Tuple[Optional[VectorStoreIndex], Optional[BaseKeywordTableIndex]]:
         """Load indices from storage.
-        
+
         Args:
             embed_llm: Embedding model
             storage_context: Storage context to load from
-            
+
         Returns:
             Tuple of (optional vector index, optional keyword index)
         """
@@ -742,7 +733,7 @@ class RAGWorkflow:
         verbose: bool = False,
     ) -> Tuple[Optional[VectorStoreIndex], Optional[BaseKeywordTableIndex]]:
         """Load indices from disk storage.
-        
+
         Args:
             storage_context: Storage context
             input_files: Input files to index
@@ -750,10 +741,10 @@ class RAGWorkflow:
             persist_dir: Persistence directory
             num_workers: Number of workers
             verbose: Whether to show progress
-            
+
         Returns:
             Tuple of (optional vector index, optional keyword index)
-            
+
         Raises:
             SystemExit: If input_files is None
         """
@@ -781,11 +772,11 @@ class RAGWorkflow:
         embed_llm: BaseEmbedding,
     ) -> Tuple[Optional[VectorStoreIndex], Optional[BaseKeywordTableIndex]]:
         """Load indices from cache.
-        
+
         Args:
             storage_context: Storage context
             embed_llm: Embedding model
-            
+
         Returns:
             Tuple of (optional vector index, optional keyword index)
         """
@@ -809,17 +800,17 @@ class RAGWorkflow:
         verbose: bool = False,
     ) -> Tuple[Optional[VectorStoreIndex], Optional[BaseKeywordTableIndex]]:
         """Ingest files and create indices.
-        
+
         Args:
             input_files: Files to ingest
             embed_llm: Embedding model
             index_files: Whether to force re-indexing
             num_workers: Number of workers
             verbose: Whether to show progress
-            
+
         Returns:
             Tuple of (optional vector index, optional keyword index)
-            
+
         Raises:
             SystemExit: If embedding model is missing
         """
@@ -866,14 +857,14 @@ class RAGWorkflow:
         verbose: bool = False,
     ) -> Optional[BaseRetriever]:
         """Create retriever from indices.
-        
+
         Args:
             vector_index: Vector index for dense retrieval
             keyword_index: Keyword index for sparse retrieval
             top_k: Number of top results for dense retrieval
             sparse_top_k: Number of top results for sparse retrieval
             verbose: Whether to show progress
-            
+
         Returns:
             Combined retriever or None if no indices
         """
@@ -942,7 +933,7 @@ class RAGWorkflow:
         nodes: List[BaseNode],
     ) -> None:
         """Merge nodes from storage context.
-        
+
         Args:
             storage_context: Storage context containing nodes
             nodes: List to append nodes to
@@ -965,12 +956,12 @@ class RAGWorkflow:
         verbose: bool = False,
     ) -> Optional[BaseRetriever]:
         """Load retriever for document search.
-        
+
         Creates or loads a retriever that can search through indexed documents.
         Supports both vector-based (dense) and keyword-based (sparse) retrieval,
         with optional fusion for hybrid search. The method handles caching
         automatically based on input file fingerprints.
-        
+
         Args:
             input_files: List of file paths to index. Can be files or directories.
                 If None, attempts to load from existing storage (e.g., database).
@@ -985,34 +976,34 @@ class RAGWorkflow:
             sparse_top_k: Number of top results for sparse/keyword search.
                 Only used with hybrid retrieval configurations.
             verbose: If True, shows progress bars and detailed logging.
-            
+
         Returns:
             BaseRetriever configured for document search, or None if no
             retriever could be created (e.g., no input files and no existing index).
-            
+
         Raises:
             SystemExit: If embedding model is not configured but required.
-            
+
         Example:
             >>> # Basic usage with local files
             >>> retriever = workflow.load_retriever(
             ...     input_files=[Path("docs/")],
             ...     verbose=True
             ... )
-            
+
             >>> # Force re-indexing
             >>> retriever = workflow.load_retriever(
             ...     input_files=[Path("data.pdf")],
             ...     index_files=True,
             ...     top_k=10
             ... )
-            
+
             >>> # Load from existing database
             >>> retriever = workflow.load_retriever(
             ...     input_files=None,  # Load from PostgreSQL
             ...     top_k=5
             ... )
-        
+
         Note:
             - Cache is stored in XDG_CACHE_HOME/rag-client/ by default
             - PostgreSQL storage requires proper connection configuration
@@ -1081,21 +1072,21 @@ class RAGWorkflow:
         self, retriever: BaseRetriever, text: str
     ) -> List[Dict[str, Any]]:
         """Retrieve relevant nodes for a query.
-        
+
         Searches the indexed documents for content relevant to the query text.
         Returns the most relevant document chunks along with their metadata.
-        
+
         Args:
             retriever: The retriever instance to use for search. Must be
                 initialized via load_retriever() first.
             text: The query text to search for. Can be a question, keywords,
                 or any natural language query.
-            
+
         Returns:
             List of dictionaries, each containing:
                 - 'text': The content of the retrieved document chunk
                 - 'metadata': Dictionary with source file, page numbers, etc.
-            
+
         Example:
             >>> retriever = workflow.load_retriever(input_files=[Path("docs/")])
             >>> results = workflow.retrieve_nodes(
@@ -1105,7 +1096,7 @@ class RAGWorkflow:
             >>> for node in results:
             ...     print(f"Source: {node['metadata'].get('file_name')}")
             ...     print(f"Content: {node['text'][:200]}...")
-        
+
         Note:
             The number of results returned depends on the top_k parameter
             set during retriever initialization.

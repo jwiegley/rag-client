@@ -8,40 +8,49 @@ from typing import NoReturn
 
 from xdg_base_dirs import xdg_cache_home
 
+from ..exceptions import (
+    RAGClientError,
+)
+
 
 def error(msg: str) -> NoReturn:
-    """Print error message and exit.
-    
+    """Raise a RAGClientError instead of sys.exit().
+
+    This function maintains backward compatibility while converting
+    hard exits to proper exceptions that can be caught and handled.
+
     Args:
         msg: Error message to display
+
+    Raises:
+        RAGClientError: Always raised with the provided message
     """
-    print(msg, file=sys.stderr)
-    sys.exit(1)
+    raise RAGClientError(message=msg)
 
 
 def parse_prefixes(prefixes: list[str], s: str) -> tuple[str | None, str]:
     """Parse a string for matching prefixes.
-    
+
     Args:
         prefixes: List of prefixes to check
         s: String to parse
-        
+
     Returns:
         Tuple of (matched_prefix, remainder) or (None, original_string)
     """
     for prefix in prefixes:
         if s.startswith(prefix):
-            return prefix, s[len(prefix):]
+            return prefix, s[len(prefix) :]
     return None, s  # No matching prefix found
 
 
 def list_files(directory: Path, recursive: bool = False) -> list[Path]:
     """List files in a directory.
-    
+
     Args:
         directory: Directory path
         recursive: Whether to recurse into subdirectories
-        
+
     Returns:
         List of file paths
     """
@@ -65,14 +74,14 @@ def read_files(
     recursive: bool = False,
 ) -> list[Path] | NoReturn:
     """Read file paths from various sources.
-    
+
     Args:
         read_from: Source specification (-, directory path, or file path)
         recursive: Whether to recurse into subdirectories
-        
+
     Returns:
         List of file paths
-        
+
     Raises:
         SystemExit: If input is invalid
     """
@@ -92,13 +101,13 @@ def read_files(
 
 def convert_str(read_from: str | None) -> str | None:
     """Convert input source to string content.
-    
+
     Args:
         read_from: Input source (None, -, file path, or direct string)
-        
+
     Returns:
         String content or None
-        
+
     Raises:
         SystemExit: If no input provided on stdin when expected
     """
@@ -118,10 +127,10 @@ def convert_str(read_from: str | None) -> str | None:
 
 def collection_hash(file_list: list[Path]) -> str:
     """Compute a hash of a collection of files.
-    
+
     Args:
         file_list: List of file paths
-        
+
     Returns:
         SHA-512 hash of the concatenated file hashes
     """
@@ -143,7 +152,7 @@ def collection_hash(file_list: list[Path]) -> str:
 
 def cache_dir() -> Path:
     """Get the cache directory for rag-client.
-    
+
     Returns:
         Path to cache directory (created if doesn't exist)
     """
@@ -154,10 +163,10 @@ def cache_dir() -> Path:
 
 def clean_special_tokens(text: str) -> str:
     """Remove special tokens from text.
-    
+
     Args:
         text: Text to clean
-        
+
     Returns:
         Cleaned text
     """

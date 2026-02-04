@@ -15,9 +15,23 @@ import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from llama_index.core.chat_engine.types import (
+    AGENT_CHAT_RESPONSE_TYPE,
+    StreamingAgentChatResponse,
+)
 from llama_index.core.llms import ChatMessage
+from llama_index.core.retrievers import BaseRetriever
 
-from rag import *
+from ..config.models import embedding_model, llm_model
+from ..core.models import (
+    ChatCompletionRequest,
+    ChatState,
+    CompletionRequest,
+    EmbeddingRequest,
+    QueryState,
+)
+from ..core.workflow import RAGWorkflow
+from ..utils.helpers import error
 
 api = FastAPI(title="OpenAI API Compatible Interface")
 
@@ -38,30 +52,30 @@ chat_state: ChatState | None = None
 
 def verify_api_key(authorization: str | None = None):
     """Verify API key from authorization header.
-    
+
     Validates incoming API keys against expected values. Supports both
     Bearer token format and direct key format for flexibility.
-    
+
     Args:
         authorization: Authorization header value. Expected formats:
             - "Bearer sk-xxxxx" (OpenAI standard)
             - "sk-xxxxx" (direct key)
             - None (returns None, may be valid for some endpoints)
-        
+
     Returns:
         Validated API key string if valid, None if no auth provided.
-        
+
     Raises:
         HTTPException: 401 Unauthorized if key is invalid.
-    
+
     Configuration:
         Set expected key via environment variable:
         ```bash
         export API_KEY="sk-your-secret-key"
         ```
-        
+
         Default key if not set: "sk-test"
-    
+
     Example Usage:
         ```python
         @api.get("/protected")
@@ -72,7 +86,7 @@ def verify_api_key(authorization: str | None = None):
                 raise HTTPException(401, "API key required")
             return {"message": "Access granted"}
         ```
-    
+
     Note:
         - In production, use strong random keys
         - Consider implementing key rotation
@@ -80,17 +94,17 @@ def verify_api_key(authorization: str | None = None):
     """
     if not authorization:
         return None
-    
+
     parts = authorization.split()
     api_key = (
         parts[1] if len(parts) == 2 and parts[0].lower() == "bearer" else authorization
     )
-    
+
     # Simple API key validation - customize as needed
     expected_key = os.environ.get("API_KEY", "sk-test")
     if api_key != expected_key:
         raise HTTPException(status_code=401, detail="Invalid API key")
-    
+
     return api_key
 
 
@@ -175,16 +189,16 @@ async def create_chat_completion(
         messages = [
             ChatMessage(role=msg.role, content=msg.content) for msg in request.messages
         ]
-        
+
         if request.stream:
             return StreamingResponse(
                 stream_chat_response(messages, request),
                 media_type="text/event-stream",
             )
-        
+
         # Process with your custom logic
         response_content = await chat_response(messages, request)
-        
+
         # Format response to match OpenAI's format
         return {
             "id": f"chatcmpl-{int(time.time())}",
@@ -221,14 +235,14 @@ async def create_completion(
     ),
 ):
     """Create a text completion (OpenAI-compatible endpoint).
-    
+
     Args:
         request: Completion request
         api_key: Validated API key
-        
+
     Returns:
         Completion response in OpenAI format
-        
+
     Raises:
         HTTPException: If processing fails
     """
@@ -237,18 +251,18 @@ async def create_completion(
         prompt = (
             request.prompt if isinstance(request.prompt, str) else request.prompt[0]
         )
-        
+
         # Handle streaming if requested
         if request.stream:
             return StreamingResponse(
                 stream_completion_response(prompt, request),
                 media_type="text/event-stream",
             )
-        
+
         # # Process with your custom logic
         # response_content = await process_completion_message(messages, request)
         response_content = ""
-        
+
         # Format response to match OpenAI's format
         return {
             "id": f"cmpl-{int(time.time())}",
@@ -349,7 +363,7 @@ async def create_embeddings(
     try:
         # Convert input to list format if it's a string
         inputs = request.input if isinstance(request.input, list) else [request.input]
-        
+
         # In a real implementation, you would call your embedding model here
         # This is a placeholder that returns fake embeddings
         embeddings: list[dict[str, str | list[float] | int]] = []
@@ -359,7 +373,7 @@ async def create_embeddings(
             embeddings.append(
                 {"object": "embedding", "embedding": embedding, "index": i}
             )
-        
+
         return {
             "object": "list",
             "data": embeddings,
@@ -429,15 +443,21 @@ async def list_models(
         "object": "list",
         "data": [
             {
-                "id": ((llm_model(workflow.config.chat.llm)
-                        if workflow is not None and
-                           workflow.config.chat is not None
-                        else None) or
-                       (embedding_model(workflow.config.retrieval.embedding)
-                        if workflow is not None and
-                           workflow.config.retrieval.embedding is not None
-                        else None) or
-                       "invalid") + "-RAG",
+                "id": (
+                    (
+                        llm_model(workflow.config.chat.llm)
+                        if workflow is not None and workflow.config.chat is not None
+                        else None
+                    )
+                    or (
+                        embedding_model(workflow.config.retrieval.embedding)
+                        if workflow is not None
+                        and workflow.config.retrieval.embedding is not None
+                        else None
+                    )
+                    or "invalid"
+                )
+                + "-RAG",
                 "object": "model",
                 "created": int(time.time()),
                 "owned_by": "your-organization",
@@ -451,28 +471,28 @@ async def process_chat_messages(
     request: ChatCompletionRequest,
 ) -> StreamingAgentChatResponse | AGENT_CHAT_RESPONSE_TYPE:
     """Process chat messages with your custom logic.
-    
+
     Args:
         messages: Chat messages
         request: Chat completion request
-        
+
     Returns:
         Chat response
-        
+
     Raises:
         SystemExit: If no user message found or ChatState not initialized
     """
     user_message = next((msg for msg in messages if msg.role == "user"), None)
     if not user_message:
         error("No user message found")
-    
+
     if chat_state is None:
         error("ChatState not initialized")
-        
+
         # user=request.user or "user1",
         # chat_history=list(messages),
         # token_limit=request.max_tokens,
-        
+
     return chat_state.chat(
         query=user_message.content or "",
         streaming=request.stream or False,
@@ -483,11 +503,11 @@ async def chat_response(
     messages: Sequence[ChatMessage], request: ChatCompletionRequest
 ) -> str | NoReturn:
     """Process chat messages with your custom logic.
-    
+
     Args:
         messages: Chat messages
         request: Chat completion request
-        
+
     Returns:
         Response string
     """
@@ -499,17 +519,17 @@ async def stream_chat_response(
     messages: Sequence[ChatMessage], request: ChatCompletionRequest
 ) -> AsyncGenerator[str, None] | NoReturn:
     """Stream chat responses in the SSE format expected by OpenAI clients.
-    
+
     Args:
         messages: Chat messages
         request: Chat completion request
-        
+
     Yields:
         SSE-formatted response chunks
     """
     try:
         response = await process_chat_messages(messages, request)
-        
+
         async for chunk in response.async_response_gen():
             response_json = {
                 "id": f"chatcmpl-{int(time.time())}",
@@ -528,7 +548,7 @@ async def stream_chat_response(
             }
             yield f"data: {json.dumps(response_json)}\n\n"
             await asyncio.sleep(0.1)  # Simulate processing time
-        
+
         response_json: dict[
             str,
             str
@@ -556,7 +576,7 @@ async def stream_chat_response(
             ],
         }
         yield f"data: {json.dumps(response_json)}\n\n"
-        
+
         # End the stream
         yield "data: [DONE]\n\n"
     except Exception as e:
@@ -569,18 +589,18 @@ async def stream_completion_response(
     _prompt: str, _request: CompletionRequest
 ) -> AsyncGenerator[str, None]:
     """Stream completion responses in the SSE format expected by OpenAI clients.
-    
+
     Args:
         _prompt: Input prompt (unused in placeholder)
         _request: Completion request (unused in placeholder)
-        
+
     Yields:
         SSE-formatted response chunks
     """
     try:
         # # Get full response
         # response = llm.astream_complete(prompt).text
-        
+
         # for i, chunk in response:
         #     response_json = {
         #         "id": f"cmpl-{int(time.time())}",
@@ -598,7 +618,7 @@ async def stream_completion_response(
         #     }
         #     yield f"data: {json.dumps(response_json)}\n\n"
         #     await asyncio.sleep(0.1)
-        
+
         yield "data: [DONE]\n\n"
     except Exception as e:
         error_json = json.dumps({"error": {"message": str(e), "type": "server_error"}})
@@ -610,20 +630,20 @@ async def stream_completion_response(
 @api.get("/")
 async def root():
     """Get API status.
-    
+
     Health check endpoint that confirms the API server is running.
     Useful for monitoring and load balancer health checks.
-    
+
     Returns:
         Status object containing:
             - status: Confirmation message
             - version: API version string
-    
+
     Example Request:
         ```bash
         curl http://localhost:7990/
         ```
-    
+
     Example Response:
         ```json
         {
@@ -631,7 +651,7 @@ async def root():
           "version": "1.0.0"
         }
         ```
-    
+
     Note:
         - No authentication required
         - Can be used for uptime monitoring
@@ -642,7 +662,7 @@ async def root():
 
 def start_api_server(host: str, port: int, reload: bool):
     """Start the FastAPI server.
-    
+
     Args:
         host: Host to bind to
         port: Port to bind to

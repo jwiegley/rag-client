@@ -13,18 +13,10 @@ import llama_index.llms.lmstudio.base
 import llama_index.llms.ollama.base
 import llama_index.llms.openrouter.base
 from dataclass_wizard import JSONWizard, YAMLWizard
-
-
-# Configure dataclass_wizard to use 'type' field for union discrimination
-@final
-class GlobalJSONMeta(JSONWizard.Meta):
-    tag_key = "type"
-    auto_assign_tags = True
 from llama_index.core.constants import (
     DEFAULT_CONTEXT_WINDOW,
     DEFAULT_EMBED_BATCH_SIZE,
     DEFAULT_NUM_OUTPUTS,
-    DEFAULT_SIMILARITY_TOP_K,
     DEFAULT_TEMPERATURE,
 )
 from llama_index.core.evaluation.guideline import DEFAULT_GUIDELINES
@@ -39,15 +31,24 @@ from llama_index.embeddings.openai import (
 )
 from llama_index.llms.openai.base import DEFAULT_OPENAI_MODEL
 
+
+# Configure dataclass_wizard to use 'type' field for union discrimination
+@final
+class GlobalJSONMeta(JSONWizard.Meta):
+    tag_key = "type"
+    auto_assign_tags = True
+
+
 # Logging Configuration
+
 
 @dataclass
 class LoggingConfig(YAMLWizard):
     """Configuration for application logging.
-    
+
     Controls logging behavior throughout the RAG client application,
     including log levels, output destinations, and rotation policies.
-    
+
     Attributes:
         level: Logging level. Controls verbosity of output.
             Options: DEBUG, INFO, WARNING, ERROR, CRITICAL.
@@ -62,7 +63,7 @@ class LoggingConfig(YAMLWizard):
         backup_count: Number of rotated log files to keep (default: 5).
             Only used when rotate_logs=True.
         console_output: If True, also outputs logs to console/stderr.
-    
+
     Example YAML:
         ```yaml
         logging:
@@ -74,6 +75,7 @@ class LoggingConfig(YAMLWizard):
           console_output: true
         ```
     """
+
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     log_file: Optional[str] = None
     format: Optional[str] = None
@@ -85,13 +87,14 @@ class LoggingConfig(YAMLWizard):
 
 # Embedding Configurations
 
+
 @dataclass
 class HuggingFaceEmbeddingConfig(YAMLWizard):
     """HuggingFace embedding configuration.
-    
+
     Configures HuggingFace Transformers models for generating text embeddings.
     Supports both local and remote models from HuggingFace Hub.
-    
+
     Attributes:
         model_name: HuggingFace model identifier or local path.
             Default: "BAAI/bge-small-en-v1.5" (efficient English model).
@@ -116,7 +119,7 @@ class HuggingFaceEmbeddingConfig(YAMLWizard):
         parallel_process: If True, enables multi-GPU processing.
         target_devices: List of specific GPU devices for parallel processing.
             Example: ["cuda:0", "cuda:1"]
-    
+
     Example YAML:
         ```yaml
         embedding:
@@ -128,12 +131,13 @@ class HuggingFaceEmbeddingConfig(YAMLWizard):
           embed_batch_size: 32
           device: cuda
         ```
-    
+
     Note:
         - First run downloads model (can be several GB)
         - Consider model size vs accuracy tradeoff
         - Asymmetric models need different instructions for queries/docs
     """
+
     model_name: str = DEFAULT_HUGGINGFACE_EMBEDDING_MODEL
     max_length: Optional[int] = None
     query_instruction: Optional[str] = None
@@ -150,10 +154,10 @@ class HuggingFaceEmbeddingConfig(YAMLWizard):
 @dataclass
 class OllamaEmbeddingConfig(YAMLWizard):
     """Ollama embedding configuration.
-    
+
     Configures Ollama for generating embeddings using locally-hosted models.
     Ollama provides easy deployment of open-source models.
-    
+
     Attributes:
         model_name: Name of the Ollama model to use for embeddings.
             Must be pulled first: `ollama pull <model>`
@@ -166,7 +170,7 @@ class OllamaEmbeddingConfig(YAMLWizard):
             Example: {"num_thread": 8, "temperature": 0}
         client_kwargs: HTTP client configuration.
             Example: {"timeout": 30, "verify_ssl": false}
-    
+
     Example YAML:
         ```yaml
         embedding:
@@ -177,17 +181,18 @@ class OllamaEmbeddingConfig(YAMLWizard):
           ollama_additional_kwargs:
             num_thread: 4
         ```
-    
+
     Prerequisites:
         1. Install Ollama: https://ollama.ai
         2. Pull embedding model: `ollama pull nomic-embed-text`
         3. Ensure Ollama service is running
-    
+
     Note:
         - Ollama models run entirely locally (privacy-preserving)
         - Performance depends on local hardware
         - Some models optimized for specific hardware (e.g., Apple Silicon)
     """
+
     model_name: str
     base_url: str = "http://localhost:11434"
     embed_batch_size: int = DEFAULT_EMBED_BATCH_SIZE
@@ -198,6 +203,7 @@ class OllamaEmbeddingConfig(YAMLWizard):
 @dataclass
 class OpenAIEmbeddingConfig(YAMLWizard):
     """OpenAI embedding configuration."""
+
     mode: str = OpenAIEmbeddingMode.TEXT_SEARCH_MODE
     model: str = OpenAIEmbeddingModelType.TEXT_EMBED_ADA_002
     embed_batch_size: int = 100
@@ -217,6 +223,7 @@ class OpenAIEmbeddingConfig(YAMLWizard):
 @dataclass
 class OpenAILikeEmbeddingConfig(YAMLWizard):
     """OpenAI-like embedding configuration."""
+
     model_name: str
     embed_batch_size: int = 10
     dimensions: Optional[int] = None
@@ -237,6 +244,7 @@ class OpenAILikeEmbeddingConfig(YAMLWizard):
 @dataclass
 class LiteLLMEmbeddingConfig(YAMLWizard):
     """LiteLLM embedding configuration."""
+
     model_name: str
     embed_batch_size: int = 10
     dimensions: Optional[int] = None
@@ -255,6 +263,7 @@ class LiteLLMEmbeddingConfig(YAMLWizard):
 @dataclass
 class LlamaCPPEmbeddingConfig(YAMLWizard):
     """LlamaCPP embedding configuration."""
+
     model_path: Path
     n_gpu_layers: int = 0
     split_mode: int = llama_cpp.LLAMA_SPLIT_MODE_LAYER
@@ -319,10 +328,10 @@ EmbeddingConfig: TypeAlias = (
 
 def embedding_model(config: EmbeddingConfig) -> str:
     """Get model name from embedding configuration.
-    
+
     Args:
         config: Embedding configuration
-        
+
     Returns:
         Model name string
     """
@@ -343,14 +352,18 @@ def embedding_model(config: EmbeddingConfig) -> str:
 
 # LLM Configurations
 
+
 @dataclass
 class OllamaConfig(YAMLWizard):
     """Ollama LLM configuration."""
+
     model: str
     base_url: str = "http://localhost:11434"
     temperature: float = 0.75
     context_window: int = DEFAULT_CONTEXT_WINDOW
-    request_timeout: Optional[float] = llama_index.llms.ollama.base.DEFAULT_REQUEST_TIMEOUT
+    request_timeout: Optional[float] = (
+        llama_index.llms.ollama.base.DEFAULT_REQUEST_TIMEOUT
+    )
     prompt_key: str = "prompt"
     json_mode: bool = False
     # additional_kwargs: Dict[str, Any] = field(default_factory=dict)
@@ -361,6 +374,7 @@ class OllamaConfig(YAMLWizard):
 @dataclass
 class OpenAIConfig(YAMLWizard):
     """OpenAI LLM configuration."""
+
     model: str = DEFAULT_OPENAI_MODEL
     temperature: float = DEFAULT_TEMPERATURE
     max_tokens: Optional[int] = None
@@ -401,6 +415,7 @@ class LiteLLMConfig(OpenAIConfig):
 @dataclass
 class LlamaCPPConfig(YAMLWizard):
     """LlamaCPP LLM configuration."""
+
     model_url: Optional[str] = None
     model_path: Optional[str] = None
     temperature: float = DEFAULT_TEMPERATURE
@@ -416,6 +431,7 @@ class LlamaCPPConfig(YAMLWizard):
 @dataclass
 class PerplexityConfig(YAMLWizard):
     """Perplexity LLM configuration."""
+
     model: str = "sonar-pro"
     temperature: float = 0.2
     max_tokens: Optional[int] = None
@@ -433,6 +449,7 @@ class PerplexityConfig(YAMLWizard):
 @dataclass
 class OpenRouterConfig(YAMLWizard):
     """OpenRouter LLM configuration."""
+
     model: str = llama_index.llms.openrouter.base.DEFAULT_MODEL
     temperature: float = DEFAULT_TEMPERATURE
     max_tokens: int = DEFAULT_NUM_OUTPUTS
@@ -446,6 +463,7 @@ class OpenRouterConfig(YAMLWizard):
 @dataclass
 class LMStudioConfig(YAMLWizard):
     """LMStudio LLM configuration."""
+
     model_name: str
     system_prompt: Optional[str] = None
     # output_parser: Optional[BaseOutputParser] = None
@@ -473,10 +491,10 @@ LLMConfig: TypeAlias = (
 
 def llm_model(config: LLMConfig) -> str:
     """Get model name from LLM configuration.
-    
+
     Args:
         config: LLM configuration
-        
+
     Returns:
         Model name string
     """
@@ -502,9 +520,11 @@ def llm_model(config: LLMConfig) -> str:
 
 # Index and Processing Configurations
 
+
 @dataclass
 class KeywordsConfig(YAMLWizard):
     """Keywords collection configuration."""
+
     collect: bool = False
     llm: Optional[LLMConfig] = None
 
@@ -512,6 +532,7 @@ class KeywordsConfig(YAMLWizard):
 @dataclass
 class SentenceSplitterConfig(YAMLWizard):
     """Sentence splitter configuration."""
+
     chunk_size: int = 1024
     chunk_overlap: int = 200
     include_metadata: bool = True
@@ -520,6 +541,7 @@ class SentenceSplitterConfig(YAMLWizard):
 @dataclass
 class SentenceWindowSplitterConfig(YAMLWizard):
     """Sentence window splitter configuration."""
+
     window_size: int = 3
     window_metadata_key: str = "window"
     original_text_metadata_key: str = "original_text"
@@ -528,6 +550,7 @@ class SentenceWindowSplitterConfig(YAMLWizard):
 @dataclass
 class SemanticSplitterConfig(YAMLWizard):
     """Semantic splitter configuration."""
+
     embedding: EmbeddingConfig
     buffer_size: int = 1
     breakpoint_percentile_threshold: int = 95
@@ -537,6 +560,7 @@ class SemanticSplitterConfig(YAMLWizard):
 @dataclass
 class JSONNodeParserConfig(YAMLWizard):
     """JSON node parser configuration."""
+
     include_metadata: bool = True
     include_prev_next_rel: bool = True
 
@@ -544,6 +568,7 @@ class JSONNodeParserConfig(YAMLWizard):
 @dataclass
 class CodeSplitterConfig(YAMLWizard):
     """Code splitter configuration."""
+
     language: str
     chunk_lines: int = 40
     chunk_lines_overlap: int = 15
@@ -561,9 +586,11 @@ SplitterConfig: TypeAlias = (
 
 # Extractor Configurations
 
+
 @dataclass
 class KeywordExtractorConfig(YAMLWizard):
     """Keyword extractor configuration."""
+
     llm: LLMConfig
     keywords: int = 5
 
@@ -571,6 +598,7 @@ class KeywordExtractorConfig(YAMLWizard):
 @dataclass
 class SummaryExtractorConfig(YAMLWizard):
     """Summary extractor configuration."""
+
     llm: LLMConfig
     # ["self"]
     # summaries: List[str] = field(default_factory=list)
@@ -580,6 +608,7 @@ class SummaryExtractorConfig(YAMLWizard):
 @dataclass
 class TitleExtractorConfig(YAMLWizard):
     """Title extractor configuration."""
+
     llm: LLMConfig
     nodes: int = 5
 
@@ -587,6 +616,7 @@ class TitleExtractorConfig(YAMLWizard):
 @dataclass
 class QuestionsAnsweredExtractorConfig(YAMLWizard):
     """Questions answered extractor configuration."""
+
     llm: LLMConfig
     questions: int = 1
 
@@ -601,15 +631,18 @@ ExtractorConfig: TypeAlias = (
 
 # Evaluator Configurations
 
+
 @dataclass
 class RelevancyEvaluatorConfig(YAMLWizard):
     """Relevancy evaluator configuration."""
+
     llm: LLMConfig
 
 
 @dataclass
 class GuidelineConfig(YAMLWizard):
     """Guideline evaluator configuration."""
+
     llm: LLMConfig
     guidelines: str = DEFAULT_GUIDELINES
 
@@ -619,9 +652,11 @@ EvaluatorConfig: TypeAlias = RelevancyEvaluatorConfig | GuidelineConfig
 
 # Query Engine Configurations
 
+
 @dataclass
 class CitationQueryEngineConfig(YAMLWizard):
     """Citation query engine configuration."""
+
     chunk_size: int = 512
     chunk_overlap: int = 20
 
@@ -629,12 +664,14 @@ class CitationQueryEngineConfig(YAMLWizard):
 @dataclass
 class RetrieverQueryEngineConfig(YAMLWizard):
     """Retriever query engine configuration."""
+
     response_mode: ResponseMode = ResponseMode.REFINE
 
 
 @dataclass
 class SimpleQueryEngineConfig(YAMLWizard):
     """Simple query engine configuration."""
+
     pass
 
 
@@ -646,12 +683,14 @@ BaseQueryEngineConfig: TypeAlias = (
 @dataclass
 class MultiStepQueryEngineConfig(YAMLWizard):
     """Multi-step query engine configuration."""
+
     engine: BaseQueryEngineConfig
 
 
 @dataclass
 class RetrySourceQueryEngineConfig(YAMLWizard):
     """Retry source query engine configuration."""
+
     llm: LLMConfig
     evaluator: EvaluatorConfig
     engine: BaseQueryEngineConfig
@@ -660,6 +699,7 @@ class RetrySourceQueryEngineConfig(YAMLWizard):
 @dataclass
 class RetryQueryEngineConfig(YAMLWizard):
     """Retry query engine configuration."""
+
     evaluator: EvaluatorConfig
     engine: BaseQueryEngineConfig
 
@@ -674,27 +714,32 @@ QueryEngineConfig: TypeAlias = (
 
 # Chat Engine Configurations
 
+
 @dataclass
 class SimpleChatEngineConfig(YAMLWizard):
     """Simple chat engine configuration."""
+
     pass
 
 
 @dataclass
 class SimpleContextChatEngineConfig(YAMLWizard):
     """Simple context chat engine configuration."""
+
     context_window: int = DEFAULT_CONTEXT_WINDOW
 
 
 @dataclass
 class ContextChatEngineConfig(YAMLWizard):
     """Context chat engine configuration."""
+
     pass
 
 
 @dataclass
 class CondensePlusContextChatEngineConfig(YAMLWizard):
     """Condense plus context chat engine configuration."""
+
     skip_condense: bool = False
 
 
@@ -708,15 +753,18 @@ ChatEngineConfig: TypeAlias = (
 
 # Vector Store Configurations
 
+
 @dataclass
 class SimpleVectorStoreConfig(YAMLWizard):
     """Simple vector store configuration."""
+
     pass
 
 
 @dataclass
 class PostgresVectorStoreConfig(YAMLWizard):
     """PostgreSQL vector store configuration."""
+
     connection: str
     hybrid_search: bool = False
     dimensions: int = 512
@@ -731,9 +779,11 @@ VectorStoreConfig: TypeAlias = SimpleVectorStoreConfig | PostgresVectorStoreConf
 
 # Retriever Configurations
 
+
 @dataclass
 class FusionRetrieverConfig(YAMLWizard):
     """Fusion retriever configuration."""
+
     llm: LLMConfig
     num_queries: int = 1  # set this to 1 to disable query generation
     mode: FUSION_MODES = FUSION_MODES.RELATIVE_SCORE
@@ -741,13 +791,14 @@ class FusionRetrieverConfig(YAMLWizard):
 
 # Main Configurations
 
+
 @dataclass
 class RetrievalConfig(YAMLWizard):
     """Retrieval configuration.
-    
+
     Defines the complete retrieval pipeline for document indexing and search.
     Coordinates embedding generation, storage, chunking, and retrieval strategies.
-    
+
     Attributes:
         llm: Language model configuration for advanced retrieval features.
             Used for query expansion, re-ranking, and extraction.
@@ -767,7 +818,7 @@ class RetrievalConfig(YAMLWizard):
             Default: 10. Used in hybrid retrieval scenarios.
         fusion: Configuration for combining multiple retrievers.
             Enables advanced fusion strategies for better results.
-    
+
     Example YAML:
         ```yaml
         retrieval:
@@ -787,12 +838,13 @@ class RetrievalConfig(YAMLWizard):
           keywords:
             collect: true
         ```
-    
+
     Note:
         - LLM is required even for basic retrieval (used for processing)
         - Embedding model must match vector store dimensions
         - Consider memory usage with large document sets
     """
+
     embed_individually: bool = False
     embedding: Optional[EmbeddingConfig] = None
     keywords: Optional[KeywordsConfig] = None
@@ -805,10 +857,10 @@ class RetrievalConfig(YAMLWizard):
 @dataclass
 class QueryConfig(YAMLWizard):
     """Query configuration.
-    
+
     Configures the query processing engine for one-shot Q&A operations.
     Defines how queries are processed, contextualized, and answered.
-    
+
     Attributes:
         engine: Query engine configuration defining processing strategy.
             Options include:
@@ -819,7 +871,7 @@ class QueryConfig(YAMLWizard):
             If None, defaults to SimpleQueryEngine.
         llm: Language model for generating responses.
             Inherited from engine configuration.
-    
+
     Example YAML:
         ```yaml
         query:
@@ -831,19 +883,20 @@ class QueryConfig(YAMLWizard):
             model: gpt-3.5-turbo
             temperature: 0.7
         ```
-    
+
     Query Engines:
         - Simple: Direct LLM response, no retrieval
         - Retriever: Retrieves context then generates
         - Citation: Adds source references to responses
         - Retry: Handles failures with automatic retries
         - RetrySource: Retries with different sources
-    
+
     Note:
         - Query operations are stateless (no history)
         - For conversational interactions, use ChatConfig
         - Engine choice impacts response quality and latency
     """
+
     llm: LLMConfig
     engine: Optional[QueryEngineConfig] = None
     retries: bool = False
@@ -855,10 +908,10 @@ class QueryConfig(YAMLWizard):
 @dataclass
 class ChatConfig(YAMLWizard):
     """Chat configuration.
-    
+
     Configures the conversational AI system with memory and context management.
     Enables multi-turn conversations with optional RAG enhancement.
-    
+
     Attributes:
         engine: Chat engine configuration defining conversation strategy.
             Options include:
@@ -875,7 +928,7 @@ class ChatConfig(YAMLWizard):
             History saved to ~/.config/rag-client/chat_store.json.
         default_user: Default username for chat sessions.
             Used for history tracking and personalization.
-    
+
     Example YAML:
         ```yaml
         chat:
@@ -891,17 +944,18 @@ class ChatConfig(YAMLWizard):
             model: gpt-4
             temperature: 0.8
         ```
-    
+
     Chat Engines:
         - Simple: Direct conversation, no retrieval
         - Context: Retrieves relevant docs for each turn
         - CondensePlusContext: Condenses chat + retrieves
-    
+
     Note:
         - Buffer management crucial for long conversations
         - History persistence enables cross-session continuity
         - Context engines significantly improve factual responses
     """
+
     llm: LLMConfig
     engine: Optional[ChatEngineConfig] = None
     default_user: str = "user"
@@ -912,10 +966,10 @@ class ChatConfig(YAMLWizard):
 @dataclass
 class Config(YAMLWizard):
     """Main application configuration.
-    
+
     Root configuration object that orchestrates all RAG client components.
     Loaded from YAML files to configure the entire application behavior.
-    
+
     Attributes:
         retrieval: Configuration for document indexing and retrieval.
             Required for all RAG operations. Defines embedding models,
@@ -926,7 +980,7 @@ class Config(YAMLWizard):
             Optional. If provided, enables interactive chat mode.
         logging: Application logging configuration.
             Optional. Controls log levels, outputs, and rotation.
-    
+
     Complete Example YAML:
         ```yaml
         # Retrieval configuration (required)
@@ -947,7 +1001,7 @@ class Config(YAMLWizard):
             chunk_size: 512
             chunk_overlap: 50
           top_k: 5
-        
+
         # Query configuration (optional)
         query:
           engine:
@@ -956,7 +1010,7 @@ class Config(YAMLWizard):
           llm:
             type: openai
             model: gpt-3.5-turbo
-        
+
         # Chat configuration (optional)
         chat:
           engine:
@@ -966,25 +1020,26 @@ class Config(YAMLWizard):
           llm:
             type: openai
             model: gpt-4
-        
+
         # Logging configuration (optional)
         logging:
           level: INFO
           log_file: logs/rag.log
           rotate_logs: true
         ```
-    
+
     Usage:
         ```python
         config = Config.from_yaml_file("config.yaml")
         workflow = RAGWorkflow(logger, config)
         ```
-    
+
     Note:
         - At minimum, retrieval configuration is required
         - Query and chat can use different LLMs for cost optimization
         - YAML structure must match dataclass hierarchy exactly
     """
+
     retrieval: RetrievalConfig
     query: Optional[QueryConfig] = None
     chat: Optional[ChatConfig] = None

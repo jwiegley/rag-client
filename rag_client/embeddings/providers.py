@@ -5,10 +5,9 @@ from different providers (HuggingFace, OpenAI, Ollama, etc.).
 """
 
 import subprocess
-import sys
 import uuid
 from dataclasses import asdict
-from typing import Any, Literal, NoReturn, override
+from typing import override
 
 import llama_cpp
 from llama_index.core.base.embeddings.base import BaseEmbedding, Embedding
@@ -27,24 +26,15 @@ from ..config.models import (
     OpenAIEmbeddingConfig,
     OpenAILikeEmbeddingConfig,
 )
-
-
-def error(msg: str) -> NoReturn:
-    """Print error message and exit.
-    
-    Args:
-        msg: Error message to display
-    """
-    print(msg, file=sys.stderr)
-    sys.exit(1)
+from ..utils.helpers import error
 
 
 def flatten_floats(data: list[float] | list[list[float]]) -> list[float]:
     """Flatten a nested list of floats.
-    
+
     Args:
         data: Either a flat list of floats or a nested list
-        
+
     Returns:
         Flat list of floats
     """
@@ -59,14 +49,14 @@ def flatten_floats(data: list[float] | list[list[float]]) -> list[float]:
 
 class LlamaCPPEmbedding(BaseEmbedding):
     """Custom embedding implementation for LlamaCPP models.
-    
+
     This class provides embedding functionality using llama.cpp models loaded
     locally. It supports GPU acceleration and various configuration options
     for optimal performance.
-    
+
     Attributes:
         _model: The underlying llama_cpp.Llama model instance
-        
+
     Example:
         >>> config = LlamaCPPEmbeddingConfig(
         ...     model_path="/path/to/model.gguf",
@@ -75,10 +65,10 @@ class LlamaCPPEmbedding(BaseEmbedding):
         >>> embedding = LlamaCPPEmbedding(**asdict(config))
         >>> vec = embedding.get_text_embedding("Hello world")
     """
-    
+
     def __init__(self, model_path: str, **kwargs):
         """Initialize LlamaCPP embedding model.
-        
+
         Args:
             model_path: Path to the GGUF model file
             **kwargs: Additional configuration options including:
@@ -88,7 +78,7 @@ class LlamaCPPEmbedding(BaseEmbedding):
                 - n_gpu_layers: Number of layers to offload to GPU (-1 for all)
         """
         super().__init__(**kwargs)
-        
+
         self._model = llama_cpp.Llama(
             model_path=model_path,
             embedding=True,
@@ -134,65 +124,65 @@ class LlamaCPPEmbedding(BaseEmbedding):
             spm_infill=False,
             verbose=kwargs.get("verbose", False),
         )
-    
+
     @override
     def _get_text_embedding(self, text: str) -> Embedding:
         """Generate embedding for a single text.
-        
+
         Args:
             text: Input text to embed
-            
+
         Returns:
             Embedding vector as a list of floats
         """
         response = self._model.create_embedding(text)
         return flatten_floats(response["data"][0]["embedding"])
-    
+
     @override
     def _get_query_embedding(self, query: str) -> Embedding:
         """Generate embedding for a query text.
-        
+
         Args:
             query: Query text to embed
-            
+
         Returns:
             Embedding vector as a list of floats
         """
         response = self._model.create_embedding(query)
         return flatten_floats(response["data"][0]["embedding"])
-    
+
     @override
     def _get_text_embeddings(self, texts: list[str]) -> list[Embedding]:
         """Generate embeddings for multiple texts in batch.
-        
+
         Args:
             texts: List of texts to embed
-            
+
         Returns:
             List of embedding vectors
         """
         response = self._model.create_embedding(texts)
         return [flatten_floats(item["embedding"]) for item in response["data"]]
-    
+
     @override
     async def _aget_text_embedding(self, text: str):
         """Async version of text embedding (delegates to sync).
-        
+
         Args:
             text: Input text to embed
-            
+
         Returns:
             Embedding vector as a list of floats
         """
         return self._get_text_embedding(text)
-    
+
     @override
     async def _aget_query_embedding(self, query: str):
         """Async version of query embedding (delegates to sync).
-        
+
         Args:
             query: Query text to embed
-            
+
         Returns:
             Embedding vector as a list of floats
         """
@@ -204,14 +194,14 @@ def get_embedding_model(
     verbose: bool = False,
 ) -> BaseEmbedding:
     """Load an embedding model based on configuration.
-    
+
     Args:
         config: Embedding configuration
         verbose: Whether to show progress
-        
+
     Returns:
         BaseEmbedding: Configured embedding model
-        
+
     Raises:
         SystemExit: If embedding model cannot be loaded
     """
@@ -251,13 +241,13 @@ def get_embedding_model(
                     text=True,
                     capture_output=True,
                 ).stdout.rstrip("\n")
-            
+
             extra_body = {}
             if config.add_litellm_session_id:
                 extra_body["litellm_session_id"] = str(uuid.uuid1())
             if config.no_litellm_logging:
                 extra_body["no-log"] = True
-            
+
             if config.additional_kwargs is None:
                 config.additional_kwargs = {"extra_body": extra_body}
             elif "extra_body" not in config.additional_kwargs:
@@ -266,7 +256,7 @@ def get_embedding_model(
                 config.additional_kwargs["extra_body"] = (
                     config.additional_kwargs["extra_body"] | extra_body
                 )
-            
+
             return OpenAILikeEmbedding(
                 show_progress=verbose,
                 **asdict(config),

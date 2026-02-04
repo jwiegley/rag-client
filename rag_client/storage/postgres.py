@@ -1,25 +1,28 @@
 """PostgreSQL storage implementations for RAG client."""
 
 import pickle
-from typing import Any
+from typing import Any, TypeVar
 from urllib.parse import urlparse
 
 import psycopg2
 
+T = TypeVar("T")
+U = TypeVar("U")
+
 
 class PostgresDetails:
     """Helper class for PostgreSQL connection details and operations."""
-    
+
     connection_string: str
     database: str
     host: str
     password: str
     port: int
     user: str
-    
+
     def __init__(self, connection_string: str):
         """Initialize from connection string.
-        
+
         Args:
             connection_string: PostgreSQL connection string
         """
@@ -30,14 +33,14 @@ class PostgresDetails:
         self.password = parsed.password or ""
         self.port = parsed.port or 5432
         self.user = parsed.username or "postgres"
-    
-    def unpickle_from_table[T](self, tablename: str, row_id: int) -> Any:
+
+    def unpickle_from_table(self, tablename: str, row_id: int) -> Any:
         """Unpickle an object from a PostgreSQL table.
-        
+
         Args:
             tablename: Name of the table
             row_id: ID of the row to retrieve
-            
+
         Returns:
             Unpickled object or None if not found
         """
@@ -56,15 +59,15 @@ class PostgresDetails:
                 row = cur.fetchone()
                 if row is None:
                     return None
-                
+
                 binary_data = row[0]
                 if isinstance(binary_data, memoryview):
                     binary_data = binary_data.tobytes()
                 return pickle.loads(binary_data)
-    
-    def pickle_to_table[U](self, tablename: str, row_id: int, data: object):
+
+    def pickle_to_table(self, tablename: str, row_id: int, data: object):
         """Pickle an object to a PostgreSQL table.
-        
+
         Args:
             tablename: Name of the table
             row_id: ID for the row
@@ -87,9 +90,9 @@ class PostgresDetails:
                     )
                 """
                 )
-                
+
                 pickled = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
-                
+
                 cur.execute(
                     f"""
                     INSERT INTO {tablename} (id, data)

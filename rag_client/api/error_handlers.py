@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 class ErrorDetail(BaseModel):
     """Detailed error information."""
-    
+
     field: Optional[str] = Field(None, description="Field that caused the error")
     message: str = Field(..., description="Human-readable error message")
     type: str = Field(..., description="Error type identifier")
@@ -40,14 +40,20 @@ class ErrorDetail(BaseModel):
 
 class ErrorResponse(BaseModel):
     """Standard error response format for API."""
-    
+
     error: str = Field(..., description="Error code for programmatic handling")
     message: str = Field(..., description="Human-readable error message")
-    details: Optional[list[ErrorDetail]] = Field(None, description="Additional error details")
-    correlation_id: str = Field(..., description="Unique identifier for this error instance")
+    details: Optional[list[ErrorDetail]] = Field(
+        None, description="Additional error details"
+    )
+    correlation_id: str = Field(
+        ..., description="Unique identifier for this error instance"
+    )
     timestamp: str = Field(..., description="ISO 8601 timestamp when error occurred")
-    context: Optional[Dict[str, Any]] = Field(None, description="Additional context data")
-    
+    context: Optional[Dict[str, Any]] = Field(
+        None, description="Additional context data"
+    )
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -57,15 +63,12 @@ class ErrorResponse(BaseModel):
                     {
                         "field": "temperature",
                         "message": "Value must be between 0 and 2",
-                        "type": "range_error"
+                        "type": "range_error",
                     }
                 ],
                 "correlation_id": "550e8400-e29b-41d4-a716-446655440000",
                 "timestamp": "2024-01-15T10:30:00Z",
-                "context": {
-                    "endpoint": "/v1/chat/completions",
-                    "method": "POST"
-                }
+                "context": {"endpoint": "/v1/chat/completions", "method": "POST"},
             }
         }
 
@@ -86,48 +89,43 @@ EXCEPTION_STATUS_MAP = {
 
 
 def create_error_response(
-    exception: Exception,
-    request: Request,
-    correlation_id: Optional[str] = None
+    exception: Exception, request: Request, correlation_id: Optional[str] = None
 ) -> ErrorResponse:
     """Create a standardized error response from an exception.
-    
+
     Args:
         exception: The exception that occurred
         request: The FastAPI request object
         correlation_id: Optional correlation ID (generated if not provided)
-        
+
     Returns:
         ErrorResponse object with formatted error information
     """
     if not correlation_id:
         correlation_id = str(uuid.uuid4())
-    
+
     timestamp = datetime.utcnow().isoformat() + "Z"
-    
+
     # Build context
-    context = {
-        "endpoint": str(request.url.path),
-        "method": request.method
-    }
-    
+    context = {"endpoint": str(request.url.path), "method": request.method}
+
     # Handle RAGClientError and its subclasses
     if isinstance(exception, RAGClientError):
         error_code = exception.error_code
         message = exception.message
-        
+
         # Add exception context to response context
         if exception.context:
             context.update(exception.context)
-        
+
         # Create error details if available
         details = None
-        if hasattr(exception, 'field') and exception.field:
+        if hasattr(exception, "field") and exception.field:
             details = [
                 ErrorDetail(
                     field=exception.field,
                     message=message,
-                    type=exception.__class__.__name__
+                    type=exception.__class__.__name__,
                 )
             ]
     else:
@@ -135,30 +133,30 @@ def create_error_response(
         error_code = "INTERNAL_ERROR"
         message = "An unexpected error occurred"
         details = None
-        
+
         # Log the full exception for debugging
         logger.error(
             f"Unexpected error in {request.method} {request.url.path}",
             exc_info=exception,
-            extra={"correlation_id": correlation_id}
+            extra={"correlation_id": correlation_id},
         )
-    
+
     return ErrorResponse(
         error=error_code,
         message=message,
         details=details,
         correlation_id=correlation_id,
         timestamp=timestamp,
-        context=context
+        context=context,
     )
 
 
 def get_status_code(exception: Exception) -> int:
     """Get the appropriate HTTP status code for an exception.
-    
+
     Args:
         exception: The exception to map
-        
+
     Returns:
         HTTP status code
     """
@@ -166,100 +164,97 @@ def get_status_code(exception: Exception) -> int:
     for exc_type, status_code in EXCEPTION_STATUS_MAP.items():
         if isinstance(exception, exc_type):
             return status_code
-    
+
     # Check if it's an APIError with explicit status code
-    if isinstance(exception, APIError) and exception.context.get('status_code'):
-        return exception.context['status_code']
-    
+    if isinstance(exception, APIError) and exception.context.get("status_code"):
+        return exception.context["status_code"]
+
     # Default to 500 for unexpected errors
     return status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
 async def rag_exception_handler(request: Request, exc: RAGClientError) -> JSONResponse:
     """Global exception handler for RAGClientError and subclasses.
-    
+
     Args:
         request: The FastAPI request that caused the exception
         exc: The RAGClientError exception
-        
+
     Returns:
         JSONResponse with error details
     """
     correlation_id = str(uuid.uuid4())
-    
+
     # Log the error with correlation ID
     logger.error(
         f"RAGClientError in {request.method} {request.url.path}: {exc}",
         extra={
             "correlation_id": correlation_id,
             "error_code": exc.error_code,
-            "context": exc.context
-        }
+            "context": exc.context,
+        },
     )
-    
+
     # Create error response
     error_response = create_error_response(exc, request, correlation_id)
-    
+
     # Get appropriate status code
     status_code = get_status_code(exc)
-    
+
     # Add retry-after header for rate limit errors
     headers = {}
-    if isinstance(exc, RateLimitError) and exc.context.get('retry_after'):
-        headers['Retry-After'] = str(exc.context['retry_after'])
-    
+    if isinstance(exc, RateLimitError) and exc.context.get("retry_after"):
+        headers["Retry-After"] = str(exc.context["retry_after"])
+
     return JSONResponse(
         status_code=status_code,
         content=error_response.model_dump(exclude_none=True),
-        headers=headers
+        headers=headers,
     )
 
 
 async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Global exception handler for unexpected exceptions.
-    
+
     Args:
         request: The FastAPI request that caused the exception
         exc: The unexpected exception
-        
+
     Returns:
         JSONResponse with error details
     """
     correlation_id = str(uuid.uuid4())
-    
+
     # Log the full exception
     logger.exception(
         f"Unexpected error in {request.method} {request.url.path}",
-        extra={"correlation_id": correlation_id}
+        extra={"correlation_id": correlation_id},
     )
-    
+
     # Create generic error response
     error_response = ErrorResponse(
         error="INTERNAL_ERROR",
         message="An internal server error occurred",
         correlation_id=correlation_id,
         timestamp=datetime.utcnow().isoformat() + "Z",
-        context={
-            "endpoint": str(request.url.path),
-            "method": request.method
-        }
+        context={"endpoint": str(request.url.path), "method": request.method},
     )
-    
+
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content=error_response.model_dump(exclude_none=True)
+        content=error_response.model_dump(exclude_none=True),
     )
 
 
 def setup_exception_handlers(app):
     """Setup exception handlers for the FastAPI application.
-    
+
     Args:
         app: FastAPI application instance
     """
     # Register RAGClientError handler
     app.add_exception_handler(RAGClientError, rag_exception_handler)
-    
+
     # Register handlers for specific exceptions
     for exc_class in [
         ConfigurationError,
@@ -271,9 +266,9 @@ def setup_exception_handlers(app):
         APIError,
         ValidationError,
         TimeoutError,
-        RateLimitError
+        RateLimitError,
     ]:
         app.add_exception_handler(exc_class, rag_exception_handler)
-    
+
     # Register general exception handler
     app.add_exception_handler(Exception, general_exception_handler)

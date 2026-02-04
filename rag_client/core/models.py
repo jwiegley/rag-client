@@ -1,9 +1,18 @@
 """Core data models for RAG client."""
 
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, List, NoReturn, Optional, TypeAlias, override
+from typing import TYPE_CHECKING, Any, List, Optional, TypeAlias, override
+
+if TYPE_CHECKING:
+    from rag_client.config.models import (
+        BaseQueryEngineConfig,
+        ChatConfig,
+        ChatEngineConfig,
+        EvaluatorConfig,
+        QueryConfig,
+        QueryEngineConfig,
+    )
 
 from dataclass_wizard import JSONFileWizard, JSONWizard
 from llama_index.core import PromptTemplate
@@ -40,35 +49,24 @@ from llama_index.core.base.response.schema import RESPONSE_TYPE
 from llama_index.core.storage.chat_store import SimpleChatStore
 from pydantic import BaseModel
 
-
-def error(msg: str) -> NoReturn:
-    """Print error message and exit.
-    
-    Args:
-        msg: Error message to display
-        
-    Raises:
-        SystemExit: Always exits with code 1
-    """
-    print(msg, file=sys.stderr)
-    sys.exit(1)
+from ..utils.helpers import error
 
 
 class SimpleQueryEngine(CustomQueryEngine):
     """RAG String Query Engine."""
-    
+
     llm: LLM
     response_synthesizer: BaseSynthesizer
     qa_prompt: PromptTemplate = field(
         default=PromptTemplate("Query: {query_str}\nAnswer: ")
     )
-    
+
     def __init__(self, **kwargs: Any):
         self.response_synthesizer = kwargs[
             "response_synthesizer"
         ] or get_response_synthesizer(response_mode=ResponseMode.COMPACT)
         super().__init__(**kwargs)
-    
+
     @override
     def custom_query(self, query_str: str) -> STR_OR_RESPONSE_TYPE:
         response = self.llm.complete(self.qa_prompt.format(query_str=query_str))
@@ -80,6 +78,7 @@ FunctionsType: TypeAlias = list[dict[str, Any | None]] | None
 
 class Message(BaseModel):
     """OpenAI-compatible message."""
+
     role: str
     content: str
     name: str | None = None
@@ -87,10 +86,10 @@ class Message(BaseModel):
 
 class ChatCompletionRequest(BaseModel):
     """OpenAI-compatible chat completion request.
-    
+
     https://platform.openai.com/docs/api-reference/chat/create
     """
-    
+
     messages: list[Message]
     model: str
     # audio
@@ -129,6 +128,7 @@ class ChatCompletionRequest(BaseModel):
 
 class CompletionRequest(BaseModel):
     """OpenAI-compatible completion request."""
+
     model: str
     prompt: str | list[str]
     temperature: float | None = 0.7
@@ -143,6 +143,7 @@ class CompletionRequest(BaseModel):
 
 class EmbeddingRequest(BaseModel):
     """OpenAI-compatible embedding request."""
+
     model: str
     input: str | list[str]
     user: str | None = None
@@ -151,21 +152,22 @@ class EmbeddingRequest(BaseModel):
 @dataclass
 class EmbeddedNode(JSONWizard):
     """Node with embedding information."""
+
     ident: str
     content: str
     embedding: list[float]
     metadata: dict[str, Any]
-    
+
     @classmethod
     def from_node(cls, node: BaseNode):
         """Create from a BaseNode.
-        
+
         Args:
             node: Source node
-            
+
         Returns:
             EmbeddedNode instance
-            
+
         Raises:
             SystemExit: If node has no embedding
         """
@@ -177,10 +179,10 @@ class EmbeddedNode(JSONWizard):
             embedding=node.embedding,
             metadata=node.metadata,
         )
-    
+
     def to_node(self) -> Node:
         """Convert to a Node.
-        
+
         Returns:
             Node instance
         """
@@ -195,28 +197,29 @@ class EmbeddedNode(JSONWizard):
 @dataclass
 class EmbeddedFile(JSONFileWizard):
     """File with embedded nodes."""
+
     file_path: Path
     embedded_nodes: list[EmbeddedNode]
 
 
 class QueryState:
     """Query state management for RAG pipeline.
-    
+
     Manages query engines and their configuration for document Q&A.
     """
-    
+
     query_engine: BaseQueryEngine
-    
+
     def __init__(
         self,
-        config: 'QueryConfig',
+        config: "QueryConfig",
         llm: LLM,
         retriever: Optional[BaseRetriever] = None,
         streaming: bool = False,
         verbose: bool = False,
     ) -> None:
         """Initialize query state.
-        
+
         Args:
             config: Query configuration
             llm: Language model to use
@@ -225,21 +228,9 @@ class QueryState:
             verbose: Whether to show verbose output
         """
         from ..config.models import (
-            BaseQueryEngineConfig,
-            CitationQueryEngineConfig,
-            EvaluatorConfig,
-            GuidelineConfig,
-            MultiStepQueryEngineConfig,
-            QueryConfig,
-            QueryEngineConfig,
-            RelevancyEvaluatorConfig,
-            RetrieverQueryEngineConfig,
-            RetryQueryEngineConfig,
-            RetrySourceQueryEngineConfig,
             SimpleQueryEngineConfig,
         )
-        from .workflow import RAGWorkflow
-        
+
         self.query_engine = self.__load_query_engine(
             config.engine or SimpleQueryEngineConfig(),
             llm,
@@ -247,19 +238,19 @@ class QueryState:
             streaming,
             verbose,
         )
-    
+
     def query(self, query: QueryType) -> RESPONSE_TYPE:
         """Execute a query synchronously."""
         return self.query_engine.query(query)
-    
+
     async def aquery(self, query: QueryType) -> RESPONSE_TYPE:
         """Execute a query asynchronously."""
         return await self.query_engine.aquery(query)
-    
+
     @classmethod
     def __load_base_query_engine(
         cls,
-        config: 'BaseQueryEngineConfig',
+        config: "BaseQueryEngineConfig",
         llm: LLM,
         retriever: Optional[BaseRetriever] = None,
         streaming: bool = False,
@@ -271,7 +262,7 @@ class QueryState:
             RetrieverQueryEngineConfig,
             SimpleQueryEngineConfig,
         )
-        
+
         match config:
             case CitationQueryEngineConfig():
                 if retriever is None:
@@ -282,7 +273,7 @@ class QueryState:
                     citation_chunk_size=config.chunk_size,
                     citation_chunk_overlap=config.chunk_overlap,
                 )
-            
+
             case RetrieverQueryEngineConfig():
                 if retriever is None:
                     error("RetrieverQueryEngine requires a retriever")
@@ -293,17 +284,17 @@ class QueryState:
                     response_mode=config.response_mode,
                     verbose=verbose,
                 )
-            
+
             case SimpleQueryEngineConfig():
                 return SimpleQueryEngine(llm=llm)
-            
+
             case _:
                 error(f"Unknown query engine config type: {type(config)}")
-    
+
     @classmethod
     def __load_query_engine(
         cls,
-        config: 'QueryEngineConfig',
+        config: "QueryEngineConfig",
         llm: LLM,
         retriever: Optional[BaseRetriever] = None,
         streaming: bool = False,
@@ -319,7 +310,7 @@ class QueryState:
             SimpleQueryEngineConfig,
         )
         from .workflow import RAGWorkflow
-        
+
         match config:
             case (
                 CitationQueryEngineConfig()
@@ -333,10 +324,10 @@ class QueryState:
                     streaming,
                     verbose,
                 )
-            
+
             case MultiStepQueryEngineConfig():
                 error("MultiStepQueryEngineConfig not implemented yet")
-            
+
             case RetrySourceQueryEngineConfig():
                 query_engine = cls.__load_base_query_engine(
                     config.engine, llm, retriever, streaming, verbose
@@ -352,7 +343,7 @@ class QueryState:
                     error(
                         "Base engine for RetrySourceQueryEngine must be RetrieverQueryEngine"
                     )
-            
+
             case RetryQueryEngineConfig():
                 query_engine = cls.__load_base_query_engine(
                     config.engine, llm, retriever, streaming, verbose
@@ -362,14 +353,14 @@ class QueryState:
                     query_engine,
                     evaluator=evaluator,
                 )
-            
+
             case _:
                 error(f"Unknown query engine config type: {type(config)}")
-    
+
     @classmethod
     def __load_evaluator(
         cls,
-        config: 'EvaluatorConfig',
+        config: "EvaluatorConfig",
         verbose: bool = False,
     ) -> BaseEvaluator:
         """Load evaluator from configuration."""
@@ -378,7 +369,7 @@ class QueryState:
             RelevancyEvaluatorConfig,
         )
         from .workflow import RAGWorkflow
-        
+
         match config:
             case RelevancyEvaluatorConfig():
                 return RelevancyEvaluator(
@@ -395,15 +386,15 @@ class QueryState:
 
 class ChatState:
     """Chat state management for conversational AI.
-    
+
     Manages chat engines, history, and context for conversational interactions.
     """
-    
+
     chat_engine: BaseChatEngine
-    
+
     def __init__(
         self,
-        config: 'ChatConfig',
+        config: "ChatConfig",
         llm: LLM,
         user: str,
         chat_store: Optional[SimpleChatStore] = None,
@@ -414,7 +405,7 @@ class ChatState:
         verbose: bool = False,
     ) -> None:
         """Initialize chat state.
-        
+
         Args:
             config: Chat configuration
             llm: Language model to use
@@ -427,24 +418,19 @@ class ChatState:
             verbose: Whether to show verbose output
         """
         from ..config.models import (
-            ChatConfig,
-            ChatEngineConfig,
-            CondensePlusContextChatEngineConfig,
-            ContextChatEngineConfig,
             SimpleChatEngineConfig,
-            SimpleContextChatEngineConfig,
         )
-        
+
         chat_store = chat_store or SimpleChatStore()
         if chat_history is not None:
             chat_store.set_messages(key=user, messages=chat_history)
-        
+
         memory = ChatMemoryBuffer.from_defaults(
             chat_store=chat_store,
             chat_store_key=user,
             token_limit=token_limit,
         )
-        
+
         self.chat_engine = self.__load_chat_engine(
             config.engine or SimpleChatEngineConfig(),
             llm,
@@ -455,11 +441,11 @@ class ChatState:
             system_prompt,
             verbose,
         )
-    
+
     @classmethod
     def __load_chat_engine(
         cls,
-        config: 'ChatEngineConfig',
+        config: "ChatEngineConfig",
         llm: LLM,
         memory: ChatMemoryBuffer,
         retriever: Optional[BaseRetriever] = None,
@@ -475,7 +461,7 @@ class ChatState:
             SimpleChatEngineConfig,
             SimpleContextChatEngineConfig,
         )
-        
+
         match config:
             case SimpleChatEngineConfig():
                 return SimpleChatEngine.from_defaults(
@@ -484,7 +470,7 @@ class ChatState:
                     system_prompt=system_prompt,
                     verbose=verbose,
                 )
-            
+
             case SimpleContextChatEngineConfig():
                 if retriever is None:
                     error("Context chat engines require a retriever")
@@ -496,7 +482,7 @@ class ChatState:
                     verbose=verbose,
                     context_window=config.context_window,
                 )
-            
+
             case ContextChatEngineConfig():
                 if retriever is None:
                     error("Context chat engines require a retriever")
@@ -507,7 +493,7 @@ class ChatState:
                     system_prompt=system_prompt,
                     verbose=verbose,
                 )
-            
+
             case CondensePlusContextChatEngineConfig():
                 if retriever is None:
                     error("Context chat engines require a retriever")
@@ -519,6 +505,6 @@ class ChatState:
                     verbose=verbose,
                     skip_condense=config.skip_condense,
                 )
-            
+
             case _:
                 error(f"Unknown chat engine config type: {type(config)}")

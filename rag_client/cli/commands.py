@@ -3,13 +3,11 @@
 import atexit
 import json
 import logging
-import sys
 from pathlib import Path
-from typing import Any, List, NoReturn, Optional
+from typing import Any, Optional
 
 import readline
 from llama_index.core.base.response.schema import Response, StreamingResponse
-from llama_index.core.chat_engine.types import StreamingAgentChatResponse
 from llama_index.core.retrievers import BaseRetriever
 from llama_index.core.schema import QueryType
 from llama_index.core.storage.chat_store import SimpleChatStore
@@ -37,11 +35,11 @@ def rag_initialize(
     verbose: bool = False,
 ) -> tuple[RAGWorkflow, Optional[BaseRetriever]]:
     """Initialize RAG workflow and retriever.
-    
+
     Sets up the complete RAG pipeline by loading configuration, processing input
     files if provided, and creating appropriate retriever instances. This is the
     main initialization function called by all CLI commands.
-    
+
     Args:
         logger: Logger instance for operation logging and debugging.
         config_path: Path to YAML configuration file containing model settings,
@@ -62,16 +60,16 @@ def rag_initialize(
             Only used with hybrid search configurations.
         verbose: If True, show progress bars and detailed logging.
             Helpful for debugging and monitoring long operations.
-        
+
     Returns:
         Tuple of (RAGWorkflow instance, Optional[BaseRetriever]):
             - RAGWorkflow: Initialized workflow object for further operations
             - BaseRetriever: Configured retriever, or None if no embedding configured
-    
+
     Raises:
         ConfigurationError: If config file is invalid or missing required fields.
         SystemExit: If critical initialization fails.
-    
+
     Example:
         >>> logger = get_logger(__name__)
         >>> workflow, retriever = rag_initialize(
@@ -82,16 +80,16 @@ def rag_initialize(
         ...     verbose=True
         ... )
         >>> # Now ready for search/query operations
-    
+
     Note:
         - Configuration is cached based on input file fingerprints
         - PostgreSQL storage requires proper database setup
         - Large document sets benefit from num_workers > 1
     """
     from ..utils.helpers import read_files
-    
+
     config = RAGWorkflow.load_config(config_path)
-    
+
     if input_from is not None:
         input_files = read_files(input_from, recursive)
         count = str(len(input_files)) if input_files else "no"
@@ -99,16 +97,16 @@ def rag_initialize(
     else:
         input_files = None
         logger.info("No input files")
-    
+
     rag = RAGWorkflow(logger, config)
-    
+
     if config.retrieval.embedding is not None:
         # If the input_files is None, the retriever might still load indices
         # from cache or a database
         retriever = rag.load_retriever(
             num_workers=num_workers,
             input_files=input_files,
-            embed_individually=getattr(config.retrieval, 'embed_individually', False),
+            embed_individually=getattr(config.retrieval, "embed_individually", False),
             index_files=index_files,
             top_k=top_k,
             sparse_top_k=sparse_top_k,
@@ -117,17 +115,17 @@ def rag_initialize(
     else:
         logger.info("No retriever used")
         retriever = None
-    
+
     return (rag, retriever)
 
 
 def search_command(rag: RAGWorkflow, retriever: BaseRetriever, query: str):
     """Execute a search command.
-    
+
     Performs semantic search across indexed documents and returns relevant
     document chunks in JSON format. This is a low-level search that returns
     raw retrieval results without LLM processing.
-    
+
     Args:
         rag: The RAG workflow object containing configuration and methods.
         retriever: The retriever object configured for document search.
@@ -136,19 +134,19 @@ def search_command(rag: RAGWorkflow, retriever: BaseRetriever, query: str):
             - Natural language question: "What is machine learning?"
             - Keywords: "neural networks training"
             - Specific facts: "transformer architecture attention mechanism"
-    
+
     Returns:
         None (prints JSON results to stdout).
-    
+
     Raises:
         RetrievalError: If search execution fails with details about
             the query and underlying cause.
-    
+
     Output Format:
         JSON array of retrieved nodes, each containing:
         - "text": The content of the document chunk
         - "metadata": Source file, page numbers, and other metadata
-    
+
     Example:
         >>> search_command(rag, retriever, "How does RAG work?")
         [
@@ -160,7 +158,7 @@ def search_command(rag: RAGWorkflow, retriever: BaseRetriever, query: str):
             }
           }
         ]
-    
+
     Note:
         - Number of results depends on top_k configuration
         - Results are ranked by relevance score
@@ -170,25 +168,23 @@ def search_command(rag: RAGWorkflow, retriever: BaseRetriever, query: str):
         logger.info(f"Executing search for query: {query[:100]}...")
         # Retrieve nodes using the retriever and query
         nodes = rag.retrieve_nodes(retriever, query)
-        logger.debug(f"Retrieved {len(nodes) if isinstance(nodes, list) else 'unknown number of'} nodes")
+        logger.debug(
+            f"Retrieved {len(nodes) if isinstance(nodes, list) else 'unknown number of'} nodes"
+        )
         # Print the retrieved nodes in JSON format
         print(json.dumps(nodes, indent=2))
     except Exception as e:
         logger.error(f"Search failed: {e}")
-        raise RetrievalError(
-            message="Failed to execute search",
-            query=query,
-            cause=e
-        )
+        raise RetrievalError(message="Failed to execute search", query=query, cause=e)
 
 
 def query_command(query_state: QueryState, query: QueryType):
     """Execute a query command.
-    
+
     Processes a query through the full RAG pipeline: retrieval, context
     assembly, and LLM generation. Returns a complete answer synthesized
     from retrieved documents.
-    
+
     Args:
         query_state: The query state object containing:
             - Query engine configuration
@@ -199,29 +195,29 @@ def query_command(query_state: QueryState, query: QueryType):
             - Questions: "Explain the architecture of transformers"
             - Commands: "Summarize the key points about..."
             - Analysis: "Compare X and Y approaches"
-    
+
     Returns:
         None (prints response to stdout).
-    
+
     Raises:
         RAGClientError: If query execution fails, with context about
             the query and detailed error information.
-    
+
     Response Types:
         - StreamingResponse: Tokens printed as generated (if streaming enabled)
         - Response: Complete response printed at once
-    
+
     Example:
         >>> # Non-streaming query
         >>> query_command(query_state, "What are the main components of RAG?")
         RAG consists of three main components: a retriever for finding
         relevant documents, a context processor for organizing information,
         and a generator for producing answers...
-        
+
         >>> # Streaming query (with streaming=True in config)
         >>> query_command(query_state, "Explain embeddings")
         Embeddings are dense vector representations... [streamed output]
-    
+
     Note:
         - Response quality depends on retriever and LLM configuration
         - Streaming provides faster initial response but same total time
@@ -232,7 +228,7 @@ def query_command(query_state: QueryState, query: QueryType):
         # Execute the query using the query state
         response = query_state.query(query=query)
         logger.debug(f"Query response type: {type(response).__name__}")
-        
+
         # Handle different response types
         match response:
             case StreamingResponse():
@@ -251,15 +247,15 @@ def query_command(query_state: QueryState, query: QueryType):
                 print(response.response)
             case _:
                 # Log an error for unhandled response types
-                logger.error(f"query_command cannot render response type: {type(response)}")
+                logger.error(
+                    f"query_command cannot render response type: {type(response)}"
+                )
                 raise ValueError(f"Unhandled response type: {type(response)}")
-                
+
     except Exception as e:
         logger.error(f"Query execution failed: {e}")
         raise RAGClientError(
-            message="Failed to execute query",
-            context={"query": query[:100]},
-            cause=e
+            message="Failed to execute query", context={"query": query[:100]}, cause=e
         )
 
 
@@ -270,11 +266,11 @@ def chat_command(
     streaming: bool,
 ):
     """Execute a chat command.
-    
+
     Processes a chat message through the conversational AI pipeline with
     context awareness and history management. Supports both streaming and
     non-streaming responses.
-    
+
     Args:
         cmd_logger: Command-specific logger for operation tracking.
             Separate from module logger to avoid naming conflicts.
@@ -289,29 +285,29 @@ def chat_command(
             - Commands like "summarize our discussion"
         streaming: If True, stream response tokens as generated.
             If False, return complete response at once.
-    
+
     Returns:
         None (prints response to stdout).
-    
+
     Raises:
         RAGClientError: If chat processing fails, with context about
             the query, streaming mode, and underlying error.
-    
+
     Streaming Behavior:
         - True: Tokens appear immediately as generated (better UX)
         - False: Complete response appears at once (better for logging)
-    
+
     Example:
         >>> # Non-streaming chat
         >>> chat_command(logger, chat_state, "Hello, how are you?", False)
         I'm doing well, thank you! How can I assist you today?
-        
+
         >>> # Streaming chat with follow-up
         >>> chat_command(logger, chat_state, "Tell me about Python", True)
         Python is a high-level programming... [streamed]
         >>> chat_command(logger, chat_state, "What are its main uses?", True)
         Based on our discussion about Python... [streamed with context]
-    
+
     Note:
         - Chat history is maintained across calls in the same session
         - Memory buffer limits prevent context overflow
@@ -321,12 +317,12 @@ def chat_command(
         # Execute the chat using the chat state
         logger.info(f"Processing chat query: {query[:100]}...")
         logger.debug(f"Chat mode: {'streaming' if streaming else 'non-streaming'}")
-        
+
         response = chat_state.chat(
             query=query,
             streaming=streaming,
         )
-        
+
         # Handle streaming and non-streaming responses
         if streaming:
             logger.debug("Processing streaming chat response")
@@ -342,13 +338,13 @@ def chat_command(
             # Print the response
             logger.debug(f"Chat response length: {len(response.response)} characters")
             print(response.response)
-            
+
     except Exception as e:
         logger.error(f"Chat command failed: {e}")
         raise RAGClientError(
             message="Failed to process chat",
             context={"query": query[:100], "streaming": streaming},
-            cause=e
+            cause=e,
         )
 
 
@@ -359,11 +355,11 @@ def execute_command(
     args: Any,
 ):
     """Execute the RAG client commands.
-    
+
     Main command dispatcher that routes CLI commands to appropriate handlers.
     Manages the execution flow, validates requirements, and handles the
     interactive chat loop when needed.
-    
+
     Args:
         logger: Logger instance for operation tracking and debugging.
         rag: The RAG workflow object containing configuration and methods.
@@ -374,31 +370,31 @@ def execute_command(
             - args: Command-specific arguments
             - streaming: Whether to use streaming responses
             - verbose: Whether to show detailed output
-    
+
     Command Behaviors:
         - "search": Direct retrieval, requires retriever
         - "query": One-shot Q&A, optional retriever for RAG
         - "chat": Interactive conversation with history
-    
+
     Chat Mode Features:
         - Readline history (saved to ~/.config/rag-client/chat_history)
         - Special commands: "exit", "quit" to leave
         - Inline search: "search <query>" within chat
         - Inline query: "query <query>" within chat
         - Persistent chat history (if configured)
-    
+
     Raises:
         ConfigurationError: If required components are not configured:
             - Search without retriever
             - Query without query engine config
             - Chat without chat engine config
         SystemExit: Via error() for unrecognized commands.
-    
+
     Example Usage:
         >>> # Search command
         >>> args = Namespace(command="search", args=["machine learning"])
         >>> execute_command(logger, rag, retriever, args)
-        
+
         >>> # Interactive chat
         >>> args = Namespace(command="chat", streaming=True)
         >>> execute_command(logger, rag, retriever, args)
@@ -406,7 +402,7 @@ def execute_command(
         [Assistant responds...]
         user> exit
         Goodbye!
-    
+
     Note:
         - Chat history persists across sessions if keep_history=True
         - Query and chat states are lazily initialized for efficiency
@@ -423,14 +419,14 @@ def execute_command(
                 logger.error("Search command requires a retriever")
                 raise ConfigurationError(
                     message="Search command requires a retriever to be configured",
-                    field="retriever"
+                    field="retriever",
                 )
         case "query":
             if rag.config.query is None:
                 logger.error("Query command requires query engine configuration")
                 raise ConfigurationError(
                     message="'query' command requires query engine to be configured",
-                    field="query"
+                    field="query",
                 )
             # Create a query state object
             llm = rag.realize_llm(rag.config.query.llm, verbose=args.verbose)
@@ -448,7 +444,7 @@ def execute_command(
                 logger.error("Chat command requires chat engine configuration")
                 raise ConfigurationError(
                     message="'chat' command requires chat engine to be configured",
-                    field="chat"
+                    field="chat",
                 )
 
             # Path to the history file (change as needed)
@@ -573,13 +569,14 @@ def cmd_chat(
 
 def cmd_serve(host: str = "localhost", port: int = 7990, reload: bool = False) -> None:
     """Start API server.
-    
+
     Args:
         host: Server host
         port: Server port
         reload: Whether to reload on source changes
     """
     import uvicorn
+
     uvicorn.run(
         "rag_client.api.server:api",
         host=host,
