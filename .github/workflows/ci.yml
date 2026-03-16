@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  nix-checks:
+    name: Format, lint, and build (nix)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Nix flake check
+        run: nix flake check
+
+  tests:
+    name: Tests, coverage, benchmarks, fuzz
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Cache Python venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ hashFiles('requirements.lock') }}
+
+      - name: Setup environment
+        run: nix develop --command true
+
+      - name: Run tests with coverage
+        run: |
+          nix develop --command bash -c "
+            python -m pytest tests/test_config.py tests/test_fuzz.py -x -q \
+              --cov=rag_client \
+              --cov-report=term-missing \
+              --cov-report=xml:coverage.xml
+          "
+
+      - name: Run benchmarks
+        run: |
+          nix develop --command bash -c "
+            python -m pytest tests/test_benchmarks.py -x -q --benchmark-only
+          "
+
+      - name: Run fuzz tests
+        run: |
+          nix develop --command bash -c "
+            python -m pytest tests/test_fuzz.py -x -q
+          "
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+  docs:
+    name: Build documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Cache Python venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ hashFiles('requirements.lock') }}
+
+      - name: Build Sphinx docs
+        run: |
+          nix develop --command bash -c "
+            cd docs && make html
+          "
+
+      - name: Upload documentation
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentation
+          path: docs/_build/html/

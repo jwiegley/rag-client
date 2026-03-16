@@ -1,0 +1,29 @@
+pre-commit:
+  parallel: true
+  commands:
+    ruff-format:
+      glob: "*.py"
+      run: ruff format --check {staged_files}
+    ruff-lint:
+      glob: "*.py"
+      run: ruff check {staged_files}
+    shfmt:
+      glob: "*.sh"
+      run: shfmt -d -i 4 {staged_files}
+    nix-check:
+      glob: "*.{py,nix,toml,yaml,sh}"
+      run: nix flake check --no-warn-dirty 2>&1
+    tests:
+      glob: "*.{py,yaml,toml}"
+      run: python -m pytest tests/test_config.py tests/test_fuzz.py -x -q
+    benchmarks:
+      glob: "*.py"
+      run: |
+        if ls .benchmarks/*/0001_baseline.json >/dev/null 2>&1; then
+          python -m pytest tests/test_benchmarks.py -x -q \
+            --benchmark-compare=0001_baseline \
+            --benchmark-compare-fail=mean:5%
+        else
+          echo "No benchmark baseline found. Creating one..."
+          python -m pytest tests/test_benchmarks.py -x -q --benchmark-save=baseline
+        fi
