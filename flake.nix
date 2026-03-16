@@ -1,5 +1,5 @@
 {
-  description = "llama-index RAG tool";
+  description = "rag-client: Retrieval Augmentation for LLM Queries";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
@@ -32,9 +32,9 @@
       ];
 
       libPath = pkgs.lib.makeLibraryPath sysLibs;
-    in {
-      inherit pkgs;
 
+      src = pkgs.lib.cleanSource ./.;
+    in {
       packages.default = pkgs.stdenv.mkDerivation {
         pname = "rag-client";
         version = "1.0.0";
@@ -81,6 +81,32 @@
         program = "${self.packages.${system}.default}/bin/rag-client";
       };
 
+      checks = {
+        format = pkgs.runCommand "check-format" {
+          inherit src;
+          nativeBuildInputs = [ pkgs.ruff pkgs.shfmt ];
+        } ''
+          cd $src
+          echo "=== Checking Python formatting with ruff ==="
+          ruff format --no-cache --check .
+          echo "=== Checking shell script formatting with shfmt ==="
+          find . -name '*.sh' -exec shfmt -d -i 4 {} +
+          touch $out
+        '';
+
+        lint = pkgs.runCommand "check-lint" {
+          inherit src;
+          nativeBuildInputs = [ pkgs.ruff ];
+        } ''
+          cd $src
+          echo "=== Linting Python with ruff ==="
+          ruff check --no-cache .
+          touch $out
+        '';
+
+        build = self.packages.${system}.default;
+      };
+
       devShells.default = with pkgs; mkShell {
         buildInputs = [ pythonPackage ] ++ sysLibs ++ [
           libpq.pg_config
@@ -102,22 +128,20 @@
           source .venv/bin/activate
 
           # Install/sync dependencies only if needed
-          # Check if .venv needs update (requirements.lock is newer or .venv is missing marker)
           if [ ! -f .venv/.synced ] || [ requirements.lock -nt .venv/.synced ]; then
             echo "Syncing dependencies with uv..."
             uv pip sync requirements.lock
+            uv pip install pytest pytest-cov pytest-asyncio pytest-benchmark hypothesis
             touch .venv/.synced
           fi
         '';
 
         nativeBuildInputs = [
           uv                    # Fast Python package installer
-          black                 # Python code formatter
+          ruff                  # Python linter and formatter
           basedpyright          # LSP server for Python
-          isort                 # Sorts imports
-          autoflake             # Removes unused imports
-          pylint
-          ruff
+          lefthook              # Git hooks manager
+          shfmt                 # Shell script formatter
           cmake
           pkg-config
           git
