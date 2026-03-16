@@ -27,6 +27,22 @@ node_modules/
 # OS specific
 .DS_Store
 
+# Benchmark baselines
+.benchmarks/
+
+# Hypothesis test database
+.hypothesis/
+
+# Coverage artifacts
+coverage.xml
+htmlcov/
+.coverage
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
 # Task files
 # tasks.json
-# tasks/ 
+# tasks/
