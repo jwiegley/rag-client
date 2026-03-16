@@ -1,216 +1,216 @@
-# rag-client: Retrieval Augmentation for LLM Queries
+# rag-client
 
-## Overview
+I've been running local LLMs for a while now, and one thing that kept
+frustrating me was the gap between "chat with a model" and "chat with a model
+about my actual documents." I didn't want to upload anything to a third party,
+and I didn't want to cobble together a different retrieval pipeline every time I
+had a new set of files to work with. So I built rag-client: a Python tool that
+handles the whole RAG workflow -- indexing, search, querying, chat, and even an
+OpenAI-compatible API server -- driven by a single YAML config file.
 
-`rag-client.py` is a flexible Python tool for augmenting LLM interactions with contextual document retrieval through two modes: **Ephemeral** (in-memory) and **Persistent** (Postgres-based). It integrates Retrieval-Augmented Generation (RAG) to ground LLM responses in your documents while maintaining compatibility with local/open-weight models.
+It's built on top of [llama-index](https://www.llamaindex.ai/) and works with
+local models through Ollama, llama.cpp, LM Studio, and anything that speaks the
+OpenAI API format. There's also support for OpenAI, LiteLLM, OpenRouter, and
+Perplexity if you want to use hosted models. For storage, you can keep things
+ephemeral (file-cached, no database needed) or persistent (Postgres with
+pgvector).
 
-## Why Use This Tool?
+I won't pretend the project is polished to a shine -- there are rough edges,
+and the configuration has more knobs than it probably should -- but it does what
+I need it to do, and it's been quite handy for my own Emacs/GPTel workflow.
 
-- **Flexible RAG Modes**: Choose between disposable sessions or long-term knowledge bases
-- **Emacs/GPTel Integration**: Designed for seamless use within Emacs workflows
-- **Local-First Philosophy**: Works with self-hosted LLMs (e.g., Falcon3-10B) and embedding models
-- **Performance Tuning**: Granular control over HNSW indexes, chunking, and search parameters
+## Getting started
 
-## Key Features
+The easiest way to get a working environment is with Nix:
 
-| Category              | Capabilities                                                                 |
-|-----------------------|-----------------------------------------------------------------------------|
-| **Ephemeral Mode**    | On-demand indexing, content-hashed cache, multi-query session optimization |
-| **Persistent Mode**   | PGVector storage, reusable document sets, table-based collection management|
-| **Embedding Control** | Custom chunk sizes/overlap, HuggingFace models, GPU acceleration           |
-| **LLM Compatibility** | OpenAI API format support, local model integration, timeout/retry handling |
-
-## Installation
-
-```
-pip install -r requirements.txt  # Includes llama-index, pgvector, sqlalchemy
-```
-
-### Updating Dependencies
-
-Project uses two lock files:
-
-**flake.lock** (Nix dependencies):
 ```bash
-nix flake update  # Run weekly/monthly
-```
-
-**requirements.lock** (Python dependencies):
-
-Update all packages latest versions:
-```bash
-uv pip compile requirements.txt -o requirements.lock --upgrade
-```
-
-Update specific package:
-```bash
-uv pip compile requirements.txt -o requirements.lock --upgrade-package llama-index-core
-```
-
-Add new package:
-```bash
-# 1. Add to requirements.txt
-echo "new-package>=1.0.0" >> requirements.txt
-
-# 2. Regenerate lock
-uv pip compile requirements.txt -o requirements.lock
-
-# 3. Enter dev shell (auto-syncs)
 nix develop
 ```
 
-Monthly maintenance workflow:
+This drops you into a shell with Python, all system dependencies (libpq,
+openssl, zlib, etc.), and development tools. It uses `uv` under the hood for
+Python dependency management, so you don't need to run `pip install` yourself.
+
+If you'd rather use a plain venv:
+
 ```bash
-nix flake update                                               # Update Nix
-uv pip compile requirements.txt -o requirements.lock --upgrade # Update Python
-nix develop                                                     # Test changes
-git add flake.lock requirements.lock && git commit -m "chore: update deps"
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-**Note**: `nix develop` auto-syncs Python dependencies when requirements.lock changes. No manual pip install needed.
+## Configuration
 
-## Modes of Operation
+Everything is driven by a YAML config file. Here's a minimal example using
+Ollama for both embeddings and the LLM:
 
-### 🌀 Ephemeral Mode (In-Memory)
+```yaml
+retrieval:
+  embedding:
+    type: OllamaEmbeddingConfig
+    model_name: nomic-embed-text
 
-*Ideal for*: One-off research sessions, temporary document analysis
+  splitter:
+    type: SentenceSplitterConfig
+    chunk_size: 512
+    chunk_overlap: 20
 
-```
-echo "/path/to/docs/*.md" | python rag-client.py \
-  --from -                                       \
-  --embed-provider "HuggingFace"                 \
-  --embed-model "BAAI/bge-large-en-v1.5"         \
-  --chunk-size 512                               \
-  --chunk-overlap 20                             \
-  --top-k 15                                     \
-  search "Keyword analysis"
-```
+query:
+  llm: &llm
+    type: OllamaConfig
+    model: llama3
+    base_url: "http://localhost:11434"
+    temperature: 0.7
 
-- Auto-caches index to `~/.cache/rag-client` using file content hashes
-- Subsequent queries in same session skip re-indexing
+  engine:
+    type: RetrieverQueryEngineConfig
+    response_mode: compact_accumulate
 
-### 💾 Persistent Mode (Postgres)
-
-*Ideal for*: Enterprise knowledge bases, frequent document set reuse
-
-1. **Initial Indexing**:
-
-```
-find /storage/pdfs -name '*.pdf' | python rag-client.py \
-  --db-name research_papers                             \
-  --db-table ai_ethics                                  \
-  --embed-provider "HuggingFace"                        \
-  --embed-model "BAAI/bge-large-en-v1.5"                \
-  --chunk-size 512                                      \
-  --chunk-overlap 20                                    \
-  --from -                                              \
-  index
+chat:
+  llm: *llm
+  engine:
+    type: SimpleContextChatEngineConfig
+    context_window: 32768
 ```
 
-2. **Querying**:
+The `&llm` / `*llm` YAML anchors let you share the same LLM config between
+query and chat without repeating yourself. There are example configs under
+`examples/configs/` for different setups (OpenAI, Postgres, etc.), and
+`chat.yaml` in the repo root is the one I actually use day-to-day.
 
-```
-python rag-client.py                        \
-  --db-name research_papers                 \
-  --db-table ai_ethics                      \
-  --llm-provider "OpenAILike"               \
-  --llm "Falcon3-10B-Instruct"              \
-  --llm-base-url "http://localhost:8080/v1" \
-  --timeout 600                             \
-  --top-k 25                                \
-  query "Compare AI safety approaches"
-```
+The config system supports a wide range of providers -- HuggingFace embeddings,
+OpenAI-like endpoints, LlamaCPP with GGUF models, and more. The type
+discriminator field (`type: ...`) tells the config parser which provider to
+instantiate.
 
-3. **Chat sessions**:
+## CLI commands
 
-Simply remove the `--search` or `--query` options:
+The general pattern is:
 
-```
-python rag-client.py                        \
-  --db-name research_papers                 \
-  --db-table ai_ethics                      \
-  --llm-provider "OpenAILike"               \
-  --llm "Falcon3-10B-Instruct"              \
-  --llm-base-url "http://localhost:8080/v1" \
-  --timeout 600                             \
-  --top-k 25                                \
-  chat
+```bash
+python main.py --config <yaml-file> --from <source> [options] <command>
 ```
 
-3. **Present an OpenAI-compatible API**:
+Where `--from` can be a file, a directory, or `-` to read a file list from
+stdin.
 
-Simply remove the `--search` or `--query` options:
+### index
 
-```
-python rag-client.py                        \
-  --db-name research_papers                 \
-  --db-table ai_ethics                      \
-  --llm-provider "OpenAILike"               \
-  --llm "Falcon3-10B-Instruct"              \
-  --llm-base-url "http://localhost:8080/v1" \
-  --timeout 600                             \
-  --top-k 25                                \
-  --host localhost                          \
-  --port 9090                               \
-  serve
+Index documents into the vector store:
+
+```bash
+python main.py -c chat.yaml --from ~/docs --recursive index
 ```
 
-## Configuration Highlights
+Use `--force` to bypass the cache and re-index from scratch. The cache lives in
+`~/.cache/rag-client/` and uses content hashing -- so if your documents haven't
+changed, re-indexing is a no-op.
 
-Use `rag-client --help` for the full list of parameters and their default
-values.
+### search
 
-### Critical Parameters
+Retrieve matching chunks as JSON (no LLM involved):
 
-#### Embedding
-
-```
---embed-provider=PROVIDER
---embed-model=MODEL
---embed-dim=DIMENSIONS
---chunk-size=CHUNKING_SIZE
---chunk-overlap=OVERLAP_SIZE
---top-k=RETURN_TOP_K_RESULTS
+```bash
+python main.py -c chat.yaml --from ~/docs search "memory management"
 ```
 
-#### Database
+### query
 
-The database parameter indicates “persistent” use, and is not required.
+Ask a question and get an LLM-generated answer grounded in your documents:
 
-```
---db-name=NAME        # Name of the Postgres+Pgvector database
-```
-
-#### LLM
-
-The LLM parameter is only needed for chat queries, and not if you are only
-embedding and searching a document collection.
-
-```
---llm-provider=PROVIDER
---llm=MODEL
---llm-api-key=API_KEY_IF_NEEDED
---llm-base-url=http://localhost:8080/v1  # Local model endpoint
---timeout=TIMEOUT_IN_SECS
---temperature=TEMPERATURE
---context-window=CONTEXT_WINDOW
+```bash
+python main.py -c chat.yaml --from ~/docs query "How does the garbage collector work?"
 ```
 
-## GPTel Integration
+Add `--streaming` for streamed output.
 
-This is work in progress, and depends on a [draft PR branch of
-gptel](https://github.com/jwiegley/gptel/tree/johnw/augment) combined with a
-[new gptel-rag module](https://github.com/jwiegley/dot-emacs/blob/master/lisp/gptel-rag.el).
+### chat
 
-## Troubleshooting
+Interactive conversation with retrieval context:
 
-**Common Issues**:
+```bash
+python main.py -c chat.yaml --from ~/docs chat
+```
 
-- Embedding Dimension Mismatch: Ensure `--embed-dim` matches embedding model
-- Chunk Overflows: Reduce `--chunk-size` for dense technical content
+This gives you a readline-enabled prompt with history (saved to
+`~/.config/rag-client/chat_history`). You can type `search <query>` or
+`query <query>` inline, or just chat normally.
 
-**Debug Flags**:
+### serve
 
-- `--verbose`: Inspect index construction timing
-- `--token-limit=500`: Adjust for long-form generation
-- `--timeout=60`: Adjust for long-running local models
+Start an OpenAI-compatible API server:
+
+```bash
+python main.py -c chat.yaml --from ~/docs --host localhost --port 7990 serve
+```
+
+This exposes `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings`, and
+`/v1/models` -- so you can point any OpenAI-compatible client at it and get
+RAG-augmented responses. I use this with GPTel in Emacs.
+
+## Useful options
+
+- `--verbose` / `--debug`: Control log verbosity
+- `--top-k N`: Number of chunks to retrieve (default depends on config)
+- `--sparse-top-k N`: Top results for keyword/BM25 search
+- `--num-workers N` / `-j N`: Parallel workers for document processing
+- `--recursive`: Process directories recursively
+- `--streaming`: Stream LLM responses
+
+## Persistent storage with Postgres
+
+By default, rag-client uses ephemeral file-cached storage. If you want a
+persistent vector store, add a `vector_store` section to your retrieval config:
+
+```yaml
+retrieval:
+  vector_store:
+    type: PostgresVectorStoreConfig
+    connection: "postgresql://user:pass@localhost:5432/mydb"
+    hybrid_search: true
+    dimensions: 384  # must match your embedding model
+```
+
+This uses pgvector for similarity search and optionally supports hybrid
+(vector + BM25) retrieval. Make sure the `dimensions` value matches what your
+embedding model actually produces -- a mismatch here is a common source of
+confusing errors.
+
+## Development
+
+### Environment
+
+`nix develop` is the recommended path. It gives you everything you need,
+including ruff, basedpyright, and pytest.
+
+### Pre-commit hooks
+
+The project uses [lefthook](https://github.com/evilmartians/lefthook) for
+pre-commit hooks. These run automatically on `git commit` and check:
+
+- **ruff format** and **ruff lint** on Python files
+- **shfmt** on shell scripts
+- **nix flake check** for Nix-level validation
+- **pytest** on the config and fuzz test suites
+- **benchmarks** against a saved baseline (if one exists)
+
+### Running tests
+
+```bash
+pytest tests/
+
+# With coverage
+pytest --cov=rag_client tests/
+```
+
+### Code quality
+
+```bash
+ruff format .
+ruff check .
+basedpyright .
+```
+
+## License
+
+BSD 3-Clause. See [LICENSE.md](LICENSE.md) for the full text.
