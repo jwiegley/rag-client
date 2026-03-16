@@ -7,7 +7,6 @@ from different providers (OpenAI, Ollama, Perplexity, etc.).
 import subprocess
 import uuid
 from dataclasses import asdict
-from typing import NoReturn
 
 from llama_index.core.llms.llm import LLM
 from llama_index.llms.litellm import LiteLLM
@@ -146,7 +145,7 @@ def get_llm(
 def realize_llm(
     config: LLMConfig | None,
     verbose: bool = False,
-) -> LLM | NoReturn:
+) -> LLM:
     """Load an LLM or error if not possible.
 
     Args:

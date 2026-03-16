@@ -5,7 +5,6 @@ import argparse
 import os
 import sys
 from pathlib import Path
-from typing import List, Optional
 
 from typed_argparse import TypedArgs
 
@@ -16,8 +15,8 @@ from rag_client.utils.logging import get_logger, setup_logging
 
 # Define a class to hold the parsed arguments
 class Args(TypedArgs):
-    from_: Optional[str]
-    num_workers: Optional[int]
+    from_: str | None
+    num_workers: int | None
     recursive: bool
     verbose: bool
     debug: bool
@@ -26,13 +25,13 @@ class Args(TypedArgs):
     port: int
     reload_server: bool
     config: str
-    top_k: Optional[int]
-    sparse_top_k: Optional[int]
+    top_k: int | None
+    sparse_top_k: int | None
     command: str
-    args: List[str]
+    args: list[str]
 
 
-def parse_args(arguments: List[str] = sys.argv[1:]) -> Args:
+def parse_args(arguments: list[str] = sys.argv[1:]) -> Args:
     """
     Parse the command-line arguments.
 

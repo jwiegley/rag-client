@@ -7,7 +7,7 @@ environment variable substitution and comprehensive error reporting.
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import yaml
 from pydantic import ValidationError
@@ -47,7 +47,7 @@ def substitute_env_vars(content: str) -> str:
     return re.sub(pattern, replacer, content)
 
 
-def process_includes(yaml_dict: Dict[str, Any], base_path: Path) -> Dict[str, Any]:
+def process_includes(yaml_dict: dict[str, Any], base_path: Path) -> dict[str, Any]:
     """Process !include directives in YAML configuration.
 
     Args:
@@ -68,7 +68,7 @@ def process_includes(yaml_dict: Dict[str, Any], base_path: Path) -> Dict[str, An
             if not full_path.exists():
                 raise ConfigurationError(f"Include file not found: {full_path}")
 
-            with open(full_path, "r") as f:
+            with open(full_path) as f:
                 include_content = f.read()
                 include_content = substitute_env_vars(include_content)
                 included = yaml.safe_load(include_content)
@@ -86,7 +86,7 @@ def process_includes(yaml_dict: Dict[str, Any], base_path: Path) -> Dict[str, An
     return result
 
 
-def load_yaml(path: Path) -> Dict[str, Any]:
+def load_yaml(path: Path) -> dict[str, Any]:
     """Load and process a YAML file with environment substitution.
 
     Args:
@@ -99,7 +99,7 @@ def load_yaml(path: Path) -> Dict[str, Any]:
         ConfigurationError: If file cannot be loaded or parsed
     """
     try:
-        with open(path, "r") as f:
+        with open(path) as f:
             content = f.read()
 
         # Substitute environment variables
@@ -122,9 +122,9 @@ def load_yaml(path: Path) -> Dict[str, Any]:
             raise ConfigurationError(
                 f"YAML syntax error in {path} at line {mark.line + 1}, column {mark.column + 1}: {e.problem}"
             )
-        raise ConfigurationError(f"YAML parsing error in {path}: {str(e)}")
+        raise ConfigurationError(f"YAML parsing error in {path}: {e!s}")
     except Exception as e:
-        raise ConfigurationError(f"Failed to load configuration from {path}: {str(e)}")
+        raise ConfigurationError(f"Failed to load configuration from {path}: {e!s}")
 
 
 def load_config(path: Path) -> Config:
@@ -200,7 +200,7 @@ def resolve_config_path(config_path: str | None = None) -> Path:
     return local_config
 
 
-def merge_configs(*configs: Dict[str, Any]) -> Dict[str, Any]:
+def merge_configs(*configs: dict[str, Any]) -> dict[str, Any]:
     """Merge multiple configuration dictionaries.
 
     Later configs override earlier ones. Nested dictionaries are merged recursively.
@@ -243,9 +243,6 @@ def validate_config(config: Config) -> None:
     """
     if not config.retrieval:
         raise ValueError("Configuration must include 'retrieval' section")
-
-    if not config.retrieval.llm:
-        raise ValueError("Configuration must include LLM settings in retrieval section")
 
     if not config.retrieval.embedding:
         raise ValueError(

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Union
+
 from dataclass_wizard import YAMLWizard
 
 

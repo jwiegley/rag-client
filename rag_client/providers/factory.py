@@ -4,7 +4,7 @@ import logging
 import subprocess
 import uuid
 from dataclasses import asdict
-from typing import Any, Dict
+from typing import Any
 
 from llama_index.core.embeddings import BaseEmbedding
 from llama_index.core.llms.llm import LLM
@@ -476,7 +476,7 @@ def create_llm_provider(config: LLMConfig, verbose: bool = False) -> LLM:
     return provider_class.create(config, verbose)
 
 
-def get_available_embedding_providers() -> Dict[str, Dict[str, Any]]:
+def get_available_embedding_providers() -> dict[str, dict[str, Any]]:
     """Get list of available embedding providers with metadata.
 
     Returns:
@@ -489,7 +489,7 @@ def get_available_embedding_providers() -> Dict[str, Dict[str, Any]]:
     return providers
 
 
-def get_available_llm_providers() -> Dict[str, Dict[str, Any]]:
+def get_available_llm_providers() -> dict[str, dict[str, Any]]:
     """Get list of available LLM providers with metadata.
 
     Returns:

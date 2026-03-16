@@ -9,12 +9,9 @@ import functools
 import logging
 import random
 import time
+from collections.abc import Callable
 from typing import (
     Any,
-    Callable,
-    Optional,
-    Tuple,
-    Type,
     TypeVar,
 )
 
@@ -83,7 +80,7 @@ def is_retryable_error(error: Exception) -> bool:
     return any(pattern in error_str for pattern in retryable_patterns)
 
 
-def get_retry_after(error: Exception) -> Optional[float]:
+def get_retry_after(error: Exception) -> float | None:
     """Extract retry-after hint from error if available.
 
     Args:
@@ -124,8 +121,8 @@ class RetryConfig:
         base_delay: float = 1.0,
         max_delay: float = 60.0,
         jitter: bool = True,
-        retryable_exceptions: Optional[Tuple[Type[Exception], ...]] = None,
-        on_retry: Optional[Callable[[Exception, int], None]] = None,
+        retryable_exceptions: tuple[type[Exception], ...] | None = None,
+        on_retry: Callable[[Exception, int], None] | None = None,
     ):
         self.max_retries = max_retries
         self.base_delay = base_delay
@@ -139,7 +136,7 @@ DEFAULT_RETRY_CONFIG = RetryConfig()
 
 
 def with_retry(
-    config: Optional[RetryConfig] = None,
+    config: RetryConfig | None = None,
 ) -> Callable[[F], F]:
     """Decorator for adding retry logic to synchronous functions.
 
@@ -159,7 +156,7 @@ def with_retry(
     def decorator(func: F) -> F:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            last_error: Optional[Exception] = None
+            last_error: Exception | None = None
 
             for attempt in range(cfg.max_retries + 1):
                 try:
@@ -204,7 +201,7 @@ def with_retry(
 
 
 def with_async_retry(
-    config: Optional[RetryConfig] = None,
+    config: RetryConfig | None = None,
 ) -> Callable[[F], F]:
     """Decorator for adding retry logic to async functions.
 
@@ -225,7 +222,7 @@ def with_async_retry(
     def decorator(func: F) -> F:
         @functools.wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            last_error: Optional[Exception] = None
+            last_error: Exception | None = None
 
             for attempt in range(cfg.max_retries + 1):
                 try:
@@ -315,7 +312,7 @@ class CircuitBreaker:
         self._state = self.CLOSED
         self._failure_count = 0
         self._success_count = 0
-        self._last_failure_time: Optional[float] = None
+        self._last_failure_time: float | None = None
 
     @property
     def state(self) -> str:

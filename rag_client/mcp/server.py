@@ -19,7 +19,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from ..config.models import Config
 from ..core.workflow import RAGWorkflow
@@ -51,8 +51,8 @@ class MCPServer:
     def __init__(
         self,
         workflow: RAGWorkflow,
-        retriever: Optional[Any] = None,
-        config: Optional[Config] = None,
+        retriever: Any | None = None,
+        config: Config | None = None,
     ):
         """Initialize MCP server.
 
@@ -66,7 +66,7 @@ class MCPServer:
         self.tools = RAGTools(workflow, retriever, config)
         self._initialized = False
 
-    async def handle_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_message(self, message: dict[str, Any]) -> dict[str, Any]:
         """Handle incoming MCP message.
 
         Args:
@@ -97,7 +97,7 @@ class MCPServer:
             logger.error(f"Error handling {method}: {e}")
             return self._error_response(msg_id, -32603, str(e))
 
-    async def _handle_initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def _handle_initialize(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle initialize request."""
         self._initialized = True
 
@@ -112,12 +112,12 @@ class MCPServer:
             },
         }
 
-    async def _handle_list_tools(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def _handle_list_tools(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle tools/list request."""
         tools = [tool.to_dict() for tool in self.tools.tool_definitions]
         return {"tools": tools}
 
-    async def _handle_call_tool(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def _handle_call_tool(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle tools/call request."""
         tool_name = params.get("name", "")
         arguments = params.get("arguments", {})
@@ -144,7 +144,7 @@ class MCPServer:
                 "isError": True,
             }
 
-    def _success_response(self, msg_id: Any, result: Dict[str, Any]) -> Dict[str, Any]:
+    def _success_response(self, msg_id: Any, result: dict[str, Any]) -> dict[str, Any]:
         """Create success response."""
         return {
             "jsonrpc": "2.0",
@@ -152,7 +152,7 @@ class MCPServer:
             "result": result,
         }
 
-    def _error_response(self, msg_id: Any, code: int, message: str) -> Dict[str, Any]:
+    def _error_response(self, msg_id: Any, code: int, message: str) -> dict[str, Any]:
         """Create error response."""
         return {
             "jsonrpc": "2.0",
@@ -251,8 +251,8 @@ class MCPServer:
 
 
 def create_mcp_server(
-    config_path: Optional[Path] = None,
-    input_from: Optional[str] = None,
+    config_path: Path | None = None,
+    input_from: str | None = None,
 ) -> MCPServer:
     """Create an MCP server instance.
 

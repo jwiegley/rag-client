@@ -5,7 +5,7 @@ dataclass-wizard to Pydantic with proper validation.
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 # Import constants from llama-index
 from llama_index.core.constants import DEFAULT_EMBED_BATCH_SIZE
@@ -23,13 +23,13 @@ class HuggingFaceEmbeddingConfig(EmbeddingBaseConfig):
         default=DEFAULT_HUGGINGFACE_EMBEDDING_MODEL,
         description="HuggingFace model name or path",
     )
-    max_length: Optional[int] = Field(
+    max_length: int | None = Field(
         default=None, gt=0, le=8192, description="Maximum sequence length"
     )
-    query_instruction: Optional[str] = Field(
+    query_instruction: str | None = Field(
         default=None, description="Instruction to prepend to queries"
     )
-    text_instruction: Optional[str] = Field(
+    text_instruction: str | None = Field(
         default=None, description="Instruction to prepend to text passages"
     )
     normalize: bool = Field(default=True, description="Whether to normalize embeddings")
@@ -39,28 +39,28 @@ class HuggingFaceEmbeddingConfig(EmbeddingBaseConfig):
         le=1000,
         description="Batch size for embedding generation",
     )
-    cache_folder: Optional[str] = Field(
+    cache_folder: str | None = Field(
         default=None, description="Path to cache folder for models"
     )
     trust_remote_code: bool = Field(
         default=False, description="Whether to trust remote code from HuggingFace"
     )
-    device: Optional[
-        Literal["cuda", "cpu", "mps", "cuda:0", "cuda:1", "cuda:2", "cuda:3"]
-    ] = Field(default=None, description="Device to run model on")
+    device: (
+        Literal["cuda", "cpu", "mps", "cuda:0", "cuda:1", "cuda:2", "cuda:3"] | None
+    ) = Field(default=None, description="Device to run model on")
     parallel_process: bool = Field(
         default=False, description="Whether to use parallel processing"
     )
-    target_devices: Optional[List[str]] = Field(
+    target_devices: list[str] | None = Field(
         default=None, description="List of target devices for parallel processing"
     )
-    tokenizer_name: Optional[str] = Field(
+    tokenizer_name: str | None = Field(
         default=None, description="Optional tokenizer name if different from model"
     )
 
     @field_validator("cache_folder")
     @classmethod
-    def validate_cache_folder(cls, v: Optional[str]) -> Optional[str]:
+    def validate_cache_folder(cls, v: str | None) -> str | None:
         """Validate and expand cache folder path."""
         if v:
             path = Path(v).expanduser().resolve()
@@ -69,9 +69,7 @@ class HuggingFaceEmbeddingConfig(EmbeddingBaseConfig):
 
     @field_validator("target_devices")
     @classmethod
-    def validate_target_devices(
-        cls, v: Optional[List[str]], info
-    ) -> Optional[List[str]]:
+    def validate_target_devices(cls, v: list[str] | None, info) -> list[str] | None:
         """Validate target devices when parallel processing is enabled."""
         if info.data.get("parallel_process") and not v:
             raise ValueError(
@@ -99,22 +97,22 @@ class OpenAIEmbeddingConfig(APIConfig, EmbeddingBaseConfig):
     embed_batch_size: int = Field(
         default=100, gt=0, le=2048, description="Batch size for embedding requests"
     )
-    dimensions: Optional[int] = Field(
+    dimensions: int | None = Field(
         default=None,
         gt=0,
         le=3072,
         description="Output dimensions (for models that support it)",
     )
-    additional_kwargs: Optional[Dict[str, Any]] = Field(
+    additional_kwargs: dict[str, Any] | None = Field(
         default=None, description="Additional parameters to pass to the API"
     )
     reuse_client: bool = Field(
         default=True, description="Whether to reuse the OpenAI client"
     )
-    default_headers: Optional[Dict[str, str]] = Field(
+    default_headers: dict[str, str] | None = Field(
         default=None, description="Default headers for API requests"
     )
-    num_workers: Optional[int] = Field(
+    num_workers: int | None = Field(
         default=None, gt=0, le=100, description="Number of concurrent workers"
     )
 
@@ -136,7 +134,7 @@ class OpenAIEmbeddingConfig(APIConfig, EmbeddingBaseConfig):
 
     @field_validator("dimensions")
     @classmethod
-    def validate_dimensions(cls, v: Optional[int], info) -> Optional[int]:
+    def validate_dimensions(cls, v: int | None, info) -> int | None:
         """Validate dimensions based on model."""
         if v is not None:
             model = info.data.get("model", "")
@@ -163,10 +161,10 @@ class OllamaEmbeddingConfig(EmbeddingBaseConfig):
     request_timeout: float = Field(
         default=60.0, gt=0, le=600, description="Request timeout in seconds"
     )
-    ollama_additional_kwargs: Optional[Dict[str, Any]] = Field(
+    ollama_additional_kwargs: dict[str, Any] | None = Field(
         default=None, description="Additional Ollama-specific parameters"
     )
-    client_kwargs: Optional[Dict[str, Any]] = Field(
+    client_kwargs: dict[str, Any] | None = Field(
         default=None, description="Additional client parameters"
     )
 
@@ -186,19 +184,17 @@ class LiteLLMEmbeddingConfig(APIConfig, EmbeddingBaseConfig):
     embed_batch_size: int = Field(
         default=10, gt=0, le=100, description="Batch size for embedding generation"
     )
-    dimensions: Optional[int] = Field(
-        default=None, gt=0, description="Output dimensions"
-    )
-    additional_kwargs: Optional[Dict[str, Any]] = Field(
+    dimensions: int | None = Field(default=None, gt=0, description="Output dimensions")
+    additional_kwargs: dict[str, Any] | None = Field(
         default=None, description="Additional LiteLLM parameters"
     )
     reuse_client: bool = Field(
         default=True, description="Whether to reuse the LiteLLM client"
     )
-    default_headers: Optional[Dict[str, str]] = Field(
+    default_headers: dict[str, str] | None = Field(
         default=None, description="Default headers for API requests"
     )
-    num_workers: Optional[int] = Field(
+    num_workers: int | None = Field(
         default=None, gt=0, le=50, description="Number of concurrent workers"
     )
 
@@ -222,10 +218,8 @@ class OpenAILikeEmbeddingConfig(APIConfig, EmbeddingBaseConfig):
     embed_batch_size: int = Field(
         default=10, gt=0, le=100, description="Batch size for embedding generation"
     )
-    dimensions: Optional[int] = Field(
-        default=None, gt=0, description="Output dimensions"
-    )
-    additional_kwargs: Optional[Dict[str, Any]] = Field(
+    dimensions: int | None = Field(default=None, gt=0, description="Output dimensions")
+    additional_kwargs: dict[str, Any] | None = Field(
         default=None, description="Additional API parameters"
     )
     api_key: SecretStr = Field(
@@ -233,10 +227,10 @@ class OpenAILikeEmbeddingConfig(APIConfig, EmbeddingBaseConfig):
         description="API key (use 'fake' for local endpoints)",
     )
     reuse_client: bool = Field(default=True, description="Whether to reuse the client")
-    default_headers: Optional[Dict[str, str]] = Field(
+    default_headers: dict[str, str] | None = Field(
         default=None, description="Default headers for API requests"
     )
-    num_workers: Optional[int] = Field(
+    num_workers: int | None = Field(
         default=None, gt=0, le=50, description="Number of concurrent workers"
     )
     add_litellm_session_id: bool = Field(
@@ -254,7 +248,7 @@ class VoyageEmbeddingConfig(APIConfig, EmbeddingBaseConfig):
     embed_batch_size: int = Field(
         default=10, gt=0, le=128, description="Batch size for embedding generation"
     )
-    input_type: Optional[Literal["query", "document"]] = Field(
+    input_type: Literal["query", "document"] | None = Field(
         default=None, description="Input type for optimized embeddings"
     )
     truncation: bool = Field(
@@ -286,10 +280,11 @@ class CohereEmbeddingConfig(APIConfig, EmbeddingBaseConfig):
     embed_batch_size: int = Field(
         default=96, gt=0, le=96, description="Batch size for embedding generation"
     )
-    input_type: Optional[
+    input_type: (
         Literal["search_document", "search_query", "classification", "clustering"]
-    ] = Field(default=None, description="Input type for optimized embeddings")
-    truncate: Optional[Literal["START", "END", "NONE"]] = Field(
+        | None
+    ) = Field(default=None, description="Input type for optimized embeddings")
+    truncate: Literal["START", "END", "NONE"] | None = Field(
         default="END", description="Truncation strategy for long inputs"
     )
 
@@ -329,7 +324,7 @@ try:
             description="Split mode for multi-GPU",
         )
         main_gpu: int = Field(default=0, ge=0, description="Main GPU index")
-        tensor_split: Optional[List[float]] = Field(
+        tensor_split: list[float] | None = Field(
             default=None, description="Tensor split for multi-GPU"
         )
         vocab_only: bool = Field(default=False, description="Load only vocabulary")
@@ -340,7 +335,7 @@ try:
         )
         n_ctx: int = Field(default=512, gt=0, description="Context size")
         n_batch: int = Field(default=512, gt=0, description="Batch size")
-        n_threads: Optional[int] = Field(
+        n_threads: int | None = Field(
             default=None, gt=0, description="Number of threads"
         )
 
@@ -366,12 +361,12 @@ except ImportError:
 
 # Export all configuration classes
 __all__ = [
+    "CohereEmbeddingConfig",
     "HuggingFaceEmbeddingConfig",
-    "OpenAIEmbeddingConfig",
-    "OllamaEmbeddingConfig",
     "LiteLLMEmbeddingConfig",
+    "LlamaCPPEmbeddingConfig",
+    "OllamaEmbeddingConfig",
+    "OpenAIEmbeddingConfig",
     "OpenAILikeEmbeddingConfig",
     "VoyageEmbeddingConfig",
-    "CohereEmbeddingConfig",
-    "LlamaCPPEmbeddingConfig",
 ]

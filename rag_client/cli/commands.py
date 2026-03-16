@@ -3,10 +3,10 @@
 import atexit
 import json
 import logging
-from pathlib import Path
-from typing import Any, Optional
-
 import readline
+from pathlib import Path
+from typing import Any
+
 from llama_index.core.base.response.schema import Response, StreamingResponse
 from llama_index.core.retrievers import BaseRetriever
 from llama_index.core.schema import QueryType
@@ -26,14 +26,14 @@ logger = get_logger(__name__)
 def rag_initialize(
     logger: logging.Logger,
     config_path: Path,
-    input_from: Optional[str],
-    num_workers: Optional[int] = None,
+    input_from: str | None,
+    num_workers: int | None = None,
     recursive: bool = False,
     index_files: bool = False,
-    top_k: Optional[int] = None,
-    sparse_top_k: Optional[int] = None,
+    top_k: int | None = None,
+    sparse_top_k: int | None = None,
     verbose: bool = False,
-) -> tuple[RAGWorkflow, Optional[BaseRetriever]]:
+) -> tuple[RAGWorkflow, BaseRetriever | None]:
     """Initialize RAG workflow and retriever.
 
     Sets up the complete RAG pipeline by loading configuration, processing input
@@ -351,7 +351,7 @@ def chat_command(
 def execute_command(
     logger: logging.Logger,
     rag: RAGWorkflow,
-    retriever: Optional[BaseRetriever],
+    retriever: BaseRetriever | None,
     args: Any,
 ):
     """Execute the RAG client commands.
@@ -478,8 +478,8 @@ def execute_command(
             else:
                 chat_store = SimpleChatStore()
 
-            query_state: Optional[QueryState] = None
-            chat_state: Optional[ChatState] = None
+            query_state: QueryState | None = None
+            chat_state: ChatState | None = None
 
             # Enter a chat loop
             while True:

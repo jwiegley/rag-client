@@ -25,24 +25,23 @@ import asyncio
 import json
 import os
 import time
-import uvicorn
-
 from collections.abc import AsyncGenerator, Sequence
-from fastapi import FastAPI, HTTPException, Depends, Request
+from typing import Any
+
+import uvicorn
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from typing import Any, NoReturn
-
 from llama_index.core.llms import ChatMessage
 
 from rag import *
-from rag_client.utils.logging import get_logger
 from rag_client.exceptions import (
     APIError,
     ProviderError,
-    ValidationError,
     RateLimitError,
+    ValidationError,
 )
+from rag_client.utils.logging import get_logger
 
 # Module logger
 logger = get_logger(__name__)
@@ -349,7 +348,7 @@ async def process_chat_messages(
 
 async def chat_response(
     messages: Sequence[ChatMessage], request: ChatCompletionRequest
-) -> str | NoReturn:
+) -> str:
     """Process chat messages with your custom logic."""
     response = await process_chat_messages(messages, request)
     return response.response
@@ -357,7 +356,7 @@ async def chat_response(
 
 async def stream_chat_response(
     messages: Sequence[ChatMessage], request: ChatCompletionRequest
-) -> AsyncGenerator[str, None] | NoReturn:
+) -> AsyncGenerator[str, None]:
     """Stream chat responses in the SSE format expected by OpenAI clients."""
     try:
         response = await process_chat_messages(messages, request)

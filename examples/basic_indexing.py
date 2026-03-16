@@ -14,8 +14,8 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from rag_client.core.workflow import RAGWorkflow
 from rag_client.config.loader import load_config
+from rag_client.core.workflow import RAGWorkflow
 from rag_client.utils.logging import setup_logging
 
 

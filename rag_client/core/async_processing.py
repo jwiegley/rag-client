@@ -5,9 +5,10 @@ for improved performance when indexing large document collections.
 """
 
 import asyncio
+from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Callable, Iterable, List, Optional, Sequence, TypeVar
+from typing import Any, TypeVar
 
 from llama_index.core.schema import BaseNode, Document
 
@@ -39,7 +40,7 @@ class AsyncDocumentProcessor:
 
     def __init__(
         self,
-        max_workers: Optional[int] = None,
+        max_workers: int | None = None,
         use_processes: bool = False,
         batch_size: int = 10,
     ):
@@ -54,7 +55,7 @@ class AsyncDocumentProcessor:
         self.use_processes = use_processes
         self.batch_size = batch_size
 
-        self._executor: Optional[ThreadPoolExecutor | ProcessPoolExecutor] = None
+        self._executor: ThreadPoolExecutor | ProcessPoolExecutor | None = None
 
     def _get_executor(self) -> ThreadPoolExecutor | ProcessPoolExecutor:
         """Get or create executor."""
@@ -70,8 +71,8 @@ class AsyncDocumentProcessor:
         func: Callable[[T], Any],
         items: Iterable[T],
         desc: str = "Processing",
-        on_progress: Optional[Callable[[int, int], None]] = None,
-    ) -> List[Any]:
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> list[Any]:
         """Map a function over items concurrently.
 
         Args:
@@ -121,10 +122,10 @@ class AsyncDocumentProcessor:
 
     async def read_documents_async(
         self,
-        file_paths: List[Path],
-        file_extractor: Optional[dict] = None,
-        on_progress: Optional[Callable[[int, int], None]] = None,
-    ) -> List[Document]:
+        file_paths: list[Path],
+        file_extractor: dict | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> list[Document]:
         """Read documents from files concurrently.
 
         Args:
@@ -137,7 +138,7 @@ class AsyncDocumentProcessor:
         """
         from llama_index.core import SimpleDirectoryReader
 
-        def read_single_file(path: Path) -> List[Document]:
+        def read_single_file(path: Path) -> list[Document]:
             try:
                 reader = SimpleDirectoryReader(
                     input_files=[path],
@@ -165,7 +166,7 @@ class AsyncDocumentProcessor:
         self,
         nodes: Sequence[BaseNode],
         embed_model: Any,
-        on_progress: Optional[Callable[[int, int], None]] = None,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> Sequence[BaseNode]:
         """Generate embeddings for nodes concurrently.
 
@@ -180,7 +181,7 @@ class AsyncDocumentProcessor:
         total_batches = (len(nodes) + self.batch_size - 1) // self.batch_size
         completed_batches = 0
 
-        async def embed_batch(batch: List[BaseNode]) -> List[BaseNode]:
+        async def embed_batch(batch: list[BaseNode]) -> list[BaseNode]:
             nonlocal completed_batches
             try:
                 texts = [node.get_content() for node in batch]
@@ -211,7 +212,7 @@ class AsyncDocumentProcessor:
         # Process batches with limited concurrency
         semaphore = asyncio.Semaphore(self.max_workers or 4)
 
-        async def limited_embed(batch: List[BaseNode]) -> List[BaseNode]:
+        async def limited_embed(batch: list[BaseNode]) -> list[BaseNode]:
             async with semaphore:
                 loop = asyncio.get_event_loop()
                 return await loop.run_in_executor(
@@ -250,7 +251,7 @@ class AsyncDocumentProcessor:
         self.close()
 
 
-def embed_batch_sync(batch: List[BaseNode], embed_model: Any) -> List[BaseNode]:
+def embed_batch_sync(batch: list[BaseNode], embed_model: Any) -> list[BaseNode]:
     """Synchronous batch embedding for executor."""
     texts = [node.get_content() for node in batch]
     embeddings = embed_model.get_text_embedding_batch(texts)
@@ -262,13 +263,13 @@ def embed_batch_sync(batch: List[BaseNode], embed_model: Any) -> List[BaseNode]:
 
 
 async def process_documents_parallel(
-    file_paths: List[Path],
+    file_paths: list[Path],
     embed_model: Any,
     splitter: Any,
-    max_workers: Optional[int] = None,
+    max_workers: int | None = None,
     batch_size: int = 10,
-    on_progress: Optional[Callable[[str, int, int], None]] = None,
-) -> List[BaseNode]:
+    on_progress: Callable[[str, int, int], None] | None = None,
+) -> list[BaseNode]:
     """Process documents in parallel end-to-end.
 
     Convenience function that handles reading, splitting, and embedding
@@ -289,9 +290,9 @@ async def process_documents_parallel(
         # Read documents
         documents = await processor.read_documents_async(
             file_paths,
-            on_progress=lambda c, t: on_progress("reading", c, t)
-            if on_progress
-            else None,
+            on_progress=lambda c, t: (
+                on_progress("reading", c, t) if on_progress else None
+            ),
         )
 
         if not documents:
@@ -305,9 +306,9 @@ async def process_documents_parallel(
         embedded_nodes = await processor.embed_nodes_async(
             nodes,
             embed_model,
-            on_progress=lambda c, t: on_progress("embedding", c, t)
-            if on_progress
-            else None,
+            on_progress=lambda c, t: (
+                on_progress("embedding", c, t) if on_progress else None
+            ),
         )
 
         return list(embedded_nodes)

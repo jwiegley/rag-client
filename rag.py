@@ -1,7 +1,7 @@
 # pyright: reportMissingTypeStubs=false
 # pyright: reportExplicitAny=false
 # pyright: reportAny=false
-# ruff: noqa: E402, F403, F405
+# ruff: noqa: E402
 
 """
 DEPRECATED: This module is deprecated and will be removed in a future version.
@@ -34,18 +34,10 @@ import hashlib
 import logging
 import os
 import sys
-import psycopg2
-import llama_cpp
-import chat
-
 from copy import deepcopy
 from dataclasses import dataclass, field
-from dataclass_wizard import JSONFileWizard, JSONWizard, YAMLWizard
 from functools import cache
 from pathlib import Path
-from pydantic import BaseModel
-from orgparse.node import OrgNode
-from xdg_base_dirs import xdg_cache_home
 from typing import (
     Any,
     Literal,
@@ -57,18 +49,20 @@ from typing import (
     override,
 )
 
+import llama_cpp
+
+# from llama_index.core.tools import FunctionTool
+import llama_index.llms.llama_cpp.base
+import llama_index.llms.lmstudio.base
+import llama_index.llms.ollama.base
+import llama_index.llms.openrouter.base
+import psycopg2
+from dataclass_wizard import JSONFileWizard, JSONWizard, YAMLWizard
 from llama_index.core import (
     PromptTemplate,
     QueryBundle,
     get_response_synthesizer,  # pyright: ignore[reportUnknownVariableType]
 )
-from llama_index.core.constants import (
-    DEFAULT_CONTEXT_WINDOW,
-    DEFAULT_EMBED_BATCH_SIZE,
-    DEFAULT_NUM_OUTPUTS,
-    DEFAULT_TEMPERATURE,
-)
-from llama_index.core.query_engine.custom import STR_OR_RESPONSE_TYPE
 from llama_index.core.base.embeddings.base import Embedding
 from llama_index.core.base.response.schema import RESPONSE_TYPE
 from llama_index.core.chat_engine import (
@@ -81,8 +75,13 @@ from llama_index.core.chat_engine.types import (
     BaseChatEngine,
     StreamingAgentChatResponse,
 )
+from llama_index.core.constants import (
+    DEFAULT_CONTEXT_WINDOW,
+    DEFAULT_EMBED_BATCH_SIZE,
+    DEFAULT_NUM_OUTPUTS,
+    DEFAULT_TEMPERATURE,
+)
 from llama_index.core.embeddings import BaseEmbedding
-
 from llama_index.core.evaluation import (
     BaseEvaluator,
     GuidelineEvaluator,
@@ -101,6 +100,7 @@ from llama_index.core.query_engine import (
     RetryQueryEngine,
     RetrySourceQueryEngine,
 )
+from llama_index.core.query_engine.custom import STR_OR_RESPONSE_TYPE
 from llama_index.core.readers.base import BaseReader
 from llama_index.core.response_synthesizers import (
     BaseSynthesizer,
@@ -116,14 +116,6 @@ from llama_index.core.schema import (
     QueryType,
 )
 from llama_index.core.storage.chat_store import SimpleChatStore
-
-# from llama_index.core.tools import FunctionTool
-
-import llama_index.llms.llama_cpp.base
-import llama_index.llms.ollama.base
-import llama_index.llms.openrouter.base
-import llama_index.llms.lmstudio.base
-
 from llama_index.embeddings.huggingface.base import (
     DEFAULT_HUGGINGFACE_EMBEDDING_MODEL,
 )
@@ -132,7 +124,11 @@ from llama_index.embeddings.openai import (
     OpenAIEmbeddingModelType,
 )
 from llama_index.llms.openai.base import DEFAULT_OPENAI_MODEL
+from orgparse.node import OrgNode
+from pydantic import BaseModel
+from xdg_base_dirs import xdg_cache_home
 
+import chat
 
 # Utility functions
 
@@ -168,7 +164,7 @@ def list_files(directory: Path, recursive: bool = False) -> list[Path]:
 def read_files(
     read_from: str,
     recursive: bool = False,
-) -> list[Path] | NoReturn:
+) -> list[Path]:
     if read_from == "-":
         input_files: list[str] = [line.strip() for line in sys.stdin if line.strip()]
         if not input_files:
@@ -192,7 +188,7 @@ def convert_str(read_from: str | None) -> str | None:
             error("No input provided on standard input")
         return s
     elif os.path.isfile(read_from):
-        with open(read_from, "r") as f:
+        with open(read_from) as f:
             return f.read()
     else:
         return read_from
@@ -1253,7 +1249,7 @@ class EmbeddedNode(JSONWizard):
     metadata: dict[str, Any]
 
     @classmethod
-    def from_node(cls, node: BaseNode) -> Self | NoReturn:
+    def from_node(cls, node: BaseNode) -> Self:
         if node.embedding is None:
             error("Cannot construct EmbeddedNode from node with no embedding")
         return cls(
@@ -1310,7 +1306,7 @@ class QueryState:
         retriever: BaseRetriever | None = None,
         streaming: bool = False,
         verbose: bool = False,
-    ) -> BaseQueryEngine | NoReturn:
+    ) -> BaseQueryEngine:
         match config:
             case CitationQueryEngineConfig():
                 if retriever is None:
@@ -1344,7 +1340,7 @@ class QueryState:
         retriever: BaseRetriever | None = None,
         streaming: bool = False,
         verbose: bool = False,
-    ) -> BaseQueryEngine | NoReturn:
+    ) -> BaseQueryEngine:
         match config:
             case (
                 CitationQueryEngineConfig()

@@ -9,7 +9,7 @@ import json
 import os
 import time
 from collections.abc import AsyncGenerator, Sequence
-from typing import Any, NoReturn
+from typing import Any
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
@@ -501,7 +501,7 @@ async def process_chat_messages(
 
 async def chat_response(
     messages: Sequence[ChatMessage], request: ChatCompletionRequest
-) -> str | NoReturn:
+) -> str:
     """Process chat messages with your custom logic.
 
     Args:
@@ -517,7 +517,7 @@ async def chat_response(
 
 async def stream_chat_response(
     messages: Sequence[ChatMessage], request: ChatCompletionRequest
-) -> AsyncGenerator[str, None] | NoReturn:
+) -> AsyncGenerator[str, None]:
     """Stream chat responses in the SSE format expected by OpenAI clients.
 
     Args:

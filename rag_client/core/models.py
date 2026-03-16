@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, List, Optional, TypeAlias, override
+from typing import TYPE_CHECKING, Any, TypeAlias, override
 
 if TYPE_CHECKING:
     from rag_client.config.models import (
@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 from dataclass_wizard import JSONFileWizard, JSONWizard
 from llama_index.core import PromptTemplate
+from llama_index.core.base.response.schema import RESPONSE_TYPE
 from llama_index.core.chat_engine import (
     CondensePlusContextChatEngine,
     ContextChatEngine,
@@ -45,7 +46,6 @@ from llama_index.core.response_synthesizers import (
 )
 from llama_index.core.retrievers import BaseRetriever
 from llama_index.core.schema import BaseNode, Node, QueryType
-from llama_index.core.base.response.schema import RESPONSE_TYPE
 from llama_index.core.storage.chat_store import SimpleChatStore
 from pydantic import BaseModel
 
@@ -214,7 +214,7 @@ class QueryState:
         self,
         config: "QueryConfig",
         llm: LLM,
-        retriever: Optional[BaseRetriever] = None,
+        retriever: BaseRetriever | None = None,
         streaming: bool = False,
         verbose: bool = False,
     ) -> None:
@@ -252,7 +252,7 @@ class QueryState:
         cls,
         config: "BaseQueryEngineConfig",
         llm: LLM,
-        retriever: Optional[BaseRetriever] = None,
+        retriever: BaseRetriever | None = None,
         streaming: bool = False,
         verbose: bool = False,
     ) -> BaseQueryEngine:
@@ -296,7 +296,7 @@ class QueryState:
         cls,
         config: "QueryEngineConfig",
         llm: LLM,
-        retriever: Optional[BaseRetriever] = None,
+        retriever: BaseRetriever | None = None,
         streaming: bool = False,
         verbose: bool = False,
     ) -> BaseQueryEngine:
@@ -397,11 +397,11 @@ class ChatState:
         config: "ChatConfig",
         llm: LLM,
         user: str,
-        chat_store: Optional[SimpleChatStore] = None,
-        chat_history: Optional[List[ChatMessage]] = None,
-        retriever: Optional[BaseRetriever] = None,
+        chat_store: SimpleChatStore | None = None,
+        chat_history: list[ChatMessage] | None = None,
+        retriever: BaseRetriever | None = None,
         token_limit: int = 1500,
-        system_prompt: Optional[str] = None,
+        system_prompt: str | None = None,
         verbose: bool = False,
     ) -> None:
         """Initialize chat state.
@@ -448,10 +448,10 @@ class ChatState:
         config: "ChatEngineConfig",
         llm: LLM,
         memory: ChatMemoryBuffer,
-        retriever: Optional[BaseRetriever] = None,
+        retriever: BaseRetriever | None = None,
         buffer: int = 10,
-        summary_buffer: Optional[int] = None,
-        system_prompt: Optional[str] = None,
+        summary_buffer: int | None = None,
+        system_prompt: str | None = None,
         verbose: bool = False,
     ) -> BaseChatEngine:
         """Load chat engine from configuration."""

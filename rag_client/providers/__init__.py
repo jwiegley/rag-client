@@ -9,9 +9,9 @@ from .factory import (
 )
 
 __all__ = [
-    "ProviderRegistry",
-    "ProviderNotFoundError",
     "InvalidProviderConfigError",
+    "ProviderNotFoundError",
+    "ProviderRegistry",
     "create_embedding_provider",
     "create_llm_provider",
     "get_available_embedding_providers",

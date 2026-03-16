@@ -4,7 +4,7 @@ This module contains all extractor configurations for entity, keyword,
 summary, and QA extraction migrated to Pydantic.
 """
 
-from typing import Dict, List, Literal, Optional
+from typing import Literal
 
 from pydantic import Field, field_validator
 
@@ -20,7 +20,7 @@ class EntityExtractorConfig(ModelConfig):
     max_entities: int = Field(
         default=10, ge=1, le=100, description="Maximum number of entities to extract"
     )
-    entity_types: List[str] = Field(
+    entity_types: list[str] = Field(
         default=["PERSON", "ORGANIZATION", "LOCATION", "DATE", "PRODUCT"],
         description="Types of entities to extract",
     )
@@ -39,13 +39,13 @@ class EntityExtractorConfig(ModelConfig):
     case_sensitive: bool = Field(
         default=False, description="Whether entity matching is case-sensitive"
     )
-    custom_prompt: Optional[str] = Field(
+    custom_prompt: str | None = Field(
         default=None, description="Custom prompt for entity extraction"
     )
 
     @field_validator("entity_types")
     @classmethod
-    def validate_entity_types(cls, v: List[str]) -> List[str]:
+    def validate_entity_types(cls, v: list[str]) -> list[str]:
         """Ensure entity types are not empty."""
         if not v:
             raise ValueError("entity_types cannot be empty")
@@ -92,7 +92,7 @@ class KeywordExtractorConfig(ModelConfig):
     language: str = Field(
         default="english", description="Language for stopword removal"
     )
-    custom_stopwords: Optional[List[str]] = Field(
+    custom_stopwords: list[str] | None = Field(
         default=None, description="Additional stopwords to exclude"
     )
     diversity: float = Field(
@@ -135,7 +135,7 @@ class SummaryExtractorConfig(ModelConfig):
     style: Literal["paragraph", "bullets", "numbered"] = Field(
         default="paragraph", description="Summary output style"
     )
-    focus_areas: Optional[List[str]] = Field(
+    focus_areas: list[str] | None = Field(
         default=None, description="Specific aspects to focus on"
     )
     preserve_key_phrases: bool = Field(
@@ -147,7 +147,7 @@ class SummaryExtractorConfig(ModelConfig):
     temperature: float = Field(
         default=0.3, ge=0.0, le=1.0, description="Temperature for summary generation"
     )
-    custom_instructions: Optional[str] = Field(
+    custom_instructions: str | None = Field(
         default=None, description="Custom instructions for summarization"
     )
     chunk_summaries: bool = Field(
@@ -180,7 +180,7 @@ class QAExtractorConfig(ModelConfig):
     num_questions: int = Field(
         default=5, ge=1, le=30, description="Number of QA pairs to generate"
     )
-    question_types: List[
+    question_types: list[
         Literal["factual", "conceptual", "analytical", "comparative"]
     ] = Field(
         default=["factual", "conceptual"], description="Types of questions to generate"
@@ -200,10 +200,10 @@ class QAExtractorConfig(ModelConfig):
     avoid_yes_no: bool = Field(
         default=True, description="Whether to avoid yes/no questions"
     )
-    custom_guidelines: Optional[str] = Field(
+    custom_guidelines: str | None = Field(
         default=None, description="Custom guidelines for QA generation"
     )
-    validation_model: Optional[str] = Field(
+    validation_model: str | None = Field(
         default=None, description="Model for validating QA pairs"
     )
     min_confidence: float = Field(
@@ -212,7 +212,7 @@ class QAExtractorConfig(ModelConfig):
 
     @field_validator("question_types")
     @classmethod
-    def validate_question_types(cls, v: List[str]) -> List[str]:
+    def validate_question_types(cls, v: list[str]) -> list[str]:
         """Ensure question types are not empty."""
         if not v:
             raise ValueError("question_types cannot be empty")
@@ -248,10 +248,10 @@ class MetadataExtractorConfig(BaseConfig):
     max_categories: int = Field(
         default=5, ge=1, le=20, description="Maximum number of categories"
     )
-    custom_fields: Optional[Dict[str, str]] = Field(
+    custom_fields: dict[str, str] | None = Field(
         default=None, description="Custom metadata fields to extract"
     )
-    date_formats: List[str] = Field(
+    date_formats: list[str] = Field(
         default=["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"],
         description="Date formats to recognize",
     )
@@ -291,8 +291,8 @@ class TableExtractorConfig(BaseConfig):
 __all__ = [
     "EntityExtractorConfig",
     "KeywordExtractorConfig",
-    "SummaryExtractorConfig",
-    "QAExtractorConfig",
     "MetadataExtractorConfig",
+    "QAExtractorConfig",
+    "SummaryExtractorConfig",
     "TableExtractorConfig",
 ]

@@ -6,30 +6,30 @@ to maintain backward compatibility with existing code.
 # ruff: noqa: F403, F405
 
 # Re-export everything from rag_client
-from rag_client import *  # noqa: F403
+from rag_client import *
+from rag_client.core.models import (
+    ChatCompletionRequest,
+    ChatState,
+    CompletionRequest,
+    EmbeddedFile,
+    EmbeddedNode,
+    EmbeddingRequest,
+    Message,
+    QueryState,
+    SimpleQueryEngine,
+)
 
 # Additional imports that might be needed for backward compatibility
 from rag_client.core.workflow import RAGWorkflow
-from rag_client.core.models import (
-    ChatState,
-    QueryState,
-    SimpleQueryEngine,
-    EmbeddedNode,
-    EmbeddedFile,
-    Message,
-    ChatCompletionRequest,
-    CompletionRequest,
-    EmbeddingRequest,
-)
 from rag_client.utils.helpers import (
-    error,
-    clean_special_tokens,
     cache_dir,
+    clean_special_tokens,
     collection_hash,
-    list_files,
-    read_files,
     convert_str,
+    error,
+    list_files,
     parse_prefixes,
+    read_files,
 )
 
 # Ensure all names are available

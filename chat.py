@@ -1,10 +1,11 @@
 from typing import override
+
 from llama_index.core.base.base_retriever import BaseRetriever
 from llama_index.core.callbacks import CallbackManager
 from llama_index.core.chat_engine.types import (
+    AgentChatResponse,
     BaseChatEngine,
     StreamingAgentChatResponse,
-    AgentChatResponse,
 )
 from llama_index.core.llms import (
     LLM,

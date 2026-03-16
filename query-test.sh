@@ -14,10 +14,10 @@ if [[ "$1" == "--reset" ]]; then
     shift 1
     rm -fr ~/.cache/rag-client/*
     find $HOME/doc/guidance/universal-house-of-justice/messages \
-         -name '19630*.txt' -print                              \
-         | ./main.py --from - --config "$yaml" index
+        -name '19630*.txt' -print |
+        ./main.py --from - --config "$yaml" index
 fi
 
 find $HOME/doc/guidance/universal-house-of-justice/messages \
-     -name '19630*.txt' -print                              \
-    | ./main.py --from - --config "$yaml" "$@"
+    -name '19630*.txt' -print |
+    ./main.py --from - --config "$yaml" "$@"

@@ -4,7 +4,7 @@ This module contains all chunking and splitting configurations migrated from
 dataclass-wizard to Pydantic with proper validation.
 """
 
-from typing import List, Literal, Optional
+from typing import Literal
 
 from pydantic import Field, field_validator
 
@@ -29,7 +29,7 @@ class SentenceSplitterConfig(ChunkingBaseConfig):
     paragraph_separator: str = Field(
         default="\n\n", description="Separator to identify paragraphs"
     )
-    secondary_chunking_regex: Optional[str] = Field(
+    secondary_chunking_regex: str | None = Field(
         default=None, description="Regex for secondary chunking"
     )
 
@@ -57,7 +57,7 @@ class SemanticSplitterConfig(ChunkingBaseConfig):
         le=100.0,
         description="Percentile threshold for identifying semantic breakpoints",
     )
-    embed_model_name: Optional[str] = Field(
+    embed_model_name: str | None = Field(
         default=None, description="Embedding model to use for semantic similarity"
     )
 
@@ -205,7 +205,7 @@ class RecursiveCharacterSplitterConfig(ChunkingBaseConfig):
         default=1000, ge=100, le=4096, description="Target chunk size"
     )
     chunk_overlap: int = Field(default=200, ge=0, description="Overlap between chunks")
-    separators: List[str] = Field(
+    separators: list[str] = Field(
         default=["\n\n", "\n", " ", ""], description="Separators to try in order"
     )
     keep_separator: bool = Field(
@@ -217,7 +217,7 @@ class RecursiveCharacterSplitterConfig(ChunkingBaseConfig):
 
     @field_validator("separators")
     @classmethod
-    def validate_separators(cls, v: List[str]) -> List[str]:
+    def validate_separators(cls, v: list[str]) -> list[str]:
         """Ensure separators list is not empty."""
         if not v:
             raise ValueError("separators list cannot be empty")
@@ -231,7 +231,7 @@ class TokenSplitterConfig(ChunkingBaseConfig):
         default=512, ge=10, le=8192, description="Target chunk size in tokens"
     )
     chunk_overlap: int = Field(default=50, ge=0, description="Overlap in tokens")
-    tokenizer_name: Optional[str] = Field(
+    tokenizer_name: str | None = Field(
         default=None, description="Tokenizer to use (defaults to cl100k_base)"
     )
     add_special_tokens: bool = Field(
@@ -250,21 +250,21 @@ class TokenSplitterConfig(ChunkingBaseConfig):
 class HierarchicalSplitterConfig(ChunkingBaseConfig):
     """Configuration for hierarchical document splitting."""
 
-    chunk_sizes: List[int] = Field(
+    chunk_sizes: list[int] = Field(
         default=[2048, 512, 128],
         description="Chunk sizes for different hierarchy levels",
     )
     chunk_overlap: int = Field(
         default=50, ge=0, description="Overlap between chunks at same level"
     )
-    level_titles: List[str] = Field(
+    level_titles: list[str] = Field(
         default=["Document", "Section", "Paragraph"],
         description="Names for hierarchy levels",
     )
 
     @field_validator("chunk_sizes")
     @classmethod
-    def validate_chunk_sizes(cls, v: List[int]) -> List[int]:
+    def validate_chunk_sizes(cls, v: list[int]) -> list[int]:
         """Ensure chunk sizes are in descending order."""
         if not v:
             raise ValueError("chunk_sizes cannot be empty")
@@ -277,7 +277,7 @@ class HierarchicalSplitterConfig(ChunkingBaseConfig):
 
     @field_validator("level_titles")
     @classmethod
-    def validate_titles(cls, v: List[str], info) -> List[str]:
+    def validate_titles(cls, v: list[str], info) -> list[str]:
         """Ensure titles match chunk sizes."""
         if "chunk_sizes" in info.data and len(v) != len(info.data["chunk_sizes"]):
             raise ValueError("level_titles must have same length as chunk_sizes")
@@ -286,12 +286,12 @@ class HierarchicalSplitterConfig(ChunkingBaseConfig):
 
 # Export all configuration classes
 __all__ = [
-    "SentenceSplitterConfig",
-    "SemanticSplitterConfig",
     "CodeSplitterConfig",
-    "MarkdownSplitterConfig",
-    "HybridSplitterConfig",
-    "RecursiveCharacterSplitterConfig",
-    "TokenSplitterConfig",
     "HierarchicalSplitterConfig",
+    "HybridSplitterConfig",
+    "MarkdownSplitterConfig",
+    "RecursiveCharacterSplitterConfig",
+    "SemanticSplitterConfig",
+    "SentenceSplitterConfig",
+    "TokenSplitterConfig",
 ]

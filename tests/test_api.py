@@ -5,9 +5,10 @@ This module tests the FastAPI server endpoints to ensure
 they match the OpenAI API specification and handle errors properly.
 """
 
+from unittest.mock import Mock, patch
+
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import Mock, patch
 
 from rag_client.api.server import api as app
 

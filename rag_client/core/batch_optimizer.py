@@ -7,7 +7,7 @@ for optimal throughput on different hardware configurations.
 import gc
 import time
 from dataclasses import dataclass
-from typing import Any, List, Optional, Tuple
+from typing import Any
 
 from ..utils.logging import get_logger
 
@@ -23,7 +23,7 @@ class BatchBenchmarkResult:
     memory_mb: float  # peak memory usage
     latency_ms: float  # average latency per batch
     success: bool
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -66,7 +66,7 @@ class EmbeddingBatchOptimizer:
     def __init__(
         self,
         embed_model: Any,
-        test_texts: Optional[List[str]] = None,
+        test_texts: list[str] | None = None,
         min_batch_size: int = 1,
         max_batch_size: int = 256,
         target_memory_usage: float = 0.7,  # Use 70% of available memory
@@ -201,7 +201,7 @@ class EmbeddingBatchOptimizer:
 
     def find_optimal_batch_size(
         self,
-        test_sizes: Optional[List[int]] = None,
+        test_sizes: list[int] | None = None,
     ) -> OptimalBatchConfig:
         """Find optimal batch size balancing throughput and memory.
 
@@ -307,7 +307,7 @@ class EmbeddingBatchOptimizer:
 def auto_tune_batch_size(
     embed_model: Any,
     quick: bool = True,
-) -> Tuple[int, float]:
+) -> tuple[int, float]:
     """Auto-tune embedding batch size.
 
     Convenience function for quick batch size optimization.

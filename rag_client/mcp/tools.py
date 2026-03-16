@@ -7,7 +7,7 @@ AI agent integration.
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ..config.models import Config
 from ..core.models import ChatState, QueryState
@@ -32,9 +32,9 @@ class ToolDefinition:
 
     name: str
     description: str
-    input_schema: Dict[str, Any]
+    input_schema: dict[str, Any]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "description": self.description,
@@ -59,8 +59,8 @@ class RAGTools:
     def __init__(
         self,
         workflow: RAGWorkflow,
-        retriever: Optional[Any] = None,
-        config: Optional[Config] = None,
+        retriever: Any | None = None,
+        config: Config | None = None,
     ):
         """Initialize RAG tools.
 
@@ -72,11 +72,11 @@ class RAGTools:
         self.workflow = workflow
         self.retriever = retriever
         self.config = config or workflow.config
-        self._query_state: Optional[QueryState] = None
-        self._chat_state: Optional[ChatState] = None
+        self._query_state: QueryState | None = None
+        self._chat_state: ChatState | None = None
 
     @property
-    def tool_definitions(self) -> List[ToolDefinition]:
+    def tool_definitions(self) -> list[ToolDefinition]:
         """Get all available tool definitions."""
         return [
             self._search_tool(),
@@ -181,8 +181,8 @@ class RAGTools:
         )
 
     async def execute(
-        self, tool_name: str, arguments: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
         """Execute a tool by name.
 
         Args:
@@ -224,7 +224,7 @@ class RAGTools:
                 "execution_time_ms": (time.time() - start_time) * 1000,
             }
 
-    async def _execute_search(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _execute_search(self, args: dict[str, Any]) -> dict[str, Any]:
         """Execute search tool."""
         query = args["query"]
         top_k = args.get("top_k", 5)
@@ -236,7 +236,7 @@ class RAGTools:
         nodes = self.retriever.retrieve(query)
 
         results = []
-        for i, node in enumerate(nodes[:top_k]):
+        for node in nodes[:top_k]:
             result = search_result_from_node(node)
             results.append(result.model_dump())
 
@@ -247,7 +247,7 @@ class RAGTools:
             processing_time_ms=(time.time() - start_time) * 1000,
         ).model_dump()
 
-    async def _execute_query(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _execute_query(self, args: dict[str, Any]) -> dict[str, Any]:
         """Execute query tool."""
         question = args["question"]
         include_sources = args.get("include_sources", True)
@@ -285,7 +285,7 @@ class RAGTools:
             model=llm_model(self.config.query.llm),
         ).model_dump()
 
-    async def _execute_index(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _execute_index(self, args: dict[str, Any]) -> dict[str, Any]:
         """Execute index tool."""
         paths = args["paths"]
         recursive = args.get("recursive", True)
@@ -294,8 +294,8 @@ class RAGTools:
         from ..utils.helpers import read_files
 
         start_time = time.time()
-        all_files: List[Path] = []
-        failed_files: List[str] = []
+        all_files: list[Path] = []
+        failed_files: list[str] = []
 
         for path in paths:
             try:
@@ -329,9 +329,10 @@ class RAGTools:
             processing_time_ms=(time.time() - start_time) * 1000,
         ).model_dump()
 
-    async def _execute_status(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _execute_status(self, args: dict[str, Any]) -> dict[str, Any]:
         """Execute status tool."""
         from datetime import datetime
+
         from ..config.models import embedding_model
 
         _has_retriever = self.retriever is not None

@@ -5,7 +5,6 @@ and the logging setup.
 """
 
 import logging
-from typing import Optional
 
 from ..config.models import Config, LoggingConfig
 from .logging import LogLevel, setup_logging
@@ -53,10 +52,10 @@ def setup_logging_from_config(config: Config, verbose: bool = False) -> logging.
 
 
 def configure_application_logging(
-    config_path: Optional[str] = None,
+    config_path: str | None = None,
     verbose: bool = False,
-    log_file: Optional[str] = None,
-    log_level: Optional[str] = None,
+    log_file: str | None = None,
+    log_level: str | None = None,
 ) -> logging.Logger:
     """Configure application logging with command-line overrides.
 

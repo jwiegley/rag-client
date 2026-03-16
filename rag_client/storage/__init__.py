@@ -7,7 +7,7 @@ vector storage, and persistence.
 from .cache import CacheManifest, DocumentCache, DocumentCacheEntry
 
 __all__ = [
+    "CacheManifest",
     "DocumentCache",
     "DocumentCacheEntry",
-    "CacheManifest",
 ]

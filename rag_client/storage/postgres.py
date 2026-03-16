@@ -44,26 +44,28 @@ class PostgresDetails:
         Returns:
             Unpickled object or None if not found
         """
-        with psycopg2.connect(
-            database=self.database,
-            user=self.user,
-            password=self.password,
-            host=self.host,
-            port=self.port,
-        ) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"SELECT data FROM {tablename} WHERE id = %s",
-                    (row_id,),
-                )
-                row = cur.fetchone()
-                if row is None:
-                    return None
+        with (
+            psycopg2.connect(
+                database=self.database,
+                user=self.user,
+                password=self.password,
+                host=self.host,
+                port=self.port,
+            ) as conn,
+            conn.cursor() as cur,
+        ):
+            cur.execute(
+                f"SELECT data FROM {tablename} WHERE id = %s",
+                (row_id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
 
-                binary_data = row[0]
-                if isinstance(binary_data, memoryview):
-                    binary_data = binary_data.tobytes()
-                return pickle.loads(binary_data)
+            binary_data = row[0]
+            if isinstance(binary_data, memoryview):
+                binary_data = binary_data.tobytes()
+            return pickle.loads(binary_data)
 
     def pickle_to_table(self, tablename: str, row_id: int, data: object):
         """Pickle an object to a PostgreSQL table.
@@ -74,31 +76,33 @@ class PostgresDetails:
             data: Object to pickle and store
         """
         # Connect to PostgreSQL
-        with psycopg2.connect(
-            database=self.database,
-            user=self.user,
-            password=self.password,
-            host=self.host,
-            port=self.port,
-        ) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"""
+        with (
+            psycopg2.connect(
+                database=self.database,
+                user=self.user,
+                password=self.password,
+                host=self.host,
+                port=self.port,
+            ) as conn,
+            conn.cursor() as cur,
+        ):
+            cur.execute(
+                f"""
                     CREATE TABLE IF NOT EXISTS {tablename} (
                         id SERIAL PRIMARY KEY,
                         data BYTEA
                     )
                 """
-                )
+            )
 
-                pickled = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
+            pickled = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
 
-                cur.execute(
-                    f"""
+            cur.execute(
+                f"""
                     INSERT INTO {tablename} (id, data)
                     VALUES (%s, %s)
                     ON CONFLICT (id)
                     DO UPDATE SET data = EXCLUDED.data
                 """,
-                    (row_id, psycopg2.Binary(pickled)),
-                )
+                (row_id, psycopg2.Binary(pickled)),
+            )

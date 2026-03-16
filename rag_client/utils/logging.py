@@ -9,7 +9,6 @@ import logging.handlers
 import sys
 from enum import Enum
 from pathlib import Path
-from typing import Dict, Optional
 
 
 class LogLevel(str, Enum):
@@ -71,14 +70,14 @@ class ColoredFormatter(logging.Formatter):
 
 def setup_logging(
     level: str | LogLevel = LogLevel.INFO,
-    log_file: Optional[str | Path] = None,
+    log_file: str | Path | None = None,
     console: bool = True,
-    format_string: Optional[str] = None,
-    date_format: Optional[str] = None,
+    format_string: str | None = None,
+    date_format: str | None = None,
     colored: bool = True,
     max_file_size: int = 10 * 1024 * 1024,  # 10MB
     backup_count: int = 5,
-    logger_configs: Optional[Dict[str, str]] = None,
+    logger_configs: dict[str, str] | None = None,
     propagate: bool = False,
     clear_handlers: bool = True,
 ) -> logging.Logger:
@@ -228,7 +227,7 @@ def get_logger(name: str) -> logging.Logger:
 def configure_logger(
     name: str,
     level: str | LogLevel | None = None,
-    format_string: Optional[str] = None,
+    format_string: str | None = None,
     propagate: bool = True,
 ) -> logging.Logger:
     """Configure a specific logger with custom settings.
@@ -297,13 +296,13 @@ def log_exception(
     if include_traceback:
         logger.log(
             getattr(logging, level.value),
-            f"{message}: {type(exc).__name__}: {str(exc)}",
+            f"{message}: {type(exc).__name__}: {exc!s}",
             exc_info=True,
         )
     else:
         logger.log(
             getattr(logging, level.value),
-            f"{message}: {type(exc).__name__}: {str(exc)}",
+            f"{message}: {type(exc).__name__}: {exc!s}",
         )
 
 
@@ -346,15 +345,15 @@ logger = get_logger(__name__)
 
 # Re-export commonly used items
 __all__ = [
-    "setup_logging",
-    "get_logger",
-    "configure_logger",
-    "log_exception",
-    "LogContext",
-    "LogLevel",
     "DEFAULT_FORMAT",
     "DETAILED_FORMAT",
-    "SIMPLE_FORMAT",
     "JSON_FORMAT",
+    "SIMPLE_FORMAT",
     "ColoredFormatter",
+    "LogContext",
+    "LogLevel",
+    "configure_logger",
+    "get_logger",
+    "log_exception",
+    "setup_logging",
 ]

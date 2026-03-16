@@ -2,7 +2,7 @@
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Generic, List, Optional, Type, TypeVar
+from typing import Any, Generic, TypeVar
 
 from ..exceptions import RAGClientError
 
@@ -14,7 +14,7 @@ T = TypeVar("T")
 class ProviderNotFoundError(RAGClientError):
     """Raised when a provider is not found in the registry."""
 
-    def __init__(self, provider_name: str, available_providers: List[str]):
+    def __init__(self, provider_name: str, available_providers: list[str]):
         super().__init__(
             message=f"Unknown provider: {provider_name}",
             context={
@@ -27,7 +27,7 @@ class ProviderNotFoundError(RAGClientError):
 class InvalidProviderConfigError(RAGClientError):
     """Raised when provider configuration is invalid."""
 
-    def __init__(self, provider_name: str, error: str, config: Dict[str, Any]):
+    def __init__(self, provider_name: str, error: str, config: dict[str, Any]):
         super().__init__(
             message=f"Invalid configuration for provider {provider_name}: {error}",
             context={"provider": provider_name, "error": error, "config": config},
@@ -47,13 +47,13 @@ class ProviderRegistry(Generic[T]):
         Args:
             name: Name of the provider type (for logging)
         """
-        self._providers: Dict[str, Type[T]] = {}
-        self._provider_info: Dict[str, Dict[str, Any]] = {}
+        self._providers: dict[str, type[T]] = {}
+        self._provider_info: dict[str, dict[str, Any]] = {}
         self._name = name
         logger.debug(f"Initialized {name} registry")
 
     def register(
-        self, name: str, provider_class: Type[T], info: Optional[Dict[str, Any]] = None
+        self, name: str, provider_class: type[T], info: dict[str, Any] | None = None
     ) -> None:
         """Register a provider class with the registry.
 
@@ -95,7 +95,7 @@ class ProviderRegistry(Generic[T]):
         except Exception as e:
             raise InvalidProviderConfigError(name, str(e), kwargs)
 
-    def list_providers(self) -> List[str]:
+    def list_providers(self) -> list[str]:
         """List all registered provider names.
 
         Returns:
@@ -103,7 +103,7 @@ class ProviderRegistry(Generic[T]):
         """
         return list(self._providers.keys())
 
-    def get_provider_info(self, name: str) -> Dict[str, Any]:
+    def get_provider_info(self, name: str) -> dict[str, Any]:
         """Get metadata about a provider.
 
         Args:
@@ -126,7 +126,7 @@ class ProviderRegistry(Generic[T]):
         """
         return name.lower() in self._providers
 
-    def decorator(self, name: str, info: Optional[Dict[str, Any]] = None):
+    def decorator(self, name: str, info: dict[str, Any] | None = None):
         """Decorator for registering provider classes.
 
         Args:
@@ -137,7 +137,7 @@ class ProviderRegistry(Generic[T]):
             Decorator function
         """
 
-        def wrapper(cls: Type[T]) -> Type[T]:
+        def wrapper(cls: type[T]) -> type[T]:
             self.register(name, cls, info)
             return cls
 
@@ -148,7 +148,7 @@ class BaseProvider(ABC):
     """Abstract base class for all providers."""
 
     @abstractmethod
-    def initialize(self, config: Dict[str, Any]) -> None:
+    def initialize(self, config: dict[str, Any]) -> None:
         """Initialize the provider with configuration.
 
         Args:
@@ -157,7 +157,7 @@ class BaseProvider(ABC):
         pass
 
     @abstractmethod
-    def validate_config(self, config: Dict[str, Any]) -> bool:
+    def validate_config(self, config: dict[str, Any]) -> bool:
         """Validate provider configuration.
 
         Args:

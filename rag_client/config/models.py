@@ -6,7 +6,7 @@ the RAG client application.
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, TypeAlias, Union, final
+from typing import Any, Literal, TypeAlias, final
 
 import llama_cpp
 import llama_index.llms.lmstudio.base
@@ -77,8 +77,8 @@ class LoggingConfig(YAMLWizard):
     """
 
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
-    log_file: Optional[str] = None
-    format: Optional[str] = None
+    log_file: str | None = None
+    format: str | None = None
     rotate_logs: bool = False
     max_bytes: int = 10485760  # 10MB
     backup_count: int = 5
@@ -139,16 +139,16 @@ class HuggingFaceEmbeddingConfig(YAMLWizard):
     """
 
     model_name: str = DEFAULT_HUGGINGFACE_EMBEDDING_MODEL
-    max_length: Optional[int] = None
-    query_instruction: Optional[str] = None
-    text_instruction: Optional[str] = None
+    max_length: int | None = None
+    query_instruction: str | None = None
+    text_instruction: str | None = None
     normalize: bool = True
     embed_batch_size: int = DEFAULT_EMBED_BATCH_SIZE
-    cache_folder: Optional[str] = None
+    cache_folder: str | None = None
     trust_remote_code: bool = False
-    device: Optional[str] = None
+    device: str | None = None
     parallel_process: bool = False
-    target_devices: Optional[List[str]] = None
+    target_devices: list[str] | None = None
 
 
 @dataclass
@@ -196,8 +196,8 @@ class OllamaEmbeddingConfig(YAMLWizard):
     model_name: str
     base_url: str = "http://localhost:11434"
     embed_batch_size: int = DEFAULT_EMBED_BATCH_SIZE
-    ollama_additional_kwargs: Optional[Dict[str, Any]] = None
-    client_kwargs: Optional[Dict[str, Any]] = None
+    ollama_additional_kwargs: dict[str, Any] | None = None
+    client_kwargs: dict[str, Any] | None = None
 
 
 @dataclass
@@ -207,17 +207,17 @@ class OpenAIEmbeddingConfig(YAMLWizard):
     mode: str = OpenAIEmbeddingMode.TEXT_SEARCH_MODE
     model: str = OpenAIEmbeddingModelType.TEXT_EMBED_ADA_002
     embed_batch_size: int = 100
-    dimensions: Optional[int] = None
-    additional_kwargs: Optional[Dict[str, Any]] = None
-    api_key: Optional[str] = None
-    api_key_command: Optional[str] = None
-    api_base: Optional[str] = None
-    api_version: Optional[str] = None
+    dimensions: int | None = None
+    additional_kwargs: dict[str, Any] | None = None
+    api_key: str | None = None
+    api_key_command: str | None = None
+    api_base: str | None = None
+    api_version: str | None = None
     max_retries: int = 10
     timeout: float = 60.0
     reuse_client: bool = True
-    default_headers: Optional[Dict[str, str]] = None
-    num_workers: Optional[int] = None
+    default_headers: dict[str, str] | None = None
+    num_workers: int | None = None
 
 
 @dataclass
@@ -226,17 +226,17 @@ class OpenAILikeEmbeddingConfig(YAMLWizard):
 
     model_name: str
     embed_batch_size: int = 10
-    dimensions: Optional[int] = None
-    additional_kwargs: Optional[Dict[str, Any]] = None
+    dimensions: int | None = None
+    additional_kwargs: dict[str, Any] | None = None
     api_key: str = "fake"
-    api_key_command: Optional[str] = None
-    api_base: Optional[str] = None
-    api_version: Optional[str] = None
+    api_key_command: str | None = None
+    api_base: str | None = None
+    api_version: str | None = None
     max_retries: int = 10
     timeout: float = 60.0
     reuse_client: bool = True
-    default_headers: Optional[Dict[str, str]] = None
-    num_workers: Optional[int] = None
+    default_headers: dict[str, str] | None = None
+    num_workers: int | None = None
     add_litellm_session_id: bool = False
     no_litellm_logging: bool = False
 
@@ -247,17 +247,17 @@ class LiteLLMEmbeddingConfig(YAMLWizard):
 
     model_name: str
     embed_batch_size: int = 10
-    dimensions: Optional[int] = None
-    additional_kwargs: Optional[Dict[str, Any]] = None
+    dimensions: int | None = None
+    additional_kwargs: dict[str, Any] | None = None
     api_key: str = "fake"
-    api_key_command: Optional[str] = None
-    api_base: Optional[str] = None
-    api_version: Optional[str] = None
+    api_key_command: str | None = None
+    api_base: str | None = None
+    api_version: str | None = None
     max_retries: int = 10
     timeout: float = 60.0
     reuse_client: bool = True
-    default_headers: Optional[Dict[str, str]] = None
-    num_workers: Optional[int] = None
+    default_headers: dict[str, str] | None = None
+    num_workers: int | None = None
 
 
 @dataclass
@@ -268,12 +268,12 @@ class LlamaCPPEmbeddingConfig(YAMLWizard):
     n_gpu_layers: int = 0
     split_mode: int = llama_cpp.LLAMA_SPLIT_MODE_LAYER
     main_gpu: int = 0
-    tensor_split: Optional[List[float]] = None
-    rpc_servers: Optional[str] = None
+    tensor_split: list[float] | None = None
+    rpc_servers: str | None = None
     vocab_only: bool = False
     use_mmap: bool = True
     use_mlock: bool = False
-    kv_overrides: Optional[Dict[str, Union[bool, int, float, str]]] = None
+    kv_overrides: dict[str, bool | int | float | str] | None = None
     # Context Params
     seed: int = llama_cpp.LLAMA_DEFAULT_SEED
     n_ctx: int = 512
@@ -361,14 +361,12 @@ class OllamaConfig(YAMLWizard):
     base_url: str = "http://localhost:11434"
     temperature: float = 0.75
     context_window: int = DEFAULT_CONTEXT_WINDOW
-    request_timeout: Optional[float] = (
-        llama_index.llms.ollama.base.DEFAULT_REQUEST_TIMEOUT
-    )
+    request_timeout: float | None = llama_index.llms.ollama.base.DEFAULT_REQUEST_TIMEOUT
     prompt_key: str = "prompt"
     json_mode: bool = False
     # additional_kwargs: Dict[str, Any] = field(default_factory=dict)
     is_function_calling_model: bool = True
-    keep_alive: Optional[Union[float, str]] = None
+    keep_alive: float | str | None = None
 
 
 @dataclass
@@ -377,23 +375,23 @@ class OpenAIConfig(YAMLWizard):
 
     model: str = DEFAULT_OPENAI_MODEL
     temperature: float = DEFAULT_TEMPERATURE
-    max_tokens: Optional[int] = None
-    additional_kwargs: Optional[Dict[str, Any]] = None
+    max_tokens: int | None = None
+    additional_kwargs: dict[str, Any] | None = None
     max_retries: int = 3
     timeout: float = 60.0
     reuse_client: bool = True
     api_key: str = "fake"
-    api_key_command: Optional[str] = None
-    api_base: Optional[str] = None
+    api_key_command: str | None = None
+    api_base: str | None = None
     api_version: str = ""
-    default_headers: Optional[Dict[str, str]] = None
+    default_headers: dict[str, str] | None = None
     # base class
-    system_prompt: Optional[str] = None
+    system_prompt: str | None = None
     # output_parser: Optional[BaseOutputParser] = None
     strict: bool = False
-    reasoning_effort: Optional[Literal["low", "medium", "high"]] = None
-    modalities: Optional[List[str]] = None
-    audio_config: Optional[Dict[str, Any]] = None
+    reasoning_effort: Literal["low", "medium", "high"] | None = None
+    modalities: list[str] | None = None
+    audio_config: dict[str, Any] | None = None
 
 
 @dataclass
@@ -416,15 +414,15 @@ class LiteLLMConfig(OpenAIConfig):
 class LlamaCPPConfig(YAMLWizard):
     """LlamaCPP LLM configuration."""
 
-    model_url: Optional[str] = None
-    model_path: Optional[str] = None
+    model_url: str | None = None
+    model_path: str | None = None
     temperature: float = DEFAULT_TEMPERATURE
     max_new_tokens: int = DEFAULT_NUM_OUTPUTS
     context_window: int = DEFAULT_CONTEXT_WINDOW
-    generate_kwargs: Optional[Dict[str, Any]] = None
-    model_kwargs: Optional[Dict[str, Any]] = None
+    generate_kwargs: dict[str, Any] | None = None
+    model_kwargs: dict[str, Any] | None = None
     verbose: bool = True  # Default verbosity for LlamaCPP
-    system_prompt: Optional[str] = None
+    system_prompt: str | None = None
     # output_parser: Optional[BaseOutputParser] = None
 
 
@@ -434,14 +432,14 @@ class PerplexityConfig(YAMLWizard):
 
     model: str = "sonar-pro"
     temperature: float = 0.2
-    max_tokens: Optional[int] = None
-    api_key: Optional[str] = None
-    api_key_command: Optional[str] = None
-    api_base: Optional[str] = "https://api.perplexity.ai"
-    additional_kwargs: Optional[Dict[str, Any]] = None
+    max_tokens: int | None = None
+    api_key: str | None = None
+    api_key_command: str | None = None
+    api_base: str | None = "https://api.perplexity.ai"
+    additional_kwargs: dict[str, Any] | None = None
     max_retries: int = 10
-    context_window: Optional[int] = None
-    system_prompt: Optional[str] = None
+    context_window: int | None = None
+    system_prompt: str | None = None
     # output_parser: Optional[BaseOutputParser] = None
     enable_search_classifier: bool = False
 
@@ -453,11 +451,11 @@ class OpenRouterConfig(YAMLWizard):
     model: str = llama_index.llms.openrouter.base.DEFAULT_MODEL
     temperature: float = DEFAULT_TEMPERATURE
     max_tokens: int = DEFAULT_NUM_OUTPUTS
-    additional_kwargs: Optional[Dict[str, Any]] = None
+    additional_kwargs: dict[str, Any] | None = None
     max_retries: int = 5
-    api_base: Optional[str] = llama_index.llms.openrouter.base.DEFAULT_API_BASE
-    api_key: Optional[str] = None
-    api_key_command: Optional[str] = None
+    api_base: str | None = llama_index.llms.openrouter.base.DEFAULT_API_BASE
+    api_key: str | None = None
+    api_key_command: str | None = None
 
 
 @dataclass
@@ -465,7 +463,7 @@ class LMStudioConfig(YAMLWizard):
     """LMStudio LLM configuration."""
 
     model_name: str
-    system_prompt: Optional[str] = None
+    system_prompt: str | None = None
     # output_parser: Optional[BaseOutputParser] = None
     base_url: str = "http://localhost:1234/v1"
     context_window: int = DEFAULT_CONTEXT_WINDOW
@@ -474,7 +472,7 @@ class LMStudioConfig(YAMLWizard):
     is_chat_model: bool = True
     temperature: float = DEFAULT_TEMPERATURE
     timeout: float = 120
-    additional_kwargs: Dict[str, Any] = field(default_factory=dict)
+    additional_kwargs: dict[str, Any] = field(default_factory=dict)
 
 
 LLMConfig: TypeAlias = (
@@ -526,7 +524,7 @@ class KeywordsConfig(YAMLWizard):
     """Keywords collection configuration."""
 
     collect: bool = False
-    llm: Optional[LLMConfig] = None
+    llm: LLMConfig | None = None
 
 
 @dataclass
@@ -602,7 +600,7 @@ class SummaryExtractorConfig(YAMLWizard):
     llm: LLMConfig
     # ["self"]
     # summaries: List[str] = field(default_factory=list)
-    summaries: Optional[List[str]] = None
+    summaries: list[str] | None = None
 
 
 @dataclass
@@ -846,12 +844,12 @@ class RetrievalConfig(YAMLWizard):
     """
 
     embed_individually: bool = False
-    embedding: Optional[EmbeddingConfig] = None
-    keywords: Optional[KeywordsConfig] = None
-    splitter: Optional[SplitterConfig] = None
-    extractors: Optional[List[ExtractorConfig]] = None
-    vector_store: Optional[VectorStoreConfig] = None
-    fusion: Optional[FusionRetrieverConfig] = None
+    embedding: EmbeddingConfig | None = None
+    keywords: KeywordsConfig | None = None
+    splitter: SplitterConfig | None = None
+    extractors: list[ExtractorConfig] | None = None
+    vector_store: VectorStoreConfig | None = None
+    fusion: FusionRetrieverConfig | None = None
 
 
 @dataclass
@@ -898,11 +896,11 @@ class QueryConfig(YAMLWizard):
     """
 
     llm: LLMConfig
-    engine: Optional[QueryEngineConfig] = None
+    engine: QueryEngineConfig | None = None
     retries: bool = False
     source_retries: bool = False
     show_citations: bool = False
-    evaluator_llm: Optional[LLMConfig] = None
+    evaluator_llm: LLMConfig | None = None
 
 
 @dataclass
@@ -957,7 +955,7 @@ class ChatConfig(YAMLWizard):
     """
 
     llm: LLMConfig
-    engine: Optional[ChatEngineConfig] = None
+    engine: ChatEngineConfig | None = None
     default_user: str = "user"
     summarize: bool = False
     keep_history: bool = False
@@ -1041,6 +1039,6 @@ class Config(YAMLWizard):
     """
 
     retrieval: RetrievalConfig
-    query: Optional[QueryConfig] = None
-    chat: Optional[ChatConfig] = None
-    logging: Optional[LoggingConfig] = None
+    query: QueryConfig | None = None
+    chat: ChatConfig | None = None
+    logging: LoggingConfig | None = None

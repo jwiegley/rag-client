@@ -8,7 +8,7 @@ import logging
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import yaml
 
@@ -46,7 +46,7 @@ class ConfigMigrator:
         "experimental",  # Features are now stable
     ]
 
-    def __init__(self, backup_dir: Optional[Path] = None, dry_run: bool = False):
+    def __init__(self, backup_dir: Path | None = None, dry_run: bool = False):
         """Initialize the migrator.
 
         Args:
@@ -55,9 +55,9 @@ class ConfigMigrator:
         """
         self.backup_dir = backup_dir or Path(".backup")
         self.dry_run = dry_run
-        self.report: List[str] = []
+        self.report: list[str] = []
 
-    def migrate_file(self, file_path: Path) -> Tuple[bool, str]:
+    def migrate_file(self, file_path: Path) -> tuple[bool, str]:
         """Migrate a single configuration file.
 
         Args:
@@ -71,7 +71,7 @@ class ConfigMigrator:
 
         try:
             # Load the original configuration
-            with open(file_path, "r") as f:
+            with open(file_path) as f:
                 old_config = yaml.safe_load(f)
 
             if not old_config:
@@ -105,7 +105,7 @@ class ConfigMigrator:
             return True, f"Successfully migrated {file_path}"
 
         except Exception as e:
-            error_msg = f"Failed to migrate {file_path}: {str(e)}"
+            error_msg = f"Failed to migrate {file_path}: {e!s}"
             self.report.append(error_msg)
             return False, error_msg
 
@@ -127,7 +127,7 @@ class ConfigMigrator:
         self.report.append(f"Created backup: {backup_path}")
         return backup_path
 
-    def _migrate_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+    def _migrate_config(self, config: dict[str, Any]) -> dict[str, Any]:
         """Migrate configuration structure.
 
         Args:
@@ -155,8 +155,8 @@ class ConfigMigrator:
         return new_config
 
     def _migrate_section(
-        self, section_name: str, section: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, section_name: str, section: dict[str, Any]
+    ) -> dict[str, Any]:
         """Migrate a configuration section.
 
         Args:
@@ -203,8 +203,8 @@ class ConfigMigrator:
         return new_section
 
     def _apply_section_transforms(
-        self, section_name: str, section: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, section_name: str, section: dict[str, Any]
+    ) -> dict[str, Any]:
         """Apply section-specific transformations.
 
         Args:
@@ -258,7 +258,7 @@ class ConfigMigrator:
 
         return section
 
-    def _ensure_required_sections(self, config: Dict[str, Any]) -> Dict[str, Any]:
+    def _ensure_required_sections(self, config: dict[str, Any]) -> dict[str, Any]:
         """Ensure all required sections exist in the configuration.
 
         Args:
@@ -282,7 +282,7 @@ class ConfigMigrator:
 
         return config
 
-    def _validate_config(self, config: Dict[str, Any]) -> List[str]:
+    def _validate_config(self, config: dict[str, Any]) -> list[str]:
         """Validate the migrated configuration.
 
         Args:
@@ -358,7 +358,7 @@ class ConfigMigrator:
 def migrate_configs(
     config_dir: Path = Path("."),
     pattern: str = "*.yaml",
-    backup_dir: Optional[Path] = None,
+    backup_dir: Path | None = None,
     dry_run: bool = False,
 ) -> None:
     """Migrate all configuration files in a directory.

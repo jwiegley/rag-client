@@ -6,7 +6,7 @@ import os
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, NoReturn, Optional, Tuple, Union, cast
+from typing import Any, cast
 
 from llama_index.core import (
     KeywordTableIndex,
@@ -163,7 +163,7 @@ class RAGWorkflow:
         cls,
         config: PostgresVectorStoreConfig,
         embedding_dimensions: int,
-    ) -> Tuple[PostgresDocumentStore, PostgresIndexStore, PGVectorStore]:
+    ) -> tuple[PostgresDocumentStore, PostgresIndexStore, PGVectorStore]:
         """Initialize PostgreSQL storage components.
 
         Args:
@@ -255,9 +255,9 @@ class RAGWorkflow:
     @classmethod
     def realize_llm(
         cls,
-        config: Optional[LLMConfig],
+        config: LLMConfig | None,
         verbose: bool = False,
-    ) -> Union[LLM, NoReturn]:
+    ) -> LLM:
         """Realize an LLM from configuration.
 
         Factory method that creates and initializes an LLM instance based on
@@ -305,7 +305,7 @@ class RAGWorkflow:
     @classmethod
     def __determine_fingerprint(
         cls,
-        input_files: List[Path],
+        input_files: list[Path],
         config: RetrievalConfig,
     ) -> str:
         """Generate fingerprint for cache identification.
@@ -327,8 +327,8 @@ class RAGWorkflow:
     @classmethod
     def __read_documents(
         cls,
-        input_files: List[Path],
-        num_workers: Optional[int] = None,
+        input_files: list[Path],
+        num_workers: int | None = None,
         recursive: bool = False,
         verbose: bool = False,
     ) -> Iterable[Document]:
@@ -358,7 +358,7 @@ class RAGWorkflow:
         cls,
         splitter: SplitterConfig,
         verbose: bool = False,
-    ) -> Union[TransformComponent, NoReturn]:
+    ) -> TransformComponent:
         """Load a text splitter component.
 
         Args:
@@ -461,7 +461,7 @@ class RAGWorkflow:
         self,
         documents: Iterable[Document],
         embed_llm: BaseEmbedding,
-        num_workers: Optional[int] = None,
+        num_workers: int | None = None,
         verbose: bool = False,
     ) -> Sequence[BaseNode]:
         """Process documents through ingestion pipeline.
@@ -516,7 +516,7 @@ class RAGWorkflow:
         nodes: Sequence[BaseNode],
         storage_context: StorageContext,
         verbose: bool = False,
-    ) -> Tuple[VectorStoreIndex, Optional[BaseKeywordTableIndex]]:
+    ) -> tuple[VectorStoreIndex, BaseKeywordTableIndex | None]:
         """Build vector and keyword indices from nodes.
 
         Args:
@@ -562,7 +562,7 @@ class RAGWorkflow:
 
         return vector_index, keyword_index
 
-    def __persist_dir(self, input_files: List[Path]) -> Path:
+    def __persist_dir(self, input_files: list[Path]) -> Path:
         """Get persistence directory for cache.
 
         Args:
@@ -577,7 +577,7 @@ class RAGWorkflow:
 
     def __load_storage_context(
         self,
-        persist_dir: Optional[Path] = None,
+        persist_dir: Path | None = None,
     ) -> StorageContext:
         """Load or create storage context.
 
@@ -620,10 +620,10 @@ class RAGWorkflow:
         self,
         embed_llm: BaseEmbedding,
         storage_context: StorageContext,
-        input_files: List[Path],
-        num_workers: Optional[int] = None,
+        input_files: list[Path],
+        num_workers: int | None = None,
         verbose: bool = False,
-    ) -> Tuple[VectorStoreIndex, Optional[BaseKeywordTableIndex]]:
+    ) -> tuple[VectorStoreIndex, BaseKeywordTableIndex | None]:
         """Ingest documents and build indices.
 
         Args:
@@ -665,7 +665,7 @@ class RAGWorkflow:
     def __save_indices(
         self,
         storage_context: StorageContext,
-        persist_dir: Optional[Path],
+        persist_dir: Path | None,
     ) -> None:
         """Save indices to persistence.
 
@@ -684,7 +684,7 @@ class RAGWorkflow:
         self,
         embed_llm: BaseEmbedding,
         storage_context: StorageContext,
-    ) -> Tuple[Optional[VectorStoreIndex], Optional[BaseKeywordTableIndex]]:
+    ) -> tuple[VectorStoreIndex | None, BaseKeywordTableIndex | None]:
         """Load indices from storage.
 
         Args:
@@ -726,12 +726,12 @@ class RAGWorkflow:
     def __load_indices_from_disk(
         self,
         storage_context: StorageContext,
-        input_files: Optional[List[Path]],
+        input_files: list[Path] | None,
         embed_llm: BaseEmbedding,
-        persist_dir: Optional[Path] = None,
-        num_workers: Optional[int] = None,
+        persist_dir: Path | None = None,
+        num_workers: int | None = None,
         verbose: bool = False,
-    ) -> Tuple[Optional[VectorStoreIndex], Optional[BaseKeywordTableIndex]]:
+    ) -> tuple[VectorStoreIndex | None, BaseKeywordTableIndex | None]:
         """Load indices from disk storage.
 
         Args:
@@ -770,7 +770,7 @@ class RAGWorkflow:
         self,
         storage_context: StorageContext,
         embed_llm: BaseEmbedding,
-    ) -> Tuple[Optional[VectorStoreIndex], Optional[BaseKeywordTableIndex]]:
+    ) -> tuple[VectorStoreIndex | None, BaseKeywordTableIndex | None]:
         """Load indices from cache.
 
         Args:
@@ -793,12 +793,12 @@ class RAGWorkflow:
 
     def __ingest_files(
         self,
-        input_files: Optional[List[Path]],
+        input_files: list[Path] | None,
         embed_llm: BaseEmbedding,
         index_files: bool = False,
-        num_workers: Optional[int] = None,
+        num_workers: int | None = None,
         verbose: bool = False,
-    ) -> Tuple[Optional[VectorStoreIndex], Optional[BaseKeywordTableIndex]]:
+    ) -> tuple[VectorStoreIndex | None, BaseKeywordTableIndex | None]:
         """Ingest files and create indices.
 
         Args:
@@ -850,12 +850,12 @@ class RAGWorkflow:
 
     def __retriever_from_index(
         self,
-        vector_index: Optional[VectorStoreIndex],
-        keyword_index: Optional[BaseKeywordTableIndex],
-        top_k: Optional[int] = None,
-        sparse_top_k: Optional[int] = None,
+        vector_index: VectorStoreIndex | None,
+        keyword_index: BaseKeywordTableIndex | None,
+        top_k: int | None = None,
+        sparse_top_k: int | None = None,
         verbose: bool = False,
-    ) -> Optional[BaseRetriever]:
+    ) -> BaseRetriever | None:
         """Create retriever from indices.
 
         Args:
@@ -930,7 +930,7 @@ class RAGWorkflow:
     def __merge_nodes(
         cls,
         storage_context: StorageContext,
-        nodes: List[BaseNode],
+        nodes: list[BaseNode],
     ) -> None:
         """Merge nodes from storage context.
 
@@ -947,14 +947,14 @@ class RAGWorkflow:
 
     def load_retriever(
         self,
-        input_files: Optional[List[Path]],
-        num_workers: Optional[int] = None,
+        input_files: list[Path] | None,
+        num_workers: int | None = None,
         embed_individually: bool = False,
         index_files: bool = False,
-        top_k: Optional[int] = None,
-        sparse_top_k: Optional[int] = None,
+        top_k: int | None = None,
+        sparse_top_k: int | None = None,
         verbose: bool = False,
-    ) -> Optional[BaseRetriever]:
+    ) -> BaseRetriever | None:
         """Load retriever for document search.
 
         Creates or loads a retriever that can search through indexed documents.
@@ -1070,7 +1070,7 @@ class RAGWorkflow:
 
     def retrieve_nodes(
         self, retriever: BaseRetriever, text: str
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Retrieve relevant nodes for a query.
 
         Searches the indexed documents for content relevant to the query text.

@@ -8,9 +8,10 @@ import hashlib
 import json
 import pickle
 import time
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any
 
 from llama_index.core.schema import BaseNode
 
@@ -35,7 +36,7 @@ class DocumentCacheEntry:
     content_hash: str
     mtime: float
     size: int
-    node_ids: List[str]
+    node_ids: list[str]
     cached_at: float
     config_hash: str
 
@@ -53,7 +54,7 @@ class CacheManifest:
     """
 
     version: int = 1
-    entries: Dict[str, DocumentCacheEntry] = field(default_factory=dict)
+    entries: dict[str, DocumentCacheEntry] = field(default_factory=dict)
     config_hash: str = ""
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
@@ -90,7 +91,7 @@ class DocumentCache:
     def __init__(
         self,
         cache_name: str = "default",
-        cache_base: Optional[Path] = None,
+        cache_base: Path | None = None,
     ):
         """Initialize document cache.
 
@@ -114,7 +115,7 @@ class DocumentCache:
         """Load cache manifest from disk."""
         if self.manifest_path.exists():
             try:
-                with open(self.manifest_path, "r") as f:
+                with open(self.manifest_path) as f:
                     data = json.load(f)
 
                 entries = {}
@@ -178,9 +179,9 @@ class DocumentCache:
 
     def check_files(
         self,
-        file_paths: List[Path],
+        file_paths: list[Path],
         config_hash: str,
-    ) -> Tuple[List[Path], List[Path]]:
+    ) -> tuple[list[Path], list[Path]]:
         """Check which files need to be re-indexed.
 
         Compares file fingerprints against cache to determine which
@@ -226,7 +227,7 @@ class DocumentCache:
 
         return (changed, unchanged)
 
-    def get_nodes(self, file_path: Path) -> List[BaseNode]:
+    def get_nodes(self, file_path: Path) -> list[BaseNode]:
         """Retrieve cached nodes for a document.
 
         Args:
@@ -289,7 +290,7 @@ class DocumentCache:
         )
         self.manifest.config_hash = config_hash
 
-    def invalidate(self, file_paths: Optional[List[Path]] = None) -> None:
+    def invalidate(self, file_paths: list[Path] | None = None) -> None:
         """Invalidate cache entries.
 
         Args:
@@ -313,7 +314,7 @@ class DocumentCache:
                             node_path.unlink()
                     del self.manifest.entries[path_str]
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get cache statistics.
 
         Returns:

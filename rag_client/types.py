@@ -5,23 +5,19 @@ used throughout the RAG client application.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from typing import (
     TYPE_CHECKING,
     Any,
-    AsyncIterator,
-    Awaitable,
-    Callable,
-    Dict,
-    Iterator,
-    List,
+    Literal,
     Optional,
     Protocol,
-    Tuple,
+    TypeAlias,
     TypeVar,
     Union,
 )
 
-from typing_extensions import Literal, NotRequired, TypeAlias, TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 # Import llama-index types when available
 if TYPE_CHECKING:
@@ -33,6 +29,7 @@ if TYPE_CHECKING:
         NodeWithScore,
     )
     from numpy.typing import NDArray
+
     from rag_client.config.base import BaseConfig
 
 
@@ -44,57 +41,57 @@ QueryID: TypeAlias = str
 SessionID: TypeAlias = str
 
 # Embedding types
-Embedding: TypeAlias = List[float]
-EmbeddingVector: TypeAlias = Union[List[float], "NDArray[np.float32]"]
-EmbeddingList: TypeAlias = List[Embedding]
-EmbeddingDict: TypeAlias = Dict[str, Embedding]
+Embedding: TypeAlias = list[float]
+EmbeddingVector: TypeAlias = Union[list[float], "NDArray[np.float32]"]
+EmbeddingList: TypeAlias = list[Embedding]
+EmbeddingDict: TypeAlias = dict[str, Embedding]
 
 # Document types
-DocumentDict: TypeAlias = Dict[str, Any]
-DocumentList: TypeAlias = List["Document"]
-DocumentMetadata: TypeAlias = Dict[str, Any]
-DocumentChunk: TypeAlias = Dict[str, Union[str, int, DocumentMetadata]]
+DocumentDict: TypeAlias = dict[str, Any]
+DocumentList: TypeAlias = list["Document"]
+DocumentMetadata: TypeAlias = dict[str, Any]
+DocumentChunk: TypeAlias = dict[str, str | int | DocumentMetadata]
 
 # Node types
-NodeList: TypeAlias = List["BaseNode"]
-NodeDict: TypeAlias = Dict[NodeID, "BaseNode"]
-ScoredNode: TypeAlias = Tuple["BaseNode", float]
-ScoredNodeList: TypeAlias = List["NodeWithScore"]
+NodeList: TypeAlias = list["BaseNode"]
+NodeDict: TypeAlias = dict[NodeID, "BaseNode"]
+ScoredNode: TypeAlias = tuple["BaseNode", float]
+ScoredNodeList: TypeAlias = list["NodeWithScore"]
 
 # Query types
-QueryResult: TypeAlias = Dict[str, Any]
-QueryResponse: TypeAlias = Union[str, Dict[str, Any]]
-SearchResult: TypeAlias = Dict[str, Union[str, float, DocumentMetadata]]
-SearchResults: TypeAlias = List[SearchResult]
+QueryResult: TypeAlias = dict[str, Any]
+QueryResponse: TypeAlias = str | dict[str, Any]
+SearchResult: TypeAlias = dict[str, str | float | DocumentMetadata]
+SearchResults: TypeAlias = list[SearchResult]
 
 # Configuration types
-ConfigDict: TypeAlias = Dict[str, Any]
-ProviderConfig: TypeAlias = Dict[str, Union[str, int, float, bool, None]]
-ModelConfig: TypeAlias = Dict[str, Any]
+ConfigDict: TypeAlias = dict[str, Any]
+ProviderConfig: TypeAlias = dict[str, str | int | float | bool | None]
+ModelConfig: TypeAlias = dict[str, Any]
 
 # LLM types
-LLMResponse: TypeAlias = Union[str, Dict[str, Any]]
-ChatMessage: TypeAlias = Dict[Literal["role", "content"], str]
-ChatHistory: TypeAlias = List[ChatMessage]
+LLMResponse: TypeAlias = str | dict[str, Any]
+ChatMessage: TypeAlias = dict[Literal["role", "content"], str]
+ChatHistory: TypeAlias = list[ChatMessage]
 StreamResponse: TypeAlias = Iterator[str]
 AsyncStreamResponse: TypeAlias = AsyncIterator[str]
 
 # Storage types
-StorageConfig: TypeAlias = Dict[str, Any]
-VectorStoreConfig: TypeAlias = Dict[str, Any]
-IndexConfig: TypeAlias = Dict[str, Any]
+StorageConfig: TypeAlias = dict[str, Any]
+VectorStoreConfig: TypeAlias = dict[str, Any]
+IndexConfig: TypeAlias = dict[str, Any]
 
 # API types
 HTTPMethod: TypeAlias = Literal["GET", "POST", "PUT", "DELETE", "PATCH"]
 StatusCode: TypeAlias = int
-Headers: TypeAlias = Dict[str, str]
-RequestBody: TypeAlias = Dict[str, Any]
-ResponseBody: TypeAlias = Dict[str, Any]
+Headers: TypeAlias = dict[str, str]
+RequestBody: TypeAlias = dict[str, Any]
+ResponseBody: TypeAlias = dict[str, Any]
 
 # Callback types
 CallbackFn: TypeAlias = Callable[[Any], None]
 AsyncCallbackFn: TypeAlias = Callable[[Any], Awaitable[None]]
-EventCallback: TypeAlias = Callable[[str, Dict[str, Any]], None]
+EventCallback: TypeAlias = Callable[[str, dict[str, Any]], None]
 
 # Generic type variables
 T = TypeVar("T")
@@ -118,7 +115,7 @@ class QueryData(TypedDict):
 
     query_str: str
     top_k: NotRequired[int]
-    filters: NotRequired[Dict[str, Any]]
+    filters: NotRequired[dict[str, Any]]
     alpha: NotRequired[float]
 
 
@@ -128,13 +125,13 @@ class ChatCompletionMessage(TypedDict):
     role: Literal["system", "user", "assistant", "function"]
     content: str
     name: NotRequired[str]
-    function_call: NotRequired[Dict[str, Any]]
+    function_call: NotRequired[dict[str, Any]]
 
 
 class ChatCompletionRequest(TypedDict):
     """Typed dictionary for chat completion requests."""
 
-    messages: List[ChatCompletionMessage]
+    messages: list[ChatCompletionMessage]
     model: str
     temperature: NotRequired[float]
     max_tokens: NotRequired[int]
@@ -153,7 +150,7 @@ class EmbeddingProvider(Protocol):
         ...
 
     def get_text_embedding_batch(
-        self, texts: List[str], show_progress: bool = False
+        self, texts: list[str], show_progress: bool = False
     ) -> EmbeddingList:
         """Get embeddings for multiple texts."""
         ...
@@ -184,7 +181,7 @@ class LLMProvider(Protocol):
         ...
 
     @property
-    def metadata(self) -> Dict[str, Any]:
+    def metadata(self) -> dict[str, Any]:
         """Provider metadata."""
         ...
 
@@ -192,7 +189,7 @@ class LLMProvider(Protocol):
 class StorageBackend(Protocol):
     """Protocol for storage backends."""
 
-    def add_documents(self, documents: DocumentList) -> List[DocumentID]:
+    def add_documents(self, documents: DocumentList) -> list[DocumentID]:
         """Add documents to storage."""
         ...
 

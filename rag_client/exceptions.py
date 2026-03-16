@@ -4,7 +4,7 @@ This module defines custom exceptions with proper inheritance structure
 for better error handling and debugging throughout the application.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 class RAGClientError(Exception):
@@ -17,9 +17,9 @@ class RAGClientError(Exception):
     def __init__(
         self,
         message: str,
-        error_code: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None,
-        cause: Optional[Exception] = None,
+        error_code: str | None = None,
+        context: dict[str, Any] | None = None,
+        cause: Exception | None = None,
     ):
         """Initialize RAGClientError.
 
@@ -48,7 +48,7 @@ class RAGClientError(Exception):
             parts.append(f"Context: {context_str}")
 
         if self.cause:
-            parts.append(f"Caused by: {type(self.cause).__name__}: {str(self.cause)}")
+            parts.append(f"Caused by: {type(self.cause).__name__}: {self.cause!s}")
 
         return " | ".join(parts)
 
@@ -73,8 +73,8 @@ class ConfigurationError(RAGClientError):
     def __init__(
         self,
         message: str,
-        config_file: Optional[str] = None,
-        field: Optional[str] = None,
+        config_file: str | None = None,
+        field: str | None = None,
         **kwargs,
     ):
         """Initialize ConfigurationError.
@@ -106,8 +106,8 @@ class IndexingError(RAGClientError):
     def __init__(
         self,
         message: str,
-        document: Optional[str] = None,
-        operation: Optional[str] = None,
+        document: str | None = None,
+        operation: str | None = None,
         **kwargs,
     ):
         """Initialize IndexingError.
@@ -139,8 +139,8 @@ class RetrievalError(RAGClientError):
     def __init__(
         self,
         message: str,
-        query: Optional[str] = None,
-        retriever_type: Optional[str] = None,
+        query: str | None = None,
+        retriever_type: str | None = None,
         **kwargs,
     ):
         """Initialize RetrievalError.
@@ -172,8 +172,8 @@ class StorageError(RAGClientError):
     def __init__(
         self,
         message: str,
-        storage_type: Optional[str] = None,
-        operation: Optional[str] = None,
+        storage_type: str | None = None,
+        operation: str | None = None,
         **kwargs,
     ):
         """Initialize StorageError.
@@ -205,8 +205,8 @@ class ProviderError(RAGClientError):
     def __init__(
         self,
         message: str,
-        provider_type: Optional[str] = None,
-        provider_name: Optional[str] = None,
+        provider_type: str | None = None,
+        provider_name: str | None = None,
         **kwargs,
     ):
         """Initialize ProviderError.
@@ -238,9 +238,9 @@ class DocumentProcessingError(RAGClientError):
     def __init__(
         self,
         message: str,
-        file_path: Optional[str] = None,
-        file_type: Optional[str] = None,
-        processing_stage: Optional[str] = None,
+        file_path: str | None = None,
+        file_type: str | None = None,
+        processing_stage: str | None = None,
         **kwargs,
     ):
         """Initialize DocumentProcessingError.
@@ -278,9 +278,9 @@ class APIError(RAGClientError):
     def __init__(
         self,
         message: str,
-        status_code: Optional[int] = None,
-        endpoint: Optional[str] = None,
-        method: Optional[str] = None,
+        status_code: int | None = None,
+        endpoint: str | None = None,
+        method: str | None = None,
         **kwargs,
     ):
         """Initialize APIError.
@@ -334,9 +334,9 @@ class ValidationError(RAGClientError):
     def __init__(
         self,
         message: str,
-        field: Optional[str] = None,
-        value: Optional[Any] = None,
-        expected_type: Optional[str] = None,
+        field: str | None = None,
+        value: Any | None = None,
+        expected_type: str | None = None,
         **kwargs,
     ):
         """Initialize ValidationError.
@@ -371,8 +371,8 @@ class TimeoutError(RAGClientError):
     def __init__(
         self,
         message: str,
-        operation: Optional[str] = None,
-        timeout_seconds: Optional[float] = None,
+        operation: str | None = None,
+        timeout_seconds: float | None = None,
         **kwargs,
     ):
         """Initialize TimeoutError.
@@ -400,7 +400,7 @@ class RateLimitError(ProviderError):
     This is a specialized provider error for rate limiting scenarios.
     """
 
-    def __init__(self, message: str, retry_after: Optional[int] = None, **kwargs):
+    def __init__(self, message: str, retry_after: int | None = None, **kwargs):
         """Initialize RateLimitError.
 
         Args:
@@ -425,7 +425,7 @@ class EmbeddingError(ProviderError):
     or embedding dimension mismatches.
     """
 
-    def __init__(self, message: str, model_name: Optional[str] = None, **kwargs):
+    def __init__(self, message: str, model_name: str | None = None, **kwargs):
         """Initialize EmbeddingError.
 
         Args:
@@ -450,7 +450,7 @@ class LLMError(ProviderError):
     or context length exceeded errors.
     """
 
-    def __init__(self, message: str, model_name: Optional[str] = None, **kwargs):
+    def __init__(self, message: str, model_name: str | None = None, **kwargs):
         """Initialize LLMError.
 
         Args:
@@ -470,17 +470,17 @@ class LLMError(ProviderError):
 
 # Re-export all exception classes
 __all__ = [
-    "RAGClientError",
+    "APIError",
     "ConfigurationError",
+    "DocumentProcessingError",
+    "EmbeddingError",
     "IndexingError",
+    "LLMError",
+    "ProviderError",
+    "RAGClientError",
+    "RateLimitError",
     "RetrievalError",
     "StorageError",
-    "ProviderError",
-    "DocumentProcessingError",
-    "APIError",
-    "ValidationError",
     "TimeoutError",
-    "RateLimitError",
-    "EmbeddingError",
-    "LLMError",
+    "ValidationError",
 ]

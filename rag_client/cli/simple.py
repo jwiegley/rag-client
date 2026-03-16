@@ -14,7 +14,6 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import List, Optional
 
 from ..config.models import (
     ChatConfig,
@@ -30,7 +29,6 @@ from ..config.models import (
 from ..core.workflow import RAGWorkflow
 from ..exceptions import ConfigurationError, RAGClientError
 from ..utils.logging import get_logger, setup_logging
-
 
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 DEFAULT_LLM_MODEL = "llama3.2"
@@ -50,11 +48,11 @@ def detect_ollama() -> bool:
         return False
 
 
-def detect_available_model() -> Optional[str]:
+def detect_available_model() -> str | None:
     """Detect available Ollama model."""
     try:
-        import urllib.request
         import json as j
+        import urllib.request
 
         req = urllib.request.Request(f"{DEFAULT_OLLAMA_URL}/api/tags", method="GET")
         with urllib.request.urlopen(req, timeout=2) as resp:
@@ -80,9 +78,9 @@ def detect_available_model() -> Optional[str]:
 
 
 def create_default_config(
-    model: Optional[str] = None,
-    embedding_model: Optional[str] = None,
-    ollama_url: Optional[str] = None,
+    model: str | None = None,
+    embedding_model: str | None = None,
+    ollama_url: str | None = None,
     top_k: int = DEFAULT_TOP_K,
 ) -> Config:
     """Create a default configuration for common use cases.
@@ -133,11 +131,11 @@ def create_default_config(
 
 
 def simple_index(
-    paths: List[str],
+    paths: list[str],
     recursive: bool = True,
     verbose: bool = False,
     force: bool = False,
-    config: Optional[Config] = None,
+    config: Config | None = None,
 ) -> None:
     """Index documents with progress feedback.
 
@@ -157,7 +155,7 @@ def simple_index(
 
     from ..utils.helpers import read_files
 
-    all_files: List[Path] = []
+    all_files: list[Path] = []
     for path in paths:
         try:
             files = read_files(path, recursive)
@@ -194,8 +192,8 @@ def simple_search(
     query: str,
     top_k: int = DEFAULT_TOP_K,
     verbose: bool = False,
-    config: Optional[Config] = None,
-) -> List[dict]:
+    config: Config | None = None,
+) -> list[dict]:
     """Search indexed documents.
 
     Args:
@@ -229,7 +227,7 @@ def simple_query(
     streaming: bool = True,
     top_k: int = DEFAULT_TOP_K,
     verbose: bool = False,
-    config: Optional[Config] = None,
+    config: Config | None = None,
 ) -> str:
     """Ask a question and get an AI-generated answer.
 
@@ -287,7 +285,7 @@ def simple_chat(
     streaming: bool = True,
     top_k: int = DEFAULT_TOP_K,
     verbose: bool = False,
-    config: Optional[Config] = None,
+    config: Config | None = None,
 ) -> None:
     """Interactive chat mode.
 

@@ -7,7 +7,7 @@ exception mapping for the API layer.
 import logging
 import uuid
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import Request, status
 from fastapi.responses import JSONResponse
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 class ErrorDetail(BaseModel):
     """Detailed error information."""
 
-    field: Optional[str] = Field(None, description="Field that caused the error")
+    field: str | None = Field(None, description="Field that caused the error")
     message: str = Field(..., description="Human-readable error message")
     type: str = Field(..., description="Error type identifier")
 
@@ -43,16 +43,14 @@ class ErrorResponse(BaseModel):
 
     error: str = Field(..., description="Error code for programmatic handling")
     message: str = Field(..., description="Human-readable error message")
-    details: Optional[list[ErrorDetail]] = Field(
+    details: list[ErrorDetail] | None = Field(
         None, description="Additional error details"
     )
     correlation_id: str = Field(
         ..., description="Unique identifier for this error instance"
     )
     timestamp: str = Field(..., description="ISO 8601 timestamp when error occurred")
-    context: Optional[Dict[str, Any]] = Field(
-        None, description="Additional context data"
-    )
+    context: dict[str, Any] | None = Field(None, description="Additional context data")
 
     class Config:
         json_schema_extra = {
@@ -89,7 +87,7 @@ EXCEPTION_STATUS_MAP = {
 
 
 def create_error_response(
-    exception: Exception, request: Request, correlation_id: Optional[str] = None
+    exception: Exception, request: Request, correlation_id: str | None = None
 ) -> ErrorResponse:
     """Create a standardized error response from an exception.
 

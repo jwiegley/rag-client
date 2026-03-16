@@ -5,7 +5,7 @@ validators, and Config settings that will be inherited by all specific configura
 """
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, SecretStr, field_validator
 
@@ -44,16 +44,16 @@ class BaseConfig(BaseModel):
 class APIConfig(BaseConfig):
     """Base configuration for API-based services."""
 
-    api_key: Optional[SecretStr] = Field(
+    api_key: SecretStr | None = Field(
         default=None, description="API key for authentication"
     )
-    api_key_command: Optional[str] = Field(
+    api_key_command: str | None = Field(
         default=None, description="Command to retrieve API key"
     )
-    api_base: Optional[HttpUrl] = Field(
+    api_base: HttpUrl | None = Field(
         default=None, description="Base URL for API endpoint"
     )
-    api_version: Optional[str] = Field(default=None, description="API version to use")
+    api_version: str | None = Field(default=None, description="API version to use")
     max_retries: int = Field(
         default=10, ge=0, description="Maximum number of retry attempts"
     )
@@ -78,7 +78,7 @@ class ModelConfig(BaseConfig):
     temperature: float = Field(
         default=0.1, ge=0.0, le=2.0, description="Sampling temperature for generation"
     )
-    max_tokens: Optional[int] = Field(
+    max_tokens: int | None = Field(
         default=None, gt=0, description="Maximum number of tokens to generate"
     )
 
@@ -97,7 +97,7 @@ class EmbeddingBaseConfig(BaseConfig):
     embed_batch_size: int = Field(
         default=10, gt=0, description="Batch size for embedding generation"
     )
-    dimensions: Optional[int] = Field(
+    dimensions: int | None = Field(
         default=None, gt=0, description="Dimensionality of embeddings"
     )
     normalize: bool = Field(default=True, description="Whether to normalize embeddings")
@@ -152,8 +152,8 @@ class DatabaseConfig(BaseConfig):
     host: str = Field(default="localhost", description="Database host address")
     port: int = Field(default=5432, gt=0, le=65535, description="Database port")
     database: str = Field(..., description="Database name")
-    username: Optional[str] = Field(default=None, description="Database username")
-    password: Optional[SecretStr] = Field(default=None, description="Database password")
+    username: str | None = Field(default=None, description="Database username")
+    password: SecretStr | None = Field(default=None, description="Database password")
 
     @property
     def connection_string(self) -> str:
@@ -189,12 +189,12 @@ class FilePathConfig(BaseConfig):
 
 # Re-export for convenience
 __all__ = [
-    "BaseConfig",
     "APIConfig",
-    "ModelConfig",
-    "EmbeddingBaseConfig",
-    "LLMBaseConfig",
+    "BaseConfig",
     "ChunkingBaseConfig",
     "DatabaseConfig",
+    "EmbeddingBaseConfig",
     "FilePathConfig",
+    "LLMBaseConfig",
+    "ModelConfig",
 ]

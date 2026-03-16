@@ -1,22 +1,22 @@
 """Tests for Pydantic configuration models and validation logic."""
 
 import os
-import pytest
 import tempfile
 from pathlib import Path
 
-from rag_client.config.base import BaseConfig, APIConfig
+import pytest
+
+from rag_client.config.base import APIConfig, BaseConfig
+from rag_client.config.chunking import (
+    CodeSplitterConfig,
+    SentenceSplitterConfig,
+)
 from rag_client.config.embeddings import (
     HuggingFaceEmbeddingConfig,
-    OpenAIEmbeddingConfig,
     OllamaEmbeddingConfig,
+    OpenAIEmbeddingConfig,
 )
 from rag_client.config.llms import OllamaLLMConfig, OpenAILLMConfig, PerplexityLLMConfig
-from rag_client.config.chunking import (
-    SentenceSplitterConfig,
-    SemanticSplitterConfig,
-    CodeSplitterConfig,
-)
 from rag_client.config.loader import (
     load_yaml,
     merge_configs,
@@ -64,50 +64,38 @@ class TestEmbeddingConfigs:
     def test_huggingface_embedding_config_valid(self):
         """Test valid HuggingFace embedding configuration."""
         config = HuggingFaceEmbeddingConfig(
-            provider="huggingface",
-            model="sentence-transformers/all-MiniLM-L6-v2",
+            model_name="sentence-transformers/all-MiniLM-L6-v2",
             device="cpu",
             embed_batch_size=32,
         )
-        assert config.model == "sentence-transformers/all-MiniLM-L6-v2"
+        assert config.model_name == "sentence-transformers/all-MiniLM-L6-v2"
         assert config.device == "cpu"
         assert config.embed_batch_size == 32
 
     def test_huggingface_embedding_config_validation(self):
         """Test HuggingFace embedding config validation."""
-        # Test batch size validation
-        with pytest.raises(
-            ValueError, match="ensure this value is greater than or equal to 1"
-        ):
-            HuggingFaceEmbeddingConfig(
-                provider="huggingface", model="test", embed_batch_size=0
-            )
+        # Test batch size validation (uses gt=0)
+        with pytest.raises(ValueError, match="greater than 0"):
+            HuggingFaceEmbeddingConfig(embed_batch_size=0)
 
-        with pytest.raises(
-            ValueError, match="ensure this value is less than or equal to 1000"
-        ):
-            HuggingFaceEmbeddingConfig(
-                provider="huggingface", model="test", embed_batch_size=1001
-            )
+        with pytest.raises(ValueError, match="less than or equal to 1000"):
+            HuggingFaceEmbeddingConfig(embed_batch_size=1001)
 
     def test_openai_embedding_config(self):
         """Test OpenAI embedding configuration."""
         config = OpenAIEmbeddingConfig(
-            provider="openai",
             model="text-embedding-ada-002",
             api_key="sk-test",
-            dimensions=1536,
         )
         assert config.model == "text-embedding-ada-002"
         assert config.api_key.get_secret_value() == "sk-test"
-        assert config.dimensions == 1536
 
     def test_ollama_embedding_config(self):
         """Test Ollama embedding configuration."""
         config = OllamaEmbeddingConfig(
-            provider="ollama", model="llama2", base_url="http://localhost:11434"
+            model_name="llama2", base_url="http://localhost:11434"
         )
-        assert config.model == "llama2"
+        assert config.model_name == "llama2"
         assert str(config.base_url) == "http://localhost:11434/"
 
 
@@ -117,40 +105,33 @@ class TestLLMConfigs:
     def test_ollama_llm_config(self):
         """Test Ollama LLM configuration."""
         config = OllamaLLMConfig(
-            provider="ollama",
-            model="llama2",
+            model_name="llama2",
             base_url="http://localhost:11434",
             temperature=0.7,
             max_tokens=2048,
         )
-        assert config.model == "llama2"
+        assert config.model_name == "llama2"
         assert config.temperature == 0.7
         assert config.max_tokens == 2048
 
     def test_llm_temperature_validation(self):
         """Test LLM temperature validation."""
         # Valid temperature
-        config = OpenAILLMConfig(provider="openai", model="gpt-4", temperature=1.5)
+        config = OpenAILLMConfig(model_name="gpt-4", temperature=1.5)
         assert config.temperature == 1.5
 
         # Invalid temperature (too high)
-        with pytest.raises(
-            ValueError, match="ensure this value is less than or equal to 2"
-        ):
-            OpenAILLMConfig(provider="openai", model="gpt-4", temperature=2.1)
+        with pytest.raises(ValueError, match="less than or equal to 2"):
+            OpenAILLMConfig(model_name="gpt-4", temperature=2.1)
 
         # Invalid temperature (negative)
-        with pytest.raises(
-            ValueError, match="ensure this value is greater than or equal to 0"
-        ):
-            OpenAILLMConfig(provider="openai", model="gpt-4", temperature=-0.1)
+        with pytest.raises(ValueError, match="greater than or equal to 0"):
+            OpenAILLMConfig(model_name="gpt-4", temperature=-0.1)
 
     def test_llm_max_tokens_validation(self):
         """Test LLM max_tokens validation."""
-        with pytest.raises(
-            ValueError, match="ensure this value is greater than or equal to 1"
-        ):
-            PerplexityLLMConfig(provider="perplexity", model="pplx-70b", max_tokens=0)
+        with pytest.raises(ValueError, match="greater than 0"):
+            PerplexityLLMConfig(model_name="pplx-70b", max_tokens=0)
 
 
 class TestChunkingConfigs:
@@ -158,41 +139,35 @@ class TestChunkingConfigs:
 
     def test_sentence_splitter_config(self):
         """Test sentence splitter configuration."""
-        config = SentenceSplitterConfig(
-            strategy="sentence", chunk_size=512, chunk_overlap=20
-        )
+        config = SentenceSplitterConfig(chunk_size=512, chunk_overlap=20)
         assert config.chunk_size == 512
         assert config.chunk_overlap == 20
 
     def test_chunk_size_validation(self):
         """Test chunk size validation."""
         # Valid chunk size
-        config = SemanticSplitterConfig(strategy="semantic", chunk_size=1024)
+        config = SentenceSplitterConfig(chunk_size=1024)
         assert config.chunk_size == 1024
 
-        # Invalid chunk size (too small)
-        with pytest.raises(
-            ValueError, match="ensure this value is greater than or equal to 100"
-        ):
-            SemanticSplitterConfig(strategy="semantic", chunk_size=50)
+        # Invalid chunk size (too small) - SentenceSplitterConfig has ge=100
+        with pytest.raises(ValueError, match="greater than or equal to 100"):
+            SentenceSplitterConfig(chunk_size=50)
 
-        # Invalid chunk size (too large)
-        with pytest.raises(
-            ValueError, match="ensure this value is less than or equal to 4096"
-        ):
-            SemanticSplitterConfig(strategy="semantic", chunk_size=5000)
+        # Invalid chunk size (too large) - SentenceSplitterConfig has le=4096
+        with pytest.raises(ValueError, match="less than or equal to 4096"):
+            SentenceSplitterConfig(chunk_size=5000)
 
     def test_chunk_overlap_validation(self):
         """Test chunk overlap validation."""
         # Valid overlap
-        config = CodeSplitterConfig(strategy="code", chunk_size=1000, chunk_overlap=100)
+        config = CodeSplitterConfig(
+            language="python", chunk_size=1000, chunk_overlap=100
+        )
         assert config.chunk_overlap == 100
 
         # Invalid overlap (negative)
-        with pytest.raises(
-            ValueError, match="ensure this value is greater than or equal to 0"
-        ):
-            CodeSplitterConfig(strategy="code", chunk_size=1000, chunk_overlap=-1)
+        with pytest.raises(ValueError, match="greater than or equal to 0"):
+            CodeSplitterConfig(language="python", chunk_size=1000, chunk_overlap=-1)
 
 
 class TestConfigLoader:
@@ -273,30 +248,36 @@ invalid yaml:
             temp_path = Path(f.name)
 
         try:
-            with pytest.raises(ConfigurationError, match="YAML syntax error.*line"):
+            with pytest.raises(ConfigurationError, match=r"YAML syntax error.*line"):
                 load_yaml(temp_path)
         finally:
             temp_path.unlink()
 
     def test_validate_config(self):
         """Test configuration validation."""
-        from rag_client.config.models import Config, RetrievalConfig
+        from rag_client.config.models import (
+            Config,
+            RetrievalConfig,
+            SimpleVectorStoreConfig,
+        )
+        from rag_client.config.models import (
+            OpenAIEmbeddingConfig as LegacyOpenAIEmbeddingConfig,
+        )
 
         # Valid config
         valid_config = Config(
             retrieval=RetrievalConfig(
-                embedding={"provider": "openai", "model": "ada"},
-                llm={"provider": "ollama", "model": "llama2"},
-                vector_store={"type": "ephemeral"},
+                embedding=LegacyOpenAIEmbeddingConfig(model="text-embedding-ada-002"),
+                vector_store=SimpleVectorStoreConfig(),
             )
         )
 
         # Should not raise
         validate_config(valid_config)
 
-        # Invalid config (missing retrieval)
-        invalid_config = Config()
-        with pytest.raises(ValueError, match="must include 'retrieval' section"):
+        # Invalid config (missing embedding)
+        invalid_config = Config(retrieval=RetrievalConfig())
+        with pytest.raises(ValueError, match="must include embedding settings"):
             validate_config(invalid_config)
 
 

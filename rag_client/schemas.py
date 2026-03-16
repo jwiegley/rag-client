@@ -6,7 +6,7 @@ and agent-consumable output formats.
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -14,18 +14,14 @@ from pydantic import BaseModel, Field
 class NodeMetadata(BaseModel):
     """Metadata for a retrieved document node."""
 
-    file_name: Optional[str] = Field(None, description="Source file name")
-    file_path: Optional[str] = Field(None, description="Full path to source file")
-    file_type: Optional[str] = Field(None, description="File extension or MIME type")
-    page_number: Optional[int] = Field(None, description="Page number in document")
-    section: Optional[str] = Field(None, description="Section heading")
-    creation_date: Optional[datetime] = Field(
-        None, description="Document creation date"
-    )
-    last_modified: Optional[datetime] = Field(
-        None, description="Last modification date"
-    )
-    extra: Dict[str, Any] = Field(
+    file_name: str | None = Field(None, description="Source file name")
+    file_path: str | None = Field(None, description="Full path to source file")
+    file_type: str | None = Field(None, description="File extension or MIME type")
+    page_number: int | None = Field(None, description="Page number in document")
+    section: str | None = Field(None, description="Section heading")
+    creation_date: datetime | None = Field(None, description="Document creation date")
+    last_modified: datetime | None = Field(None, description="Last modification date")
+    extra: dict[str, Any] = Field(
         default_factory=dict, description="Additional metadata"
     )
 
@@ -55,7 +51,7 @@ class SearchResponse(BaseModel):
     """Response from a search operation."""
 
     query: str = Field(..., description="Original search query")
-    results: List[SearchResult] = Field(
+    results: list[SearchResult] = Field(
         default_factory=list, description="Search results"
     )
     total_results: int = Field(..., description="Total number of results returned")
@@ -79,10 +75,10 @@ class QueryResponse(BaseModel):
 
     query: str = Field(..., description="Original question")
     answer: str = Field(..., description="AI-generated answer")
-    sources: List[SearchResult] = Field(
+    sources: list[SearchResult] = Field(
         default_factory=list, description="Source documents used"
     )
-    confidence: Optional[float] = Field(None, description="Answer confidence score")
+    confidence: float | None = Field(None, description="Answer confidence score")
     processing_time_ms: float = Field(
         ..., description="Processing time in milliseconds"
     )
@@ -120,7 +116,7 @@ class IndexingResult(BaseModel):
     nodes_created: int = Field(..., description="Number of nodes created")
     documents_skipped: int = Field(0, description="Documents skipped (cached)")
     documents_failed: int = Field(0, description="Documents that failed to index")
-    failed_files: List[str] = Field(
+    failed_files: list[str] = Field(
         default_factory=list, description="Paths of failed files"
     )
     processing_time_ms: float = Field(..., description="Total processing time")
@@ -132,9 +128,7 @@ class ErrorResponse(BaseModel):
 
     error: str = Field(..., description="Error message")
     error_code: str = Field(..., description="Error code for programmatic handling")
-    details: Optional[Dict[str, Any]] = Field(
-        None, description="Additional error details"
-    )
+    details: dict[str, Any] | None = Field(None, description="Additional error details")
     timestamp: datetime = Field(
         default_factory=datetime.now, description="Error timestamp"
     )
@@ -153,7 +147,7 @@ class ToolCall(BaseModel):
     """A tool call request from an AI agent."""
 
     tool_type: ToolCallType = Field(..., description="Type of tool call")
-    parameters: Dict[str, Any] = Field(
+    parameters: dict[str, Any] = Field(
         default_factory=dict, description="Tool parameters"
     )
 
@@ -163,9 +157,9 @@ class ToolResult(BaseModel):
 
     tool_type: ToolCallType = Field(..., description="Type of tool that was called")
     success: bool = Field(..., description="Whether the call succeeded")
-    result: Union[
-        SearchResponse, QueryResponse, IndexingResult, IndexStatus, ErrorResponse
-    ] = Field(..., description="Tool-specific result")
+    result: (
+        SearchResponse | QueryResponse | IndexingResult | IndexStatus | ErrorResponse
+    ) = Field(..., description="Tool-specific result")
     execution_time_ms: float = Field(..., description="Execution time")
 
 
@@ -176,14 +170,12 @@ class AgentContext(BaseModel):
     for integration with AI agents like Claude, GPT, etc.
     """
 
-    available_tools: List[str] = Field(
+    available_tools: list[str] = Field(
         default_factory=lambda: ["search", "query", "index", "get_status"],
         description="Available RAG tools",
     )
-    index_status: Optional[IndexStatus] = Field(
-        None, description="Current index status"
-    )
-    capabilities: Dict[str, bool] = Field(
+    index_status: IndexStatus | None = Field(None, description="Current index status")
+    capabilities: dict[str, bool] = Field(
         default_factory=lambda: {
             "search": True,
             "query": True,
@@ -193,7 +185,7 @@ class AgentContext(BaseModel):
         },
         description="Available capabilities",
     )
-    model_info: Dict[str, str] = Field(
+    model_info: dict[str, str] = Field(
         default_factory=dict, description="Information about configured models"
     )
 

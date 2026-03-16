@@ -72,7 +72,7 @@ def list_files(directory: Path, recursive: bool = False) -> list[Path]:
 def read_files(
     read_from: str,
     recursive: bool = False,
-) -> list[Path] | NoReturn:
+) -> list[Path]:
     """Read file paths from various sources.
 
     Args:
@@ -119,7 +119,7 @@ def convert_str(read_from: str | None) -> str | None:
             error("No input provided on standard input")
         return s
     elif os.path.isfile(read_from):
-        with open(read_from, "r") as f:
+        with open(read_from) as f:
             return f.read()
     else:
         return read_from

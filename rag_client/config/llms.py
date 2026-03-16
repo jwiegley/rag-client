@@ -4,7 +4,7 @@ This module contains all LLM provider configurations migrated from
 dataclass-wizard to Pydantic with proper validation.
 """
 
-from typing import Dict, List, Literal, Optional
+from typing import Literal
 
 # Import constants from llama-index
 from llama_index.core.constants import (
@@ -27,7 +27,7 @@ class OpenAILLMConfig(APIConfig, LLMBaseConfig):
     temperature: float = Field(
         default=DEFAULT_TEMPERATURE, ge=0.0, le=2.0, description="Sampling temperature"
     )
-    max_tokens: Optional[int] = Field(
+    max_tokens: int | None = Field(
         default=DEFAULT_NUM_OUTPUTS,
         gt=0,
         le=128000,
@@ -46,17 +46,17 @@ class OpenAILLMConfig(APIConfig, LLMBaseConfig):
     presence_penalty: float = Field(
         default=0.0, ge=-2.0, le=2.0, description="Presence penalty"
     )
-    response_format: Optional[Dict[str, str]] = Field(
+    response_format: dict[str, str] | None = Field(
         default=None, description="Response format (e.g., {'type': 'json_object'})"
     )
-    seed: Optional[int] = Field(
+    seed: int | None = Field(
         default=None, description="Random seed for deterministic generation"
     )
-    logit_bias: Optional[Dict[str, float]] = Field(
+    logit_bias: dict[str, float] | None = Field(
         default=None, description="Token logit bias"
     )
-    stop: Optional[List[str]] = Field(default=None, description="Stop sequences")
-    system_prompt: Optional[str] = Field(
+    stop: list[str] | None = Field(default=None, description="Stop sequences")
+    system_prompt: str | None = Field(
         default=None, description="System prompt to prepend"
     )
 
@@ -80,8 +80,8 @@ class OpenAILLMConfig(APIConfig, LLMBaseConfig):
     @field_validator("response_format")
     @classmethod
     def validate_response_format(
-        cls, v: Optional[Dict[str, str]]
-    ) -> Optional[Dict[str, str]]:
+        cls, v: dict[str, str] | None
+    ) -> dict[str, str] | None:
         """Validate response format."""
         if v and "type" in v:
             if v["type"] not in ["text", "json_object"]:
@@ -99,7 +99,7 @@ class OllamaLLMConfig(LLMBaseConfig):
     temperature: float = Field(
         default=DEFAULT_TEMPERATURE, ge=0.0, le=2.0, description="Sampling temperature"
     )
-    max_tokens: Optional[int] = Field(
+    max_tokens: int | None = Field(
         default=None, gt=0, description="Maximum tokens to generate"
     )
     context_window: int = Field(
@@ -109,25 +109,23 @@ class OllamaLLMConfig(LLMBaseConfig):
     request_timeout: float = Field(
         default=120.0, gt=0, le=600, description="Request timeout in seconds"
     )
-    num_predict: Optional[int] = Field(
+    num_predict: int | None = Field(
         default=None, gt=0, description="Number of tokens to predict"
     )
-    num_ctx: Optional[int] = Field(default=None, gt=0, description="Context size")
-    top_k: Optional[int] = Field(default=None, gt=0, description="Top-k sampling")
+    num_ctx: int | None = Field(default=None, gt=0, description="Context size")
+    top_k: int | None = Field(default=None, gt=0, description="Top-k sampling")
     top_p: float = Field(
         default=0.9, ge=0.0, le=1.0, description="Nucleus sampling parameter"
     )
     repeat_penalty: float = Field(default=1.1, ge=0.0, description="Repetition penalty")
-    stop: Optional[List[str]] = Field(default=None, description="Stop sequences")
-    keep_alive: Optional[str] = Field(
+    stop: list[str] | None = Field(default=None, description="Stop sequences")
+    keep_alive: str | None = Field(
         default=None, description="Keep model loaded in memory"
     )
-    system_prompt: Optional[str] = Field(
+    system_prompt: str | None = Field(
         default=None, description="System prompt to prepend"
     )
-    format: Optional[Literal["json"]] = Field(
-        default=None, description="Response format"
-    )
+    format: Literal["json"] | None = Field(default=None, description="Response format")
     raw: bool = Field(default=False, description="Whether to use raw mode")
 
     @field_validator("model_name")
@@ -148,7 +146,7 @@ class PerplexityLLMConfig(APIConfig, LLMBaseConfig):
     temperature: float = Field(
         default=DEFAULT_TEMPERATURE, ge=0.0, le=2.0, description="Sampling temperature"
     )
-    max_tokens: Optional[int] = Field(
+    max_tokens: int | None = Field(
         default=None, gt=0, description="Maximum tokens to generate"
     )
     context_window: int = Field(default=127072, gt=0, description="Context window size")
@@ -166,13 +164,13 @@ class PerplexityLLMConfig(APIConfig, LLMBaseConfig):
     return_citations: bool = Field(
         default=False, description="Whether to return citations"
     )
-    search_domain_filter: Optional[List[str]] = Field(
+    search_domain_filter: list[str] | None = Field(
         default=None, description="Domains to search"
     )
-    search_recency_filter: Optional[Literal["hour", "day", "week", "month", "year"]] = (
+    search_recency_filter: Literal["hour", "day", "week", "month", "year"] | None = (
         Field(default=None, description="Recency filter for search")
     )
-    system_prompt: Optional[str] = Field(
+    system_prompt: str | None = Field(
         default=None, description="System prompt to prepend"
     )
 
@@ -208,14 +206,14 @@ class LMStudioLLMConfig(LLMBaseConfig):
     temperature: float = Field(
         default=DEFAULT_TEMPERATURE, ge=0.0, le=2.0, description="Sampling temperature"
     )
-    max_tokens: Optional[int] = Field(
+    max_tokens: int | None = Field(
         default=None, gt=0, description="Maximum tokens to generate"
     )
     context_window: int = Field(
         default=DEFAULT_CONTEXT_WINDOW, gt=0, description="Context window size"
     )
     streaming: bool = Field(default=False, description="Whether to stream responses")
-    system_prompt: Optional[str] = Field(
+    system_prompt: str | None = Field(
         default=None, description="System prompt to prepend"
     )
 
@@ -227,23 +225,23 @@ class OpenRouterLLMConfig(APIConfig, LLMBaseConfig):
     temperature: float = Field(
         default=DEFAULT_TEMPERATURE, ge=0.0, le=2.0, description="Sampling temperature"
     )
-    max_tokens: Optional[int] = Field(
+    max_tokens: int | None = Field(
         default=None, gt=0, description="Maximum tokens to generate"
     )
     context_window: int = Field(
         default=DEFAULT_CONTEXT_WINDOW, gt=0, description="Context window size"
     )
     streaming: bool = Field(default=False, description="Whether to stream responses")
-    route: Optional[Literal["fallback"]] = Field(
+    route: Literal["fallback"] | None = Field(
         default=None, description="Routing strategy"
     )
-    site_url: Optional[HttpUrl] = Field(
+    site_url: HttpUrl | None = Field(
         default=None, description="Your site URL for better routing"
     )
-    app_name: Optional[str] = Field(
+    app_name: str | None = Field(
         default=None, description="Your app name for identification"
     )
-    system_prompt: Optional[str] = Field(
+    system_prompt: str | None = Field(
         default=None, description="System prompt to prepend"
     )
 
@@ -266,7 +264,7 @@ class GroqLLMConfig(APIConfig, LLMBaseConfig):
     temperature: float = Field(
         default=DEFAULT_TEMPERATURE, ge=0.0, le=2.0, description="Sampling temperature"
     )
-    max_tokens: Optional[int] = Field(
+    max_tokens: int | None = Field(
         default=None, gt=0, description="Maximum tokens to generate"
     )
     context_window: int = Field(
@@ -276,11 +274,11 @@ class GroqLLMConfig(APIConfig, LLMBaseConfig):
     top_p: float = Field(
         default=1.0, ge=0.0, le=1.0, description="Nucleus sampling parameter"
     )
-    stop: Optional[List[str]] = Field(default=None, description="Stop sequences")
-    seed: Optional[int] = Field(
+    stop: list[str] | None = Field(default=None, description="Stop sequences")
+    seed: int | None = Field(
         default=None, description="Random seed for deterministic generation"
     )
-    system_prompt: Optional[str] = Field(
+    system_prompt: str | None = Field(
         default=None, description="System prompt to prepend"
     )
 
@@ -315,7 +313,7 @@ class TogetherAILLMConfig(APIConfig, LLMBaseConfig):
     temperature: float = Field(
         default=DEFAULT_TEMPERATURE, ge=0.0, le=2.0, description="Sampling temperature"
     )
-    max_tokens: Optional[int] = Field(
+    max_tokens: int | None = Field(
         default=None, gt=0, description="Maximum tokens to generate"
     )
     context_window: int = Field(
@@ -329,8 +327,8 @@ class TogetherAILLMConfig(APIConfig, LLMBaseConfig):
     repetition_penalty: float = Field(
         default=1.0, ge=0.0, description="Repetition penalty"
     )
-    stop: Optional[List[str]] = Field(default=None, description="Stop sequences")
-    system_prompt: Optional[str] = Field(
+    stop: list[str] | None = Field(default=None, description="Stop sequences")
+    system_prompt: str | None = Field(
         default=None, description="System prompt to prepend"
     )
 
@@ -342,7 +340,7 @@ class DeepSeekLLMConfig(APIConfig, LLMBaseConfig):
     temperature: float = Field(
         default=DEFAULT_TEMPERATURE, ge=0.0, le=2.0, description="Sampling temperature"
     )
-    max_tokens: Optional[int] = Field(
+    max_tokens: int | None = Field(
         default=None, gt=0, description="Maximum tokens to generate"
     )
     context_window: int = Field(
@@ -358,8 +356,8 @@ class DeepSeekLLMConfig(APIConfig, LLMBaseConfig):
     presence_penalty: float = Field(
         default=0.0, ge=-2.0, le=2.0, description="Presence penalty"
     )
-    stop: Optional[List[str]] = Field(default=None, description="Stop sequences")
-    system_prompt: Optional[str] = Field(
+    stop: list[str] | None = Field(default=None, description="Stop sequences")
+    system_prompt: str | None = Field(
         default=None, description="System prompt to prepend"
     )
 
@@ -395,10 +393,8 @@ class AnthropicLLMConfig(APIConfig, LLMBaseConfig):
         default=0.999, ge=0.0, le=1.0, description="Nucleus sampling parameter"
     )
     top_k: int = Field(default=250, ge=0, description="Top-k sampling")
-    stop_sequences: Optional[List[str]] = Field(
-        default=None, description="Stop sequences"
-    )
-    system_prompt: Optional[str] = Field(
+    stop_sequences: list[str] | None = Field(default=None, description="Stop sequences")
+    system_prompt: str | None = Field(
         default=None, description="System prompt to prepend"
     )
 
@@ -428,13 +424,13 @@ class AnthropicLLMConfig(APIConfig, LLMBaseConfig):
 
 # Export all configuration classes
 __all__ = [
-    "OpenAILLMConfig",
-    "OllamaLLMConfig",
-    "PerplexityLLMConfig",
-    "LMStudioLLMConfig",
-    "OpenRouterLLMConfig",
-    "GroqLLMConfig",
-    "TogetherAILLMConfig",
-    "DeepSeekLLMConfig",
     "AnthropicLLMConfig",
+    "DeepSeekLLMConfig",
+    "GroqLLMConfig",
+    "LMStudioLLMConfig",
+    "OllamaLLMConfig",
+    "OpenAILLMConfig",
+    "OpenRouterLLMConfig",
+    "PerplexityLLMConfig",
+    "TogetherAILLMConfig",
 ]

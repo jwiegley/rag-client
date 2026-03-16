@@ -3,7 +3,7 @@
 
 import asyncio
 
-from rag import *  # noqa: F403
+from rag import *
 
 
 def test_foo():
