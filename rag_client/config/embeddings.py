@@ -7,13 +7,15 @@ dataclass-wizard to Pydantic with proper validation.
 from pathlib import Path
 from typing import Any, Literal
 
-# Import constants from llama-index
 from llama_index.core.constants import DEFAULT_EMBED_BATCH_SIZE
-from llama_index.embeddings.huggingface.base import DEFAULT_HUGGINGFACE_EMBEDDING_MODEL
 from llama_index.embeddings.openai import OpenAIEmbeddingMode, OpenAIEmbeddingModelType
 from pydantic import Field, HttpUrl, SecretStr, field_validator
 
 from rag_client.config.base import APIConfig, EmbeddingBaseConfig
+
+# Hardcoded to avoid importing huggingface.base which triggers
+# sentence_transformers -> torch -> CUDA at module scope
+DEFAULT_HUGGINGFACE_EMBEDDING_MODEL = "BAAI/bge-small-en"
 
 
 class HuggingFaceEmbeddingConfig(EmbeddingBaseConfig):

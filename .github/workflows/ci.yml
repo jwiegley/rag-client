@@ -69,31 +69,3 @@ jobs:
           name: coverage-report
           path: coverage.xml
 
-  docs:
-    name: Build documentation
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: cachix/install-nix-action@v27
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-
-      - name: Cache Python venv
-        uses: actions/cache@v4
-        with:
-          path: .venv
-          key: venv-${{ hashFiles('requirements.lock') }}
-
-      - name: Build Sphinx docs
-        run: |
-          nix develop --command bash -c "
-            cd docs && make html
-          "
-
-      - name: Upload documentation
-        uses: actions/upload-artifact@v4
-        with:
-          name: documentation
-          path: docs/_build/html/

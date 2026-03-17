@@ -22,14 +22,15 @@ from llama_index.core.constants import (
 from llama_index.core.evaluation.guideline import DEFAULT_GUIDELINES
 from llama_index.core.response_synthesizers import ResponseMode
 from llama_index.core.retrievers.fusion_retriever import FUSION_MODES
-from llama_index.embeddings.huggingface.base import (
-    DEFAULT_HUGGINGFACE_EMBEDDING_MODEL,
-)
 from llama_index.embeddings.openai import (
     OpenAIEmbeddingMode,
     OpenAIEmbeddingModelType,
 )
 from llama_index.llms.openai.base import DEFAULT_OPENAI_MODEL
+
+# Hardcoded to avoid importing huggingface.base which triggers
+# sentence_transformers -> torch -> CUDA at module scope
+DEFAULT_HUGGINGFACE_EMBEDDING_MODEL = "BAAI/bge-small-en"
 
 
 # Configure dataclass_wizard to use 'type' field for union discrimination
