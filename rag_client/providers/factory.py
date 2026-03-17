@@ -8,19 +8,6 @@ from typing import Any
 
 from llama_index.core.embeddings import BaseEmbedding
 from llama_index.core.llms.llm import LLM
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from llama_index.embeddings.litellm import LiteLLMEmbedding
-from llama_index.embeddings.ollama import OllamaEmbedding
-from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.embeddings.openai_like import OpenAILikeEmbedding
-from llama_index.llms.litellm import LiteLLM
-from llama_index.llms.llama_cpp import LlamaCPP
-from llama_index.llms.lmstudio import LMStudio
-from llama_index.llms.ollama import Ollama
-from llama_index.llms.openai import OpenAI
-from llama_index.llms.openai_like import OpenAILike
-from llama_index.llms.openrouter import OpenRouter
-from llama_index.llms.perplexity import Perplexity
 
 from ..config.models import (
     EmbeddingConfig,
@@ -68,6 +55,8 @@ class HuggingFaceEmbeddingProvider:
         config: HuggingFaceEmbeddingConfig, verbose: bool = False
     ) -> BaseEmbedding:
         """Create HuggingFace embedding instance."""
+        from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+
         return HuggingFaceEmbedding(
             **asdict(config),
             show_progress_bar=verbose,
@@ -88,6 +77,8 @@ class OllamaEmbeddingProvider:
     @staticmethod
     def create(config: OllamaEmbeddingConfig, verbose: bool = False) -> BaseEmbedding:
         """Create Ollama embedding instance."""
+        from llama_index.embeddings.ollama import OllamaEmbedding
+
         return OllamaEmbedding(
             **asdict(config),
             show_progress=verbose,
@@ -108,6 +99,8 @@ class OpenAIEmbeddingProvider:
     @staticmethod
     def create(config: OpenAIEmbeddingConfig, verbose: bool = False) -> BaseEmbedding:
         """Create OpenAI embedding instance."""
+        from llama_index.embeddings.openai import OpenAIEmbedding
+
         if config.api_key_command is not None:
             config.api_key = subprocess.run(
                 config.api_key_command,
@@ -137,6 +130,8 @@ class OpenAILikeEmbeddingProvider:
         config: OpenAILikeEmbeddingConfig, verbose: bool = False
     ) -> BaseEmbedding:
         """Create OpenAI-like embedding instance."""
+        from llama_index.embeddings.openai_like import OpenAILikeEmbedding
+
         if config.api_key_command is not None:
             config.api_key = subprocess.run(
                 config.api_key_command,
@@ -180,6 +175,8 @@ class LiteLLMEmbeddingProvider:
     @staticmethod
     def create(config: LiteLLMEmbeddingConfig, verbose: bool = False) -> BaseEmbedding:
         """Create LiteLLM embedding instance."""
+        from llama_index.embeddings.litellm import LiteLLMEmbedding
+
         if config.api_key_command is not None:
             config.api_key = subprocess.run(
                 config.api_key_command,
@@ -209,6 +206,8 @@ class OllamaLLMProvider:
     @staticmethod
     def create(config: OllamaConfig, verbose: bool = False) -> LLM:
         """Create Ollama LLM instance."""
+        from llama_index.llms.ollama import Ollama
+
         return Ollama(**asdict(config), show_progress=verbose)
 
 
@@ -227,6 +226,8 @@ class OpenAILLMProvider:
     @staticmethod
     def create(config: OpenAIConfig, verbose: bool = False) -> LLM:
         """Create OpenAI LLM instance."""
+        from llama_index.llms.openai import OpenAI
+
         if config.api_key_command is not None:
             config.api_key = subprocess.run(
                 config.api_key_command,
@@ -251,6 +252,8 @@ class OpenAILikeLLMProvider:
     @staticmethod
     def create(config: OpenAILikeConfig, verbose: bool = False) -> LLM:
         """Create OpenAI-like LLM instance."""
+        from llama_index.llms.openai_like import OpenAILike
+
         # Handle api_key_command if specified
         if config.api_key_command is not None:
             config.api_key = subprocess.run(
@@ -291,6 +294,8 @@ class LiteLLMLLMProvider:
     @staticmethod
     def create(config: LiteLLMConfig, verbose: bool = False) -> LLM:
         """Create LiteLLM LLM instance."""
+        from llama_index.llms.litellm import LiteLLM
+
         if config.api_key_command is not None:
             config.api_key = subprocess.run(
                 config.api_key_command,
@@ -315,6 +320,8 @@ class LlamaCPPLLMProvider:
     @staticmethod
     def create(config: LlamaCPPConfig, verbose: bool = False) -> LLM:
         """Create LlamaCPP LLM instance."""
+        from llama_index.llms.llama_cpp import LlamaCPP
+
         return LlamaCPP(**asdict(config))
 
 
@@ -333,6 +340,8 @@ class PerplexityLLMProvider:
     @staticmethod
     def create(config: PerplexityConfig, verbose: bool = False) -> LLM:
         """Create Perplexity LLM instance."""
+        from llama_index.llms.perplexity import Perplexity
+
         if config.api_key_command is not None:
             config.api_key = subprocess.run(
                 config.api_key_command,
@@ -357,6 +366,8 @@ class OpenRouterLLMProvider:
     @staticmethod
     def create(config: OpenRouterConfig, verbose: bool = False) -> LLM:
         """Create OpenRouter LLM instance."""
+        from llama_index.llms.openrouter import OpenRouter
+
         if config.api_key_command is not None:
             config.api_key = subprocess.run(
                 config.api_key_command,
@@ -381,6 +392,8 @@ class LMStudioLLMProvider:
     @staticmethod
     def create(config: LMStudioConfig, verbose: bool = False) -> LLM:
         """Create LMStudio LLM instance."""
+        from llama_index.llms.lmstudio import LMStudio
+
         return LMStudio(**asdict(config))
 
 

@@ -8,10 +8,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, TypeAlias, final
 
-import llama_cpp
-import llama_index.llms.lmstudio.base
-import llama_index.llms.ollama.base
-import llama_index.llms.openrouter.base
 from dataclass_wizard import JSONWizard, YAMLWizard
 from llama_index.core.constants import (
     DEFAULT_CONTEXT_WINDOW,
@@ -28,9 +24,18 @@ from llama_index.embeddings.openai import (
 )
 from llama_index.llms.openai.base import DEFAULT_OPENAI_MODEL
 
-# Hardcoded to avoid importing huggingface.base which triggers
-# sentence_transformers -> torch -> CUDA at module scope
+# Hardcoded constants to avoid heavy imports (llama_cpp, llama_index.llms.openrouter,
+# llama_index.llms.lmstudio, llama_index.llms.ollama) that transitively pull in
+# sentence_transformers -> torch -> CUDA at module scope, breaking CI without GPU.
 DEFAULT_HUGGINGFACE_EMBEDDING_MODEL = "BAAI/bge-small-en"
+_OLLAMA_DEFAULT_REQUEST_TIMEOUT = 30.0
+_OPENROUTER_DEFAULT_MODEL = "gryphe/mythomax-l2-13b"
+_OPENROUTER_DEFAULT_API_BASE = "https://openrouter.ai/api/v1"
+_LMSTUDIO_DEFAULT_REQUEST_TIMEOUT = 30.0
+_LLAMA_SPLIT_MODE_LAYER = 1
+_LLAMA_DEFAULT_SEED = 4294967295
+_LLAMA_ROPE_SCALING_TYPE_UNSPECIFIED = -1
+_LLAMA_POOLING_TYPE_UNSPECIFIED = -1
 
 
 # Configure dataclass_wizard to use 'type' field for union discrimination
@@ -267,7 +272,7 @@ class LlamaCPPEmbeddingConfig(YAMLWizard):
 
     model_path: Path
     n_gpu_layers: int = 0
-    split_mode: int = llama_cpp.LLAMA_SPLIT_MODE_LAYER
+    split_mode: int = _LLAMA_SPLIT_MODE_LAYER
     main_gpu: int = 0
     tensor_split: list[float] | None = None
     rpc_servers: str | None = None
@@ -276,14 +281,14 @@ class LlamaCPPEmbeddingConfig(YAMLWizard):
     use_mlock: bool = False
     kv_overrides: dict[str, bool | int | float | str] | None = None
     # Context Params
-    seed: int = llama_cpp.LLAMA_DEFAULT_SEED
+    seed: int = _LLAMA_DEFAULT_SEED
     n_ctx: int = 512
     n_batch: int = 512
     n_ubatch: int = 512
     n_threads: int | None = None
     n_threads_batch: int | None = None
-    rope_scaling_type: int = llama_cpp.LLAMA_ROPE_SCALING_TYPE_UNSPECIFIED
-    pooling_type: int = llama_cpp.LLAMA_POOLING_TYPE_UNSPECIFIED
+    rope_scaling_type: int = _LLAMA_ROPE_SCALING_TYPE_UNSPECIFIED
+    pooling_type: int = _LLAMA_POOLING_TYPE_UNSPECIFIED
     rope_freq_base: float = 0.0
     rope_freq_scale: float = 0.0
     yarn_ext_factor: float = -1.0
@@ -362,7 +367,7 @@ class OllamaConfig(YAMLWizard):
     base_url: str = "http://localhost:11434"
     temperature: float = 0.75
     context_window: int = DEFAULT_CONTEXT_WINDOW
-    request_timeout: float | None = llama_index.llms.ollama.base.DEFAULT_REQUEST_TIMEOUT
+    request_timeout: float | None = _OLLAMA_DEFAULT_REQUEST_TIMEOUT
     prompt_key: str = "prompt"
     json_mode: bool = False
     # additional_kwargs: Dict[str, Any] = field(default_factory=dict)
@@ -449,12 +454,12 @@ class PerplexityConfig(YAMLWizard):
 class OpenRouterConfig(YAMLWizard):
     """OpenRouter LLM configuration."""
 
-    model: str = llama_index.llms.openrouter.base.DEFAULT_MODEL
+    model: str = _OPENROUTER_DEFAULT_MODEL
     temperature: float = DEFAULT_TEMPERATURE
     max_tokens: int = DEFAULT_NUM_OUTPUTS
     additional_kwargs: dict[str, Any] | None = None
     max_retries: int = 5
-    api_base: str | None = llama_index.llms.openrouter.base.DEFAULT_API_BASE
+    api_base: str | None = _OPENROUTER_DEFAULT_API_BASE
     api_key: str | None = None
     api_key_command: str | None = None
 
@@ -468,7 +473,7 @@ class LMStudioConfig(YAMLWizard):
     # output_parser: Optional[BaseOutputParser] = None
     base_url: str = "http://localhost:1234/v1"
     context_window: int = DEFAULT_CONTEXT_WINDOW
-    request_timeout: float = llama_index.llms.lmstudio.base.DEFAULT_REQUEST_TIMEOUT
+    request_timeout: float = _LMSTUDIO_DEFAULT_REQUEST_TIMEOUT
     num_output: int = DEFAULT_NUM_OUTPUTS
     is_chat_model: bool = True
     temperature: float = DEFAULT_TEMPERATURE
