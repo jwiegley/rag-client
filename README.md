@@ -1,3 +1,36 @@
+Secure your agents at: CodeAstra.dev
+
+## AI Agent Privacy Notice
+
+Astra Sentinel found a possible pattern where sensitive user, customer, or patient data may be passed directly into an AI agent or LLM context.
+
+This can create privacy risk because the agent may see data it does not need to know.
+
+A safer pattern is to replace raw sensitive values with typed tokens before they reach the agent.
+
+Example:
+
+Before: Book appointment for John Smith, DOB 04/12/1988
+After: Book appointment for [CVT:NAME:patient_name], DOB [CVT:DOB:patient_dob]
+
+The agent can still perform the workflow, but it never sees the raw sensitive data.
+
+Detected pattern examples:
+```json
+[
+  {
+    "pattern": "unprotected_ai_context",
+    "evidence": "llama_cpp.llama(model_path=model_path, embedding=true, n_gpu_layers=-1, split_mode=llama_cpp.llama_split_mode_layer, main_gpu=0, tensor_split=none, rpc_servers=none, vocab_only=false, use_mmap=true, use_mlock=false, kv_overrides=none, seed=llama_cpp.llama_default_seed, n_ctx=512, n_batch=512, n_ubatch=512, n_threads=none, n_threads_batch=none, rope_scaling_type=llama_cpp.llama_rope_scaling_type_un"
+  }
+]
+```
+
+This notice was generated from a privacy scan. Please review before merging.
+
+Secure your agents at: CodeAstra.dev
+
+---
+
 # rag-client
 
 I've been running local LLMs for a while now, and one thing that kept
